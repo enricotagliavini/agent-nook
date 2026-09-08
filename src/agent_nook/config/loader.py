@@ -46,7 +46,8 @@ class ConfigLoader:
             return self._config_dir
 
         xdg_config = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
-        return os.path.join(xdg_config, "agent-nook")
+        self._config_dir = os.path.join(xdg_config, "agent-nook")
+        return self._config_dir
 
     @property
     def data_dir(self) -> str:

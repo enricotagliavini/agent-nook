@@ -250,9 +250,6 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     # Setup config
     config_dir = args.config_dir
-    if not config_dir:
-        config_dir = os.environ.get("XDG_CONFIG_HOME", "~/.config")
-        config_dir = os.path.expanduser(config_dir)
 
     config_loader = ConfigLoader(config_dir)
     config_loader.ensure_config_directory()
