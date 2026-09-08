@@ -133,26 +133,6 @@ cython_debug/
 .DS_Store
 Thumbs.db
 
-# Agent Nook specific
-.config/agent-nook/
-.local/state/agent-nook/
-.cache/agent-nook/
-
-# Sandbox
-sandbox/
-sandbox/*
-
-# Testing
-tests/test_reports/
-test_results/
-*.tmp
-
-# Virtual environment
-venv/
-.venv/
-env/
-.env/
-
 # OS files
 .DS_Store
 .DS_Store?
