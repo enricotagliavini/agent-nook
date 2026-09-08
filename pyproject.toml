@@ -33,7 +33,3 @@ agent-nook = "agent_nook.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_nook"]
-
-[tool.hatch.build.targets.sdist]
-# Ship src/ with all config files included in agent_nook/ package
-only-include = ["src/"]
