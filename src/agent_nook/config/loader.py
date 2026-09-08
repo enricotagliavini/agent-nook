@@ -191,8 +191,11 @@ class ConfigLoader:
         if "sandbox" in data and isinstance(data["sandbox"], dict):
             sandbox_cfg = data["sandbox"]
             # Normalize 'env' key to 'env_vars' for dataclass compatibility
+            # Keep it even if empty, so downstream code doesn't have to check for existence
             if "env" in sandbox_cfg and not isinstance(sandbox_cfg["env"], list):
                 sandbox_cfg["env_vars"] = sandbox_cfg["env"]
+            else:
+                sandbox_cfg["env_vars"] = {}
             return sandbox_cfg
         return data
 
@@ -252,6 +255,25 @@ class ConfigLoader:
                     self._mount_to_dict(m) for m in tmpfs
                 ]
 
+        # Normalize capabilities: {drop: [...], keep: [...]} → {dropped: [...], kept: [...]}
+        if "capabilities" in result:
+            caps = result["capabilities"]
+            if isinstance(caps, dict):
+                # Convert flat format {"drop": [...], "keep": [...]} to builder format
+                if "drop" in caps and not isinstance(caps["drop"], list):
+                    result["capabilities"]["dropped"] = caps["drop"]
+                else:
+                    result["capabilities"]["dropped"] = caps.get("drop", [])
+
+                if "keep" in caps and not isinstance(caps["keep"], list):
+                    result["capabilities"]["kept"] = caps["keep"]
+                else:
+                    result["capabilities"]["kept"] = caps.get("keep", [])
+
+        # Handle env_vars (may be None if not present in config)
+        if "env_vars" in result and result["env_vars"] is None:
+            result["env_vars"] = {}
+
         return result
 
     @staticmethod
@@ -264,6 +286,7 @@ class ConfigLoader:
         """
         if isinstance(mount, dict):
             d = mount.copy()
+            original = mount
 
             # Handle tmpfs_mounts format
             if "target" in mount:
@@ -278,7 +301,10 @@ class ConfigLoader:
                 d["readonly"] = d.get("readonly", False)
                 d["device"] = d.get("device", False)
                 return d
-        return {}
+            else:
+                # Unknown mount format — return original to avoid data loss
+                return original
+        return original if isinstance(mount, dict) else mount
 
     def get_config(self, override: dict[str, Any] | None = None) -> dict[str, Any]:
         """Load and return the sandbox configuration.
