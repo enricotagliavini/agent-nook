@@ -1,0 +1,243 @@
+# Agent Nook — Default Sandbox Configuration
+#
+# This file is copied to ~/.config/agent-nook/sandbox.yaml on first run.
+# Edit this file to customize your sandbox behavior.
+#
+# See https://github.com/enricotagliavini/agent-nook for documentation.
+
+sandbox:
+  # Human-readable name for this sandbox configuration
+  name: "default-agent"
+
+  # The working directory inside the sandbox (relative to sandbox root)
+  root: "./sandbox"
+
+  # --- Filesystem ---
+  #
+  # Mount host directories into the sandbox.
+  #
+  # Types:
+  #   bind       : --bind SRC DEST       (read-write, regular files)
+  #   ro-bind    : --ro-bind SRC DEST    (read-only)
+  #   dev-bind   : --dev-bind SRC DEST   (allows device access, e.g. GPUs)
+  #   tmpfs      : Not supported directly; use --tmp-overlay instead
+  #
+  # For full filesystem isolation, the host / is mounted read-only.
+  # Sensitive directories are replaced with tmpfs (see --tmp-overlay).
+
+  mounts:
+    # Mount the entire host filesystem read-only
+    # This reuses the host OS image — no separate container image needed.
+    # The agent can read anything, but cannot modify the host.
+    - source: "/"
+      target: "/"
+      readonly: true
+
+    # /proc — always needed for process monitoring
+    # Using --proc /proc gives the agent access to process information.
+    # Set proc_enabled: false below to use selective bind mounts instead.
+    - source: "/proc"
+      target: "/proc"
+      readonly: true
+
+    # /sys — always needed for sysfs information
+    # Using --sys /sys gives access to sysfs filesystem.
+    # Set dev_enabled: false below to use selective bind mounts instead.
+    - source: "/sys"
+      target: "/sys"
+      readonly: true
+
+    # /dev — CRITICAL for AI workloads with GPU acceleration.
+    # Options:
+    #   1. Mount full /dev: Mount all device nodes (recommended for most use cases).
+    #   2. Selective mount: Disable --dev /dev and mount only specific nodes.
+    #
+    # For full /dev access, uncomment below:
+    # - source: "/dev"
+    #   target: "/dev"
+    #   device: true
+    #
+    # For selective device access (e.g. NVIDIA only, no DRI):
+    # Uncomment the lines below and set dev_enabled: false (see below):
+    # - source: "/dev/nvidia0"
+    #   target: "/dev/nvidia0"
+    #   device: true
+    # - source: "/dev/nvidiactl"
+    #   target: "/dev/nvidiactl"
+    #   device: true
+    # - source: "/dev/nvidia-uvm"
+    #   target: "/dev/nvidia-uvm"
+    #   device: true
+    # - source: "/dev/nvidia-modeset"
+    #   target: "/dev/nvidia-modeset"
+    #   device: true
+    # - source: "/dev/dri"
+    #   target: "/dev/dri"
+    #   device: true
+    # - source: "/dev/kfd"
+    #   target: "/dev/kfd"
+    #   device: true
+    # - source: "/dev/nvidia0"
+    #   target: "/dev/nvidia0"
+    #   device: true
+    #
+    # See: man bubblewrap for --dev-bind usage
+    # https://www.man7.org/linux/man-pages/man8/bwrap.8.html
+
+    # /run — needed by some container runtimes (podman, docker)
+    # - source: "/run"
+    #   target: "/run"
+    #   device: true  # needed for socket activation
+
+  # --- Proc and Dev Mount Options ---
+  #
+  # These options control whether bwrap's special --proc and --dev flags
+  # are used, or whether standard bind mounts are used instead.
+  #
+  # --proc /proc and --dev /dev are special bwrap mounts that are
+  # typically more secure than bind mounts. They are always mounted
+  # read-only by bwrap.
+  #
+  # However, --dev /dev mounts the full /dev filesystem, which gives
+  # the agent access to ALL device nodes (including potentially
+  # sensitive ones like /dev/fuse, /dev/mem, etc.).
+  #
+  # If you want more granular control over device access, set both
+  # proc_enabled: false and dev_enabled: false, then selectively
+  # mount only the device nodes you need using --dev-bind:
+  #
+  #   proc_enabled: false
+  #   dev_enabled: false
+  #   mounts:
+  #     - source: "/dev/nvidia0"
+  #       target: "/dev/nvidia0"
+  #       device: true
+  #     - source: "/dev/dri"
+  #       target: "/dev/dri"
+  #       device: true
+  #
+  # This approach gives you the security of bind mounts (can restrict
+  # exactly which devices the agent can access) while still providing
+  # access to the devices you need.
+
+  proc_enabled: true
+  dev_enabled: true
+
+  # --- Capabilities ---
+  #
+  # We use the "drop-all" model: start with no capabilities,
+  # then add only what is explicitly needed.
+  #
+  # Principle of least privilege: the agent runs with MINIMAL permissions.
+
+  capabilities:
+    # Drop ALL capabilities — agent starts completely unprivileged
+    drop:
+      - ALL
+
+    # Only keep these capabilities:
+    #   CHOWN   : needed for chown operations (e.g. creating owned files)
+    #   SETUID  : needed for setuid binaries (rarely needed, but common)
+    #   SETGID  : needed for setgid operations
+    keep:
+      - CHOWN
+      - SETUID
+      - SETGID
+
+  # --- Namespaces ---
+  #
+  # Each namespace provides a degree of isolation:
+  #
+  #   pid       : Separate process tree (each sandbox has its own PIDs)
+  #   uts       : Separate hostname / domain name
+  #   ipc       : Separate IPC namespace (no inter-process communication)
+  #   cgroup    : Separate cgroups (no access to host resource limits)
+  #   user      : Separate user namespace (UIDs are remapped)
+  #   network   : Separate network namespace (own network stack)
+  #
+  # These run in the default order: pid → uts → ipc → cgroup → user → network
+
+  unshare:
+    - pid
+    - uts
+    - ipc
+    - cgroup
+    - user
+    - network
+
+  # --- Network ---
+  #
+  # By default, the sandbox has NO network access (isolated).
+  # To allow network access, use --net-allow-all or specific allowlists.
+  #
+  # ⚠️ SECURITY NOTE: For maximum isolation, keep network disabled.
+  # Enable only when your agent genuinely needs to connect to the outside.
+
+  network:
+    # Allow all network access (unrestricted outbound)
+    allow_all: true
+
+    # Allow only specific hosts (e.g. localhost only)
+    # allow_hosts:
+    #   - "127.0.0.1"
+    #   - "::1"
+
+    # Allow only specific ports (combined with allow_hosts)
+    # allow_ports:
+    #   - 8080
+    #   - 80
+    #   - 443
+
+    # Block all outbound, allow only specific ports
+    # allow_only_ports:
+    #   - 8080
+    #   - 80
+    #   - 443
+
+  # --- Environment Variables ---
+  #
+  # Set environment variables for the sandboxed process.
+  #
+  # Common use cases:
+  #   - Setting LANG/locale
+  #   - Setting CUDA_VISIBLE_DEVICES
+  #   - Setting PYTHONPATH for local libraries
+  #
+  # Example:
+  # env:
+  #   LANG: "en_US.UTF-8"
+  #   CUDA_VISIBLE_DEVICES: "0"
+  #   PYTHONPATH: "/path/to/local/libraries"
+
+  env:
+    # Set a default shell (if the agent spawns shell commands)
+    # SHELL: "/bin/bash"
+
+    # Set locale for consistent behavior
+    # LANG: "en_US.UTF-8"
+
+    # Note: For GPU-specific env vars (CUDA_VISIBLE_DEVICES,
+    # NVIDIA_VISIBLE_DEVICES, ROCM_PATH, etc.), you can either:
+    #   1. Set them here in the YAML file, or
+    #   2. Pass them as env=KEY=VALUE arguments to agent-nook run
+    #
+    # Example:
+    #   agent-nook run --env CUDA_VISIBLE_DEVICES=0 \
+    #                  --command "python3 my_agent.py"
+
+  # --- Security ---
+  #
+  # The following security features are enabled by default:
+  #
+  #   --die-with-parent : Sandbox is killed when bwrap parent dies
+  #   --new-session     : Prevents TIOCSTI command injection attacks
+  #   --cap-drop=ALL    : Drops all capabilities by default
+  #
+  # For maximum security, also consider:
+  #   - Using a seccomp profile (advanced)
+  #   - Using user namespace remapping (already done via --unshare=user)
+  #   - Restricting filesystem access (read-only mounts where possible)
+  #   - Disabling network access
+
+  die_with_parent: true
+  new_session: true
