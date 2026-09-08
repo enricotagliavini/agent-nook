@@ -142,22 +142,6 @@ def main() -> int:
         help="Exit immediately on failure (don't show logs)"
     )
     run_parser.add_argument(
-        "--script",
-        help="Python script code to run (e.g. '-c \"print(\\\"hello\\\")\"')")
-    run_parser.add_argument(
-        "--config", "-f",
-        help="Path to sandbox config file"
-    )
-    run_parser.add_argument(
-        "--config-dir",
-        default=None,
-        help="Override XDG_CONFIG_HOME (default: ~/.config/agent-nook)"
-    )
-    run_parser.add_argument(
-        "--sandbox-root",
-        help="Sandbox root directory (overrides config)"
-    )
-    run_parser.add_argument(
         "--caps",
         action="append",
         default=[],
@@ -170,43 +154,6 @@ def main() -> int:
         help="Additional capabilities to drop (repeat for multiple)"
     )
     run_parser.add_argument(
-        "--unshare",
-        action="append",
-        default=[],
-        choices=["pid", "uts", "ipc", "cgroup", "user", "network"],
-        help="Namespace to unshare (repeat for multiple, default: all)"
-    )
-    run_parser.add_argument(
-        "--bind",
-        action="append",
-        default=[],
-        metavar="SRC:DEST",
-        help="Bind mount host SRC to sandbox DEST (repeat for multiple)"
-    )
-    run_parser.add_argument(
-        "--ro-bind",
-        action="append",
-        default=[],
-        metavar="SRC:DEST",
-        help="Read-only bind mount host SRC to sandbox DEST (repeat for multiple)"
-    )
-    run_parser.add_argument(
-        "--env",
-        action="append",
-        metavar="KEY=VALUE",
-        help="Set environment variable (repeat for multiple)"
-    )
-    run_parser.add_argument(
-        "--unset-env",
-        action="append",
-        metavar="KEY",
-        help="Unset environment variable (repeat for multiple)"
-    )
-    run_parser.add_argument(
-        "--hostname",
-        help="Set sandbox hostname"
-    )
-    run_parser.add_argument(
         "--die-with-parent",
         action="store_true",
         default=True,
@@ -217,23 +164,6 @@ def main() -> int:
         action="store_false",
         dest="die_with_parent",
         help="Keep sandbox alive after parent exits"
-    )
-    run_parser.add_argument(
-        "--new-session",
-        action="store_true",
-        default=True,
-        help="Create new session (prevent TIOCSTI attacks, default: on)"
-    )
-    run_parser.add_argument(
-        "--no-new-session",
-        action="store_false",
-        dest="new_session",
-        help="Don't create new session"
-    )
-    run_parser.add_argument(
-        "--exit-on-fail",
-        action="store_true",
-        help="Exit immediately on failure (don't show logs)"
     )
 
     # init command
