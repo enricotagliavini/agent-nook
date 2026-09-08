@@ -16,6 +16,30 @@ Unlike full container systems (podman, docker, apptainer), this is:
 - **No root required** — works with unprivileged users
 - **Lightweight & fast** — minimal overhead, no daemon required
 
+## Why?
+
+AI Agents usually run with the same UID / GID as your daily user. This means that discretionary access control (DAC) has no way to distinguish it from the human behind the screen. You might not want to share all of your data with the AI Agent, or let it change files in your home directory. As we all know sometimes AI makes mistakes, like in this case, which happened during the development of this very project:
+
+<img width="1651" height="395" alt="Screenshot_20260908_131001" src="https://github.com/user-attachments/assets/c2c7fb5b-2afb-48ca-98fb-361e97ded752" />
+
+the agent tried to `rm -rf ~/.config` that would have wiped a lot of important files in my personal home directory. Luckily opencode stopped the execution and asked as it detected this was not within the project directory. However, there are easy bypass for the AI agent, and I might not be so lucky next time. However, I still want to share data with the agent, for example the git repo itself so it can help me coding. This tool is meant to give you the possibility of decide how to isolate the agent and what to share with it. You can even force it to be unable to use the network, if you like. However, I would **discourage considering this tool a bulletproof security tool**. The main objective is to control what the AI agent can do / access, but it assume the agent itself is trust-able software, that might make, unintentional, mistakes.
+
+## Important notes!
+
+This is a project I do during my spare time. **It may contain errors or security bugs**, so use it at your own risk and don't run untrusted / malicious code within the sandbox. It might find a way out and eat your hamster.
+
+## Special thanks
+
+This project is being developed with the assistance of AI open weight models and a lot of free and open software. With all of the following (plus more) this would not have been possible. A big thank you to everybody!
+
+ - [Qwen AI model](https://huggingface.co/Qwen) for providing the open weight model.
+ - [Opencode](https://opencode.ai/) the AI coding agent I used for this project.
+ - [Lemonade AI server](https://lemonade-server.ai/) for the easy to use personal and local AI server.
+ - [AMD ROCm](https://github.com/ROCm) for the great Linux support. Using ROCm on Fedora worked out of the box and it was a trouble free experience.
+ - [Fedora](https://fedoraproject.org/kde) [Plasma Desktop](https://kde.org/) edition, for making a great Linux distro and packaging ROCm and llama-cpp making it a trouble free installation experience.
+ - [GNU](https://www.gnu.org/) for start and promoting important free software projects.
+ - [Linux](https://www.kernel.org/) For providing the kernel to run all of this.
+
 ## Quick Start
 
 ```bash
