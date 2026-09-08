@@ -207,16 +207,95 @@ class ConfigLoader:
                 result[key] = value
         return result
 
+    def _to_tmpfs_mounts(self, mounts_list: list[dict] | None) -> list[dict]:
+        """Convert a list of tmpfs mount dicts to builder-compatible format.
+
+        Each dict in the list should have:
+          - 'target' (required): the target path inside the sandbox
+          - 'size' (optional, default ""): the maximum size
+          - 'device' (optional, default False): if True, use --tmpfs-override
+
+        Args:
+            mounts_list: List of dicts from the config file, or None for defaults.
+
+        Returns:
+            List of dicts compatible with BwrapBuilder.
+        """
+        if mounts_list is None:
+            return []
+        return list(mounts_list)
+
+    def to_sandbox_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Convert a loaded config dict to a format compatible with BwrapBuilder.
+
+        Args:
+            config: The raw config dict from yaml.safe_load().
+
+        Returns:
+            A config dict ready to be passed to BwrapBuilder.
+        """
+        result = config.copy()
+
+        # Convert mounts list of dicts to proper format
+        if "mounts" in result:
+            mounts = result["mounts"]
+            if isinstance(mounts, list):
+                result["mounts"] = [
+                    self._mount_to_dict(m) for m in mounts
+                ]
+
+        # Convert tmpfs_mounts list of dicts to proper format
+        if "tmpfs_mounts" in result:
+            tmpfs = result["tmpfs_mounts"]
+            if isinstance(tmpfs, list):
+                result["tmpfs_mounts"] = [
+                    self._mount_to_dict(m) for m in tmpfs
+                ]
+
+        return result
+
+    @staticmethod
+    def _mount_to_dict(mount: dict | Any) -> dict[str, Any]:
+        """Normalize a mount specification to a standard dict format.
+
+        Handles both dict and nested-key formats.
+        For tmpfs_mounts: expects keys "target" (required), "size", "device".
+        For bind mounts: expects keys "source", "target", "readonly", "device".
+        """
+        if isinstance(mount, dict):
+            d = mount.copy()
+
+            # Handle tmpfs_mounts format
+            if "target" in mount:
+                # tmpfs_mounts: {"target": "...", "size": "...", "device": bool}
+                d["readonly"] = d.get("readonly", False)
+                d["device"] = d.get("device", False)
+                if "size" not in d:
+                    d["size"] = ""
+                return d
+            elif "source" in mount:
+                # bind mounts: {"source": "...", "target": "...", "readonly": bool, "device": bool}
+                d["readonly"] = d.get("readonly", False)
+                d["device"] = d.get("device", False)
+                return d
+        return {}
+
     def get_config(self, override: dict[str, Any] | None = None) -> dict[str, Any]:
         """Load and return the sandbox configuration.
 
         First checks if default config should be installed,
-        then loads the user's config (if present).
+        then loads the user's config (if present) and converts it
+        to a format compatible with BwrapBuilder.
+
+        Returns:
+            A config dict ready to be passed to BwrapBuilder.
         """
         self.ensure_config_directory()
         self.ensure_state_directory()
         self.ensure_log_directory()
 
         installed_path = self.install_default_config()
+        config = self.load(installed_path, override=override)
 
-        return self.load(installed_path, override=override)
+        # Convert to builder-compatible format
+        return self.to_sandbox_config(config)

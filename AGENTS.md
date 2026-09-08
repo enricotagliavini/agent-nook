@@ -14,7 +14,7 @@
 - **No containers**: We do NOT use podman, docker, or apptainer.
 - **No images**: No dedicated images; sandbox starts from host filesystem.
 - **Flatpak-inspired**: Uses the same low-level isolation technique as Flatpak.
-- **Configuration**: Human-readable YAML following XDG standard directories.
+- **Configuration**: Human-readable YAML following XDG standard directories. The default config is bundled at `src/agent_nook/config/sandbox.yaml` and automatically copied to `~/.config/agent-nook/sandbox.yaml` on first run.
 - **Logging**: Python standard `logging` module with XDG-compliant output.
 - **Unprivileged**: Designed to run without root or sudo.
 
@@ -62,3 +62,43 @@ The application:
 - Writes logs to `~/.local/state/agent-nook/logs/`
 - Creates sandbox directories in user-writable locations by default
 - Uses `--unshare=cgroup` with bwrap for isolation without privileges
+
+## Configuration
+
+Configuration follows [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html).
+
+### Where the config lives
+
+- **Bundled default**: `src/agent_nook/config/sandbox.yaml` — copied to the user config dir on first run.
+- **User config**: `~/.config/agent-nook/sandbox.yaml` — main sandbox configuration.
+- **User config**: `~/.config/agent-nook/logging.yaml` — logger configuration.
+- **Logs**: `~/.local/state/agent-nook/logs/` — log files.
+- **Cache**: `~/.local/state/agent-nook/cache/` — bwrap cache, artifacts.
+
+The default configuration is copied from `src/agent_nook/config/sandbox.yaml` to `~/.config/agent-nook/sandbox.yaml` on first run. You can edit the user config file to customize behavior.
+
+### Tmpfs mounts
+
+By default, `/home` is mounted as a tmpfs (writable in-memory filesystem, invisible to host):
+
+```bash
+# This is the default:
+bwrap ... --tmpfs /home ...
+```
+
+You can customize tmpfs mounts in your config:
+
+```yaml
+sandbox:
+  tmpfs_mounts:
+    - target: "/home"          # unbounded (default)
+    - target: "/app"           # unbounded
+      size: "100M"             # max 100 MiB
+```
+
+This is useful for:
+- Sandboxing agent workspaces (`/app`, `/workspace`)
+- Protecting sensitive directories from the host
+- Keeping sandbox data isolated from persistent storage
+
+See [`builder.py`](src/agent_nook/sandbox/builder.py#L70-L87) for the `TmpfsMount` dataclass.

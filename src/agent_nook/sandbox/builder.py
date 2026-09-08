@@ -61,6 +61,32 @@ class BindMount:
 
 
 @dataclass(frozen=True)
+class TmpfsMount:
+    """A tmpfs mount specification for the sandbox.
+
+    Args:
+        target: The path inside the sandbox to mount as tmpfs.
+        size: The maximum size of the tmpfs mount (e.g., "100M", "1G", "500M").
+              If empty string, uses unbounded tmpfs (default bwrap behavior).
+        device: If True, use --tmpfs-override instead of --tmpfs (allows
+                 device access within tmpfs).
+    """
+
+    target: str
+    size: str = ""
+    device: bool = False
+
+    def to_bwrap_args(self) -> list[str]:
+        """Convert to a list of bwrap --tmpfs CLI arguments.
+
+        bwrap syntax: --tmpfs TARGET SIZE (size can be empty for unbounded)
+        """
+        if self.size:
+            return ["--tmpfs", self.target, self.size]
+        return ["--tmpfs", self.target]
+
+
+@dataclass(frozen=True)
 class CapabilityConfig:
     """Capability drop/add configuration.
 
@@ -177,13 +203,17 @@ class SandboxConfig:
     """Complete sandbox configuration.
 
     This is the main configuration class. All other classes (BindMount,
-    CapabilityConfig, NamespaceConfig, NetworkConfig) are held here
+    CapabilityConfig, NamespaceConfig, NetworkConfig, TmpfsMount) are held here
     and converted to bwrap arguments during command building.
 
     Attributes:
         name: Human-readable name for the sandbox (logging/identification).
         root: The working directory inside the sandbox.
         mounts: List of bind mounts to apply.
+        tmpfs_mounts: List of tmpfs mounts to apply (writable private dirs).
+                     Each element can be a TmpfsMount object or a dict
+                     with "target" (required), "size" (optional), and
+                     "device" (optional) keys.
         capabilities: What capabilities to keep/drop.
         unshare: Which namespaces to isolate.
         die_with_parent: Kill sandbox child when bwrap parent dies.
@@ -192,8 +222,8 @@ class SandboxConfig:
         env_vars: Environment variables to set.
         unenv_vars: Environment variables to unset.
         proc_enabled: If True, use `--proc /proc` (special bwrap mount).
-                     If False, use standard --bind/--ro-bind (allows selective
-                     mounts like /dev/nvidia0 without /dev/dri). Default: True.
+                      If False, use standard --bind/--ro-bind (allows selective
+                      mounts like /dev/nvidia0 without /dev/dri). Default: True.
         dev_enabled: If True, use `--dev /dev` (special bwrap mount).
                      If False, use standard --bind/--dev-bind (allows selective
                      mounts like /dev/nvidia0 without /dev/dri). Default: True.
@@ -202,6 +232,7 @@ class SandboxConfig:
     name: str = "default-sandbox"
     root: str = "./sandbox"
     mounts: list[BindMount] = field(default_factory=list)
+    tmpfs_mounts: list[TmpfsMount] = field(default_factory=list)
     capabilities: CapabilityConfig = field(default_factory=CapabilityConfig)
     unshare: NamespaceConfig = field(default_factory=NamespaceConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
@@ -217,7 +248,8 @@ class SandboxConfig:
         """Convert the entire config to a flat list of bwrap CLI arguments.
 
         Returns a complete command line like:
-            bwrap --die-with-parent --new-session --unshare=pid ... -- python3 script.py
+            bwrap --die-with-parent --new-session --bind /proc /proc --dev /dev \
+            --tmpfs /home --bind /home/user/data /data ... -- python3 script.py
         """
         args: list[str] = []
 
@@ -274,6 +306,12 @@ class BwrapBuilder:
         BindMount(source="/run", target="/run", readonly=False),  # Needed for container runtimes
     ]
 
+    # Default tmpfs mounts (writable, private to sandbox)
+    DEFAULT_TMPFS_MOUNTS: list[TmpfsMount] = [
+        TmpfsMount(target="/home"),
+        TmpfsMount(target="/tmp"),
+    ]
+
     # Always kept capabilities
     DEFAULT_KEEPED_CAPS: list[str] = ["CHOWN", "SETUID", "SETGID"]
 
@@ -281,10 +319,14 @@ class BwrapBuilder:
         self,
         config: SandboxConfig | None = None,
         default_mounts: list[BindMount] | None = None,
+        default_tmpfs_mounts: list[TmpfsMount] | None = None,
     ) -> None:
         self._config = config or SandboxConfig()
         self._default_mounts = (
             default_mounts if default_mounts is not None else self.DEFAULT_MOUNTS
+        )
+        self._default_tmpfs_mounts = (
+            default_tmpfs_mounts if default_tmpfs_mounts is not None else self.DEFAULT_TMPFS_MOUNTS
         )
 
     @property
@@ -301,11 +343,11 @@ class BwrapBuilder:
             A list that can be passed directly to subprocess.run().
 
         Example:
-            >>> config = SandboxConfig(name="my-sandbox")
+            >>> config = SandboxConfig(name="my-sandbox", tmpfs_mounts=[TmpfsMount(target="/home")])
             >>> builder = BwrapBuilder(config)
             >>> cmd = builder.build(["python3", "-c", "print('hi')"])
             >>> print(" ".join(cmd))
-            bwrap --die-with-parent --new-session --bind /proc /proc --dev-bind /dev /dev ...
+            bwrap --die-with-parent --new-session --bind /proc /proc --dev /dev --tmpfs /home ...
             python3 -c print('hi')
         """
         # Collect mounts: default + config overrides
@@ -333,6 +375,28 @@ class BwrapBuilder:
                             device=mount.get("device", False),
                         ))
 
+        # Collect tmpfs mounts: default + config overrides
+        all_tmpfs: list[TmpfsMount] = list(self._default_tmpfs_mounts)
+        for tmpfs in self._config.tmpfs_mounts:
+            if isinstance(tmpfs, TmpfsMount):
+                existing = any(
+                    t.target == tmpfs.target for t in all_tmpfs
+                )
+                if not existing:
+                    all_tmpfs.append(tmpfs)
+            elif isinstance(tmpfs, dict):
+                target = tmpfs.get("target", "")
+                size = tmpfs.get("size", "")
+                device = tmpfs.get("device", False)
+                if target:
+                    existing = any(t.target == target for t in all_tmpfs)
+                    if not existing:
+                        all_tmpfs.append(TmpfsMount(
+                            target=target,
+                            size=size,
+                            device=device,
+                        ))
+
         # Build args
         args: list[str] = [
             "bwrap",
@@ -354,6 +418,10 @@ class BwrapBuilder:
         if self._config.dev_enabled:
             args.append("--dev")
             args.append("/dev")
+
+        # Add tmpfs mounts
+        for tmpfs in all_tmpfs:
+            args.extend(tmpfs.to_bwrap_args())
 
         # Add custom mounts
         for mount in all_mounts:

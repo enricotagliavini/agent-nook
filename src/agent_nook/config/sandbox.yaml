@@ -10,7 +10,7 @@ sandbox:
   name: "default-agent"
 
   # The working directory inside the sandbox (relative to sandbox root)
-  root: "./sandbox"
+  root: "."
 
   # --- Filesystem ---
   #
@@ -20,74 +20,10 @@ sandbox:
   #   bind       : --bind SRC DEST       (read-write, regular files)
   #   ro-bind    : --ro-bind SRC DEST    (read-only)
   #   dev-bind   : --dev-bind SRC DEST   (allows device access, e.g. GPUs)
-  #   tmpfs      : Not supported directly; use --tmp-overlay instead
+  #   tmpfs      : --tmpfs TARGET SIZE   (private writable in-memory fs)
   #
   # For full filesystem isolation, the host / is mounted read-only.
-  # Sensitive directories are replaced with tmpfs (see --tmp-overlay).
-
-  mounts:
-    # Mount the entire host filesystem read-only
-    # This reuses the host OS image — no separate container image needed.
-    # The agent can read anything, but cannot modify the host.
-    - source: "/"
-      target: "/"
-      readonly: true
-
-    # /proc — always needed for process monitoring
-    # Using --proc /proc gives the agent access to process information.
-    # Set proc_enabled: false below to use selective bind mounts instead.
-    - source: "/proc"
-      target: "/proc"
-      readonly: true
-
-    # /sys — always needed for sysfs information
-    # Using --sys /sys gives access to sysfs filesystem.
-    # Set dev_enabled: false below to use selective bind mounts instead.
-    - source: "/sys"
-      target: "/sys"
-      readonly: true
-
-    # /dev — CRITICAL for AI workloads with GPU acceleration.
-    # Options:
-    #   1. Mount full /dev: Mount all device nodes (recommended for most use cases).
-    #   2. Selective mount: Disable --dev /dev and mount only specific nodes.
-    #
-    # For full /dev access, uncomment below:
-    # - source: "/dev"
-    #   target: "/dev"
-    #   device: true
-    #
-    # For selective device access (e.g. NVIDIA only, no DRI):
-    # Uncomment the lines below and set dev_enabled: false (see below):
-    # - source: "/dev/nvidia0"
-    #   target: "/dev/nvidia0"
-    #   device: true
-    # - source: "/dev/nvidiactl"
-    #   target: "/dev/nvidiactl"
-    #   device: true
-    # - source: "/dev/nvidia-uvm"
-    #   target: "/dev/nvidia-uvm"
-    #   device: true
-    # - source: "/dev/nvidia-modeset"
-    #   target: "/dev/nvidia-modeset"
-    #   device: true
-    # - source: "/dev/dri"
-    #   target: "/dev/dri"
-    #   device: true
-    # - source: "/dev/kfd"
-    #   target: "/dev/kfd"
-    #   device: true
-    # - source: "/dev/nvidia0"
-    #   target: "/dev/nvidia0"
-    #   device: true
-    #
-    # See: man bubblewrap for --dev-bind usage
-    # https://www.man7.org/linux/man-pages/man8/bwrap.8.html
-
-    # /run — needed by some container runtimes (podman, docker)
-    # - source: "/run"
-    #   target: "/run"
-    #   device: true  # needed for socket activation
+  # Sensitive directories (like /home) are replaced with tmpfs for privacy.
 
   # --- Proc and Dev Mount Options ---
   #
@@ -122,6 +58,95 @@ sandbox:
 
   proc_enabled: true
   dev_enabled: true
+
+  mounts:
+    # Mount the entire host filesystem read-only
+    # This reuses the host OS image — no separate container image needed.
+    # The agent can read anything, but cannot modify the host.
+    - source: "/"
+      target: "/"
+      readonly: true
+
+    # /proc — always needed for process monitoring
+    # Using --proc /proc gives the agent access to process information.
+    # Set proc_enabled: false below to use selective bind mounts instead.
+    # - source: "/proc"
+    #   target: "/proc"
+    #   readonly: true
+
+    # /sys — always needed for sysfs information
+    # Using --sys /sys gives access to sysfs filesystem.
+    # Set dev_enabled: false below to use selective bind mounts instead.
+    # - source: "/sys"
+    #   target: "/sys"
+    #   readonly: true
+
+    # /dev — CRITICAL for AI workloads with GPU acceleration.
+    # Options:
+    #   1. Mount full /dev: Mount all device nodes (recommended for most use cases).
+    #   2. Selective mount: Disable --dev /dev and mount only specific nodes.
+    #
+    # For full /dev access, uncomment below:
+    # - source: "/dev"
+    #   target: "/dev"
+    #   device: true
+    #
+    # For selective device access (e.g. NVIDIA only, no DRI):
+    # Uncomment the lines below and set dev_enabled: false (see below):
+    # - source: "/dev/nvidia0"
+    #   target: "/dev/nvidia0"
+    #   device: true
+    # - source: "/dev/nvidiactl"
+    #   target: "/dev/nvidiactl"
+    #   device: true
+    # - source: "/dev/nvidia-uvm"
+    #   target: "/dev/nvidia-uvm"
+    #   device: true
+    # - source: "/dev/nvidia-modeset"
+    #   target: "/dev/nvidia-modeset"
+    #   device: true
+    # - source: "/dev/dri"
+    #   target: "/dev/dri"
+    #   device: true
+    # - source: "/dev/kfd"
+    #   target: "/dev/kfd"
+    #   device: true
+    #
+    # See: man bubblewrap for --dev-bind usage
+    # https://www.man7.org/linux/man-pages/man8/bwrap.8.html
+
+    # /run — needed by some container runtimes (podman, docker)
+    # - source: "/run"
+    #   target: "/run"
+    #   device: true  # needed for socket activation
+
+    # --- tmpfs mounts ---
+    #
+    # tmpfs mounts create a private writable filesystem inside the sandbox.
+    # The data lives in memory (or on a tmpfs backing store) and is not
+    # visible to the host. This is perfect for:
+    #   - Writable directories like /home, /tmp, /app
+    #   - Sandboxed agent workspace
+    #
+    # Size is optional:
+    #   - Omitted (empty string)  -> unbounded tmpfs (uses host memory)
+    #   - "100M"                  -> 100 MiB max
+    #   - "1G"                    -> 1 GiB max
+    #
+    # Default tmpfs mounts:
+    #
+    #   TmpfsMount(target="/home")
+    #     => --tmpfs /home
+    #
+    # Example with size limit:
+    #
+    #   TmpfsMount(target="/app", size="100M")
+    #     => --tmpfs /app 100M
+    #
+  tmpfs_mounts:
+    - target: "/home"  # Default: unbounded tmpfs, private to the sandbox
+    - target: "/tmp"   # Default: unbounded tmpfs, private to the sandbox
+    - target: "/run"   # some applications, maybe containers, need this directory
 
   # --- Capabilities ---
   #
