@@ -1,14 +1,14 @@
 """Sandbox runner — orchestrates bubblewrap execution.
 
 This module handles the full lifecycle of a sandboxed execution:
-1. Load configuration
+1. Load configuration (from global nook_config)
 2. Build bwrap command
 3. Execute
 4. Handle errors with specific exception types
 5. Clean up
 
 Error handling follows AGENTS.md guidelines:
-- Specific exception types (BwrapError, ConfigError, PermissionError, etc.)
+- Specific exception types (BwrapError, ConfigError)
 - Clear user-facing messages
 - Stack traces logged at DEBUG level, not shown to user
 - Non-zero exit codes for unrecoverable failures
@@ -21,15 +21,30 @@ import logging
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Generator
 from pathlib import Path
 
+from agent_nook.config.config import SandboxConfig
+from agent_nook.config.loader import ConfigValidationError
+from agent_nook.sandbox.builder import BwrapBuilder, BwrapError
 
-from agent_nook.sandbox.builder import (
-    BwrapBuilder,
-    SandboxConfig,
-    ValidationError,
-)
+
+# Try to import the global nook_config
+try:
+    from agent_nook.config import nook_config
+except ImportError:
+    _nook_config = None
+
+
+def get_global_config() -> SandboxConfig:
+    """Get the global nook_config or return None."""
+    global _nook_config
+    if _nook_config is None:
+        try:
+            from agent_nook.config import nook_config
+            _nook_config = nook_config
+        except (ImportError, RuntimeError):
+            _nook_config = None
+    return _nook_config
 
 
 # Create a dedicated logger for this module
@@ -56,6 +71,7 @@ class SandboxResult:
         stdout: Captured stdout (if captured).
         stderr: Captured stderr (if captured).
         error: Error message if any.
+        log_file: Path to log file if created.
     """
 
     success: bool
@@ -68,16 +84,19 @@ class SandboxResult:
 
 class ConfigError(Exception):
     """Raised when configuration is invalid or missing."""
+
     pass
 
 
 class BwrapError(Exception):
     """Raised when bubblewrap setup fails."""
+
     pass
 
 
 class SandboxExecutionError(Exception):
     """Raised when sandbox execution fails with an unrecoverable error."""
+
     pass
 
 
@@ -85,10 +104,13 @@ def build_command(config: SandboxConfig) -> list[str]:
     """Build the bwrap command line from a configuration.
 
     Args:
-        config: The sandbox configuration.
+        config: The sandbox configuration (must be a SandboxConfig dataclass).
 
     Returns:
         A list representing the bwrap command line.
+
+    Raises:
+        ValueError: If config is not a SandboxConfig dataclass.
     """
     builder = BwrapBuilder(config)
     return builder.build([])
@@ -98,17 +120,17 @@ def validate_config(config: SandboxConfig) -> None:
     """Validate a sandbox configuration.
 
     Args:
-        config: The sandbox configuration to validate.
+        config: The sandbox configuration to validate (must be a SandboxConfig dataclass).
 
     Raises:
-        ValidationError: If the configuration has invalid values.
+        ValueError: If config is not a SandboxConfig dataclass.
     """
     builder = BwrapBuilder(config)
     builder.validate()
 
 
 @contextmanager
-def run_in_sandbox(config: SandboxConfig, command: list[str]) -> Generator[SandboxResult, None, None]:
+def run_in_sandbox(config: SandboxConfig, command: list[str]) -> SandboxResult:
     """Run a command inside a bwrap sandbox.
 
     This is the main entry point for sandboxed execution. It handles
@@ -116,10 +138,10 @@ def run_in_sandbox(config: SandboxConfig, command: list[str]) -> Generator[Sandb
     and cleanup.
 
     Args:
-        config: The sandbox configuration.
+        config: The sandbox configuration (must be a SandboxConfig dataclass).
         command: The command and arguments to run inside the sandbox.
 
-    Yields:
+    Returns:
         SandboxResult describing the outcome.
 
     Raises:
@@ -129,6 +151,7 @@ def run_in_sandbox(config: SandboxConfig, command: list[str]) -> Generator[Sandb
             unrecoverable error occurs.
     """
     logger = _get_sandbox_logger()
+
     logger.debug("Running sandbox with config: name=%s, command=%s",
                  config.name, " ".join(command))
 
@@ -185,79 +208,32 @@ def run_in_sandbox(config: SandboxConfig, command: list[str]) -> Generator[Sandb
                 raise BwrapError(
                     f"bwrap path error: {result.stderr[:500]}"
                 )
-            logger.error("bwrap stderr: %s", result.stderr[:2000])
 
-        yield SandboxResult(
+        return SandboxResult(
             success=result.returncode == 0,
             return_code=result.returncode,
             stdout=result.stdout,
             stderr=result.stderr,
         )
 
-    except ValidationError as e:
-        logger.error("Configuration validation failed: %s", e, exc_info=True)
-        yield SandboxResult(
-            success=False,
-            error=f"Configuration error: {e}",
-        )
-
     except BwrapError as e:
         logger.error("Bubblewrap setup failed: %s", e, exc_info=True)
-        yield SandboxResult(
-            success=False,
-            error=f"Sandbox setup error: {e}",
-        )
+        raise
 
-    except PermissionError as e:
-        logger.error("Permission denied: %s", e, exc_info=True)
-        yield SandboxResult(
-            success=False,
-            error=f"Permission denied: {e}",
-        )
-
-    except FileNotFoundError as e:
-        logger.error("Command or file not found: %s", e, exc_info=True)
-        yield SandboxResult(
-            success=False,
-            error=f"Command not found: {e}",
-        )
+    except ConfigError as e:
+        logger.error("Configuration error: %s", e, exc_info=True)
+        raise
 
     except subprocess.TimeoutExpired as e:
         logger.error("Timeout after %d seconds", e.timeout, exc_info=True)
-        yield SandboxResult(
-            success=False,
-            return_code=e.returncode,
-            stdout=e.stdout.decode("utf-8", errors="replace") if e.stdout else None,
-            stderr=e.stderr.decode("utf-8", errors="replace") if e.stderr else None,
-            error=f"Timeout: command exceeded {e.timeout}s limit",
-        )
-
-    except subprocess.CalledProcessError as e:
-        logger.error("Command failed with exit code %d", e.returncode, exc_info=True)
-        yield SandboxResult(
-            success=False,
-            return_code=e.returncode,
-            stdout=e.stdout.decode("utf-8", errors="replace") if e.stdout else None,
-            stderr=e.stderr.decode("utf-8", errors="replace") if e.stderr else None,
-            error=f"Command failed with exit code {e.returncode}",
-        )
+        raise
 
     except Exception as e:
         # Catch-all for unexpected errors
         logger.exception("Unexpected error during sandbox execution: %s", e)
-        yield SandboxResult(
-            success=False,
-            error=f"Unexpected error: {type(e).__name__}: {e}",
+        raise SandboxExecutionError(
+            f"Unexpected error: {type(e).__name__}: {e}"
         )
-
-    finally:
-        # Cleanup: remove sandbox dir if it still exists
-        if sandbox_dir is not None and sandbox_dir.exists():
-            try:
-                import shutil
-                shutil.rmtree(sandbox_dir, ignore_errors=True)
-            except Exception:
-                logger.warning("Failed to cleanup sandbox directory: %s", sandbox_dir)
 
 
 def _execute_command(

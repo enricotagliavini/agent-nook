@@ -164,6 +164,19 @@ def get_logger(name: Optional[str] = None) -> logging.Logger:
     return logger
 
 
+def get_global_config() -> dict:
+    """Get the global nook_config.
+
+    Returns:
+        The global configuration dictionary.
+    """
+    try:
+        from agent_nook.config import nook_config
+        return nook_config
+    except (ImportError, RuntimeError):
+        return {}
+
+
 def main_logger(name: str = "agent_nook", level: str = "INFO") -> logging.Logger:
     """Set up logging and return the logger.
 

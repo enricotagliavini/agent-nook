@@ -14,6 +14,9 @@ from agent_nook.runner._core import (
     validate_config,
 )
 
+# Config exports
+from agent_nook.config.loader import ConfigLoader, ConfigValidationError
+
 __all__ = [
     "BwrapError",
     "ConfigError",
@@ -22,4 +25,6 @@ __all__ = [
     "build_command",
     "run_in_sandbox",
     "validate_config",
+    "ConfigLoader",
+    "ConfigValidationError",
 ]

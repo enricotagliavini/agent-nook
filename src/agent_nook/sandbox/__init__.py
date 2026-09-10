@@ -1,21 +1,6 @@
-"""Agent Nook sandbox module."""
+"""Sandbox builder module."""
 
-from agent_nook.sandbox.builder import (
-    SandboxConfig,
-    BindMount,
-    CapabilityConfig,
-    NamespaceConfig,
-    NetworkConfig,
-    BwrapBuilder,
-    ValidationError,
-)
+from agent_nook.sandbox.builder import BwrapBuilder, BwrapError
+from agent_nook.config.config import SandboxConfig
 
-__all__ = [
-    "SandboxConfig",
-    "BindMount",
-    "CapabilityConfig",
-    "NamespaceConfig",
-    "NetworkConfig",
-    "BwrapBuilder",
-    "ValidationError",
-]
+__all__ = ["BwrapBuilder", "BwrapError", "SandboxConfig"]

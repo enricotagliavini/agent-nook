@@ -17,6 +17,9 @@ import sys
 import os
 from typing import Optional
 
+from agent_nook.config import nook_config, set_config
+from agent_nook.config.loader import ConfigLoader, ConfigValidationError as ValidationError
+
 
 __version__ = "0.1.0"
 
@@ -91,7 +94,7 @@ def main() -> int:
         action="append",
         default=[],
         metavar="NS",
-        help="Unshare namespace (e.g. 'pid,uts,ipc', repeat for multiple)"
+        help="Unshare namespace (e.g. 'pid,uts', repeat for multiple)"
     )
     run_parser.add_argument(
         "--bind",
@@ -215,6 +218,9 @@ def main() -> int:
         return 130
     except SystemExit as e:
         return e.code if e.code is not None else 0
+    except ConfigValidationError as e:
+        print(f"Configuration error: {e}", file=sys.stderr)
+        return 1
 
 
 def _dispatch_command(args: argparse.Namespace) -> int:
@@ -237,8 +243,9 @@ def _dispatch_command(args: argparse.Namespace) -> int:
 
 def _cmd_run(args: argparse.Namespace) -> int:
     """Run a command inside a sandbox."""
-    from agent_nook.config.loader import ConfigLoader
+    from agent_nook.config import nook_config
     from agent_nook.runner import run_in_sandbox, SandboxResult, BwrapError
+    from agent_nook.config.loader import ConfigValidationError
     from agent_nook.sandbox.builder import BwrapBuilder, SandboxConfig
     from agent_nook.utils.logger import setup_logger
     import logging
@@ -264,25 +271,31 @@ def _cmd_run(args: argparse.Namespace) -> int:
         else:
             config_path = config_loader.install_default_config()
             config_dict = config_loader.load(config_path)
+
+        # Set as global config (accessible via `from config import nook_config`)
+        set_config(config_dict)
     except FileNotFoundError as e:
         logger.error("Config file not found: %s", e)
+        return 1
+    except ConfigValidationError as e:
+        logger.error("Configuration validation failed: %s", e)
         return 1
     except Exception as e:
         logger.error("Failed to load config: %s", e)
         return 1
 
-    # Extract the 'sandbox' key from the config (YAML has 'sandbox: {...}')
-    if "sandbox" in config_dict:
-        config_dict = config_dict["sandbox"]
-
     # Apply CLI overrides
     config_dict = _apply_cli_overrides(config_dict, args)
 
-    # Validate
+    # Build SandboxConfig from the normalized dict
     try:
-        builder = BwrapBuilder(SandboxConfig(**config_dict))
+        config = SandboxConfig(**config_dict)
+        builder = BwrapBuilder(config)
         builder.validate()
-    except Exception as e:
+    except TypeError as e:
+        logger.error("Configuration error: %s", e)
+        return 1
+    except ConfigValidationError as e:
         logger.error("Configuration validation failed: %s", e)
         return 1
 
@@ -302,7 +315,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     logger.debug("Full bwrap command: %s", " ".join(full_bwrap_cmd))
 
     try:
-        with run_in_sandbox(SandboxConfig(**config_dict), full_bwrap_cmd) as result:
+        with run_in_sandbox(config, full_bwrap_cmd) as result:
             if result.success:
                 logger.info("✓ Sandbox executed successfully")
                 if result.stdout:
@@ -455,31 +468,31 @@ def _cmd_list(args: argparse.Namespace) -> int:
 
 def _apply_cli_overrides(config_dict: dict, args: argparse.Namespace) -> dict:
     """Apply command-line argument overrides to the config."""
-    # Override config file path
-    if hasattr(args, 'config') and args.config:
-        config_dict["config_path"] = args.config
+    import sys
+
+    result = config_dict.copy()
 
     # Override sandbox root
     if hasattr(args, 'sandbox_root') and args.sandbox_root:
-        config_dict["sandbox_root"] = args.sandbox_root
+        result["root"] = args.sandbox_root
 
     # Override die_with_parent
     if hasattr(args, 'die_with_parent') and args.die_with_parent is not True:
-        config_dict["sandbox"]["die_with_parent"] = args.die_with_parent
+        result["die_with_parent"] = args.die_with_parent
 
     # Override new_session
     if hasattr(args, 'new_session') and args.new_session is not True:
-        config_dict["sandbox"]["new_session"] = args.new_session
+        result["new_session"] = args.new_session
 
     # Override hostname
     if hasattr(args, 'hostname') and args.hostname:
-        config_dict["sandbox"]["hostname"] = args.hostname
+        result["hostname"] = args.hostname
 
-    # Override mounts
+    # Override mounts from --bind / --ro-bind
     for bind in getattr(args, 'bind', []):
         parts = bind.split(":")
         if len(parts) == 2:
-            config_dict["sandbox"]["mounts"].append({
+            result.setdefault("mounts", []).append({
                 "source": parts[0],
                 "target": parts[1],
                 "readonly": False,
@@ -488,29 +501,44 @@ def _apply_cli_overrides(config_dict: dict, args: argparse.Namespace) -> dict:
     for bind in getattr(args, 'ro_bind', []):
         parts = bind.split(":")
         if len(parts) == 2:
-            config_dict["sandbox"]["mounts"].append({
+            result.setdefault("mounts", []).append({
                 "source": parts[0],
                 "target": parts[1],
                 "readonly": True,
             })
 
-    # Override capabilities with --cap-add
+    # Override capabilities with --cap-add / --cap-drop
     for cap in getattr(args, 'cap_add', []):
-        config_dict["sandbox"]["capabilities"]["kept"].append(cap)
+        if "kept" not in result.get("capabilities", {}):
+            result.setdefault("capabilities", {})["kept"] = []
+        result["capabilities"]["kept"].append(cap)
 
     for cap in getattr(args, 'cap_drop', []):
-        config_dict["sandbox"]["capabilities"]["dropped"].append(cap)
+        if "dropped" not in result.get("capabilities", {}):
+            result.setdefault("capabilities", {})["dropped"] = []
+        result["capabilities"]["dropped"].append(cap)
 
-    # Override unshare with comma-separated namespace list
-    # E.g., "--unshare pid,uts" or multiple --unshare pid --unshare uts
+    # Override unshare with --unshare (comma-separated list)
     for ns_str in getattr(args, 'unshare', []):
         ns_str = ns_str.strip()
         namespaces = [ns.strip().lower() for ns in ns_str.split(",")]
         for ns in namespaces:
-            if ns and ns not in config_dict["sandbox"]["unshare"]:
-                config_dict["sandbox"]["unshare"][ns] = True
+            if ns and "unshare" not in result:
+                result["unshare"] = []
+            if ns not in result["unshare"]:
+                result["unshare"].append(ns)
 
-    return config_dict
+    # Override env with --env
+    for env in getattr(args, 'env', []):
+        if "=" in env:
+            key, value = env.split("=", 1)
+            result.setdefault("env_vars", {})[key] = value
+
+    # Override unset-env
+    for var in getattr(args, 'unset_env', []):
+        result.setdefault("unenv_vars", []).append(var)
+
+    return result
 
 
 if __name__ == "__main__":
