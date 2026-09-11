@@ -21,18 +21,9 @@ import os
 import sys
 import logging
 import logging.handlers
-from pathlib import Path
 from typing import Optional
 
-
-def get_state_dir() -> str:
-    """Get the XDG state directory for agent-nook.
-
-    Reads XDG_STATE_HOME from environment, falls back to
-    ~/.local/state/agent-nook.
-    """
-    xdg_state = os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state"))
-    return os.path.join(xdg_state, "agent-nook")
+from agent_nook.config import get_state_dir
 
 
 def get_log_directory() -> str:

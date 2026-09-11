@@ -17,8 +17,10 @@ import sys
 import os
 from typing import Optional
 
-from agent_nook.config import nook_config, set_config
-from agent_nook.config.loader import ConfigLoader, ConfigValidationError as ValidationError
+from agent_nook.config import nook_config, set_config, get_config_dir, get_state_dir
+from agent_nook.config.loader import ConfigLoader
+from agent_nook.config.config import ConfigValidationError
+from agent_nook.utils.directories import ensure_directories
 
 
 __version__ = "0.1.0"
@@ -65,12 +67,6 @@ def main() -> int:
         help="Path to sandbox config file (default: ~/.config/agent-nook/sandbox.yaml)"
     )
     run_parser.add_argument(
-        "--config-dir",
-        default=None,
-        metavar="DIR",
-        help="Override XDG_CONFIG_HOME (default: ~/.config/agent-nook)"
-    )
-    run_parser.add_argument(
         "--sandbox-root",
         metavar="DIR",
         help="Sandbox root directory (overrides config)"
@@ -113,12 +109,14 @@ def main() -> int:
     run_parser.add_argument(
         "--env",
         action="append",
+        default=[],
         metavar="KEY=VALUE",
         help="Set environment variable (e.g. 'KEY=value', repeat for multiple)"
     )
     run_parser.add_argument(
         "--unset-env",
         action="append",
+        default=[],
         metavar="KEY",
         help="Unset environment variable (repeat for multiple)"
     )
@@ -204,7 +202,7 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    if args.command is None:
+    if args.subcommand is None:
         parser.print_help()
         return 0
 
@@ -243,7 +241,8 @@ def _dispatch_command(args: argparse.Namespace) -> int:
 
 def _cmd_run(args: argparse.Namespace) -> int:
     """Run a command inside a sandbox."""
-    from agent_nook.config import nook_config
+    from agent_nook.config import get_config_dir, get_state_dir
+    from agent_nook.config.loader import ConfigLoader
     from agent_nook.runner import run_in_sandbox, SandboxResult, BwrapError
     from agent_nook.config.loader import ConfigValidationError
     from agent_nook.sandbox.builder import BwrapBuilder, SandboxConfig
@@ -255,13 +254,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
     logger = setup_logger("agent_nook", level="INFO" if not args.verbose else "DEBUG")
     logger.info("Agent Nook v%s — Running command", __version__)
 
-    # Setup config
-    config_dir = args.config_dir
+    # Resolve config and state directories using XDG paths
+    config_dir = get_config_dir()
+    state_dir = get_state_dir()
 
+    ensure_directories([config_dir, state_dir, os.path.join(state_dir, "logs")])
+
+    # Setup config
     config_loader = ConfigLoader(config_dir)
-    config_loader.ensure_config_directory()
-    config_loader.ensure_state_directory()
-    config_loader.ensure_log_directory()
 
     # Load configuration
     try:
@@ -284,6 +284,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
         logger.error("Failed to load config: %s", e)
         return 1
 
+    config_dict = dict(config_dict.__dict__)
+    # Apply CLI overrides
     # Apply CLI overrides
     config_dict = _apply_cli_overrides(config_dict, args)
 
@@ -340,17 +342,21 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 def _cmd_init(args: argparse.Namespace) -> int:
     """Initialize the agent-nook config directory."""
+    from agent_nook.config import get_config_dir, get_state_dir
     from agent_nook.config.loader import ConfigLoader
     from agent_nook.utils.logger import setup_logger
+    from agent_nook.utils.directories import ensure_directories
     import logging
 
     logger = setup_logger("agent_nook", level="DEBUG")
     logger.info("Initializing Agent Nook config...")
 
-    config_loader = ConfigLoader(args.config_dir if hasattr(args, 'config_dir') else None)
-    config_loader.ensure_config_directory()
-    config_loader.ensure_state_directory()
-    config_loader.ensure_log_directory()
+    config_dir = get_config_dir()
+    state_dir = get_state_dir()
+
+    ensure_directories([config_dir, state_dir, os.path.join(state_dir, "logs")])
+
+    config_loader = ConfigLoader(config_dir)
 
     try:
         config_path = config_loader.install_default_config()
@@ -358,15 +364,15 @@ def _cmd_init(args: argparse.Namespace) -> int:
         logger.error("Cannot find default config. Install agent-nook first.")
         return 1
 
-    logger.info("✓ Config directory: %s", config_loader.config_dir)
-    logger.info("✓ State directory: %s", config_loader.state_dir)
-    logger.info("✓ Logs directory: %s", config_loader.state_dir + "/logs")
+    logger.info("✓ Config directory: %s", config_dir)
+    logger.info("✓ State directory: %s", state_dir)
+    logger.info("✓ Logs directory: %s", os.path.join(state_dir, "logs"))
     logger.info("✓ Default config: %s", config_path)
     logger.info("")
     logger.info("Edit %s to customize your sandbox.", config_path)
     logger.info("")
     logger.info("Example:")
-    logger.info("  agent-nook run -c 'python3 -c \\\"print(\\\\\\\"Hello from sandbox!\\\\\\\")\\\"'")
+    logger.info("  agent-nook run -c 'python3 -c \\\"print(\\\"\\\"\\\"Hello from sandbox!\\\"\\\"\\\")\\\"'")
 
     return 0
 

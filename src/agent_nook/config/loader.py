@@ -74,30 +74,13 @@ class ConfigLoader:
         self._raw_config: dict[str, Any] | None = None
         self._config: SandboxConfig | None = None
 
-    @property
-    def config_dir(self) -> str:
-        """Get the config directory from XDG_CONFIG_HOME."""
-        if self._config_dir is not None:
-            return self._config_dir
+    
 
-        xdg_config = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
-        self._config_dir = os.path.join(xdg_config, "agent-nook")
-        return self._config_dir
+    
 
-    @property
-    def state_dir(self) -> str:
-        """Get the state directory from XDG_STATE_HOME."""
-        xdg_state = os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state"))
-        return os.path.join(xdg_state, "agent-nook")
+    
 
-    @property
-    def sandbox_config_path(self) -> str:
-        """Path to the sandbox configuration file."""
-        return os.path.join(self.config_dir, "sandbox.yaml")
-
-    def ensure_config_directory(self) -> None:
-        """Create the config directory if it doesn't exist."""
-        os.makedirs(self.config_dir, exist_ok=True)
+    
 
     def find_default_config(self) -> str:
         """Find the bundled default configuration file.
@@ -401,8 +384,17 @@ class ConfigLoader:
                 "Cannot keep capabilities when dropping ALL"
             )
 
+        # Normalize capability names (accept both "CHOWN" and "CAP_CHOWN")
+        def _normalize_cap(name: str) -> str:
+            if name.startswith("CAP_"):
+                return name
+            return "CAP_" + name
+
+        normalized_dropped = [_normalize_cap(cap) for cap in dropped]
+        normalized_kept = [_normalize_cap(cap) for cap in kept]
+
         # Validate capability names
-        all_caps = dropped + kept
+        all_caps = normalized_dropped + normalized_kept
         invalid = [cap for cap in all_caps if cap not in valid_capabilities]
         if invalid:
             raise ConfigValidationError(
@@ -492,10 +484,17 @@ class ConfigLoader:
         Returns:
             The path to the installed config file.
         """
-        self.ensure_config_directory()
+        import agent_nook
+        package_dir = Path(agent_nook.__file__).parent
+        default_config_path = package_dir / "config" / "sandbox.yaml"
 
         default_path = self.find_default_config()
-        target_path = self.sandbox_config_path
+        target_path = str(default_config_path)
+        if not os.path.exists(default_path):
+            raise FileNotFoundError(
+                f"Default config not found at {default_path}. "
+                f"Install agent-nook with: pip install -e ."
+            )
 
         if not os.path.exists(target_path):
             self._logger.info(
