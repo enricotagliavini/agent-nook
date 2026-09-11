@@ -74,14 +74,6 @@ class ConfigLoader:
         self._raw_config: dict[str, Any] | None = None
         self._config: SandboxConfig | None = None
 
-    
-
-    
-
-    
-
-    
-
     def find_default_config(self) -> str:
         """Find the bundled default configuration file.
 

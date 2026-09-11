@@ -82,6 +82,22 @@ class SandboxResult:
     stdout: str | None = None
     stderr: str | None = None
 
+    def __post_init__(self) -> None:
+        """Validate the result."""
+        if self.stdout is not None and not isinstance(self.stdout, str):
+            raise TypeError("stdout must be str or None")
+        if self.stderr is not None and not isinstance(self.stderr, str):
+            raise TypeError("stderr must be str or None")
+
+    def __enter__(self) -> "SandboxResult":
+        """Context manager entry - returns self."""
+        return self
+
+    def __exit__(self, exc_type: type | None, exc_val: BaseException | None,
+                 exc_tb: object | None) -> None:
+        """Context manager exit - no-op for clean exit paths."""
+        pass
+
 
 def build_command(config: SandboxConfig, command: list[str] | None = None) -> list[str]:
     """Build the bwrap command line from a configuration.
@@ -174,7 +190,7 @@ def run_in_sandbox(
 
         # Step 3: Execute
         logger.info("Running command: %s", " ".join(command))
-        logger.info("Full bwrap command: %s", " ".join(bwrap_cmd))
+        logger.info("Full bwrap command: %s", " ".join(bwrap_cmd), extra={"command_only": True})
 
         result = _execute_command(bwrap_cmd, command, logger, timeout=timeout)
 
@@ -225,8 +241,6 @@ def _execute_command(
     """
     # bwrap runs the command as-is inside the sandbox
     full_cmd = bwrap_cmd
-
-    logger.debug("Full bwrap command: %s", " ".join(full_cmd))
 
     # Execute
     result = subprocess.run(

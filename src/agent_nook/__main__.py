@@ -19,7 +19,7 @@ from typing import Optional
 
 from agent_nook.config import nook_config, set_config, get_config_dir, get_state_dir
 from agent_nook.config.loader import ConfigLoader
-from agent_nook.config.config import ConfigValidationError
+from agent_nook.config.config import ConfigValidationError, SandboxConfig
 from agent_nook.utils.directories import ensure_directories
 
 
@@ -284,14 +284,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
         logger.error("Failed to load config: %s", e)
         return 1
 
-    config_dict = dict(config_dict.__dict__)
-    # Apply CLI overrides
-    # Apply CLI overrides
+    # Convert SandboxConfig to dict for override processing
+    config_dict = config_dict.__dict__.copy()
+    # Apply CLI overrides (returns SandboxConfig)
     config_dict = _apply_cli_overrides(config_dict, args)
 
-    # Build SandboxConfig from the normalized dict
+    # Build SandboxConfig from the normalized dict (already a SandboxConfig)
     try:
-        config = SandboxConfig(**config_dict)
+        config = config_dict
         builder = BwrapBuilder(config)
         builder.validate()
     except TypeError as e:
@@ -327,8 +327,6 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 return 0
             else:
                 logger.error("✗ Sandbox execution failed")
-                if result.error:
-                    logger.error("  %s", result.error)
                 if result.stderr:
                     logger.error("  stderr: %s", result.stderr[:2000])
                 return result.return_code or 1
@@ -472,10 +470,18 @@ def _cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
-def _apply_cli_overrides(config_dict: dict, args: argparse.Namespace) -> dict:
-    """Apply command-line argument overrides to the config."""
-    import sys
+def _apply_cli_overrides(config_dict: dict, args: argparse.Namespace) -> SandboxConfig:
+    """Apply command-line argument overrides to the config.
 
+    Args:
+        config_dict: The configuration dictionary (already a SandboxConfig.__dict__).
+        args: Parsed CLI arguments.
+
+    Returns:
+        A new SandboxConfig with CLI overrides applied.
+    """
+    import sys
+    # Convert to dict, mutate, then rebuild SandboxConfig
     result = config_dict.copy()
 
     # Override sandbox root
@@ -544,7 +550,7 @@ def _apply_cli_overrides(config_dict: dict, args: argparse.Namespace) -> dict:
     for var in getattr(args, 'unset_env', []):
         result.setdefault("unenv_vars", []).append(var)
 
-    return result
+    return SandboxConfig(**result)
 
 
 if __name__ == "__main__":

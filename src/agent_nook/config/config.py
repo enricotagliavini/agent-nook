@@ -235,15 +235,23 @@ class CapabilitySet:
     def build(self) -> list[str]:
         """Convert to bwrap --cap-drop and --cap-add arguments.
 
+        Capability names are normalized (e.g., "CHOWN" → "CAP_CHOWN").
+
         Returns:
             A list of bwrap CLI arguments.
         """
+        # Normalize capability names (accept both "CHOWN" and "CAP_CHOWN")
+        def _normalize_cap(name: str) -> str:
+            if name.startswith("CAP_"):
+                return name
+            return "CAP_" + name
+
         args: list[str] = []
         if self.dropped:
             for cap in self.dropped:
-                args.extend(["--cap-drop", cap])
+                args.extend(["--cap-drop", _normalize_cap(cap)])
         for cap in self.kept:
-            args.extend(["--cap-add", cap])
+            args.extend(["--cap-add", _normalize_cap(cap)])
         return args
 
 
