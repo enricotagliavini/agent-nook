@@ -100,3 +100,10 @@ hostname: "agent-sandbox"
 # env_vars:
 #   HOME: "/home/agent"
 #   PATH: "/usr/local/bin:/usr/bin:/bin"
+
+# === Timeout ===
+# Set a timeout in seconds for command execution.
+# If omitted or set to None, commands run indefinitely.
+# timeout: 60
+
+# === Environment ===

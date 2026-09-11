@@ -296,13 +296,17 @@ class SandboxConfig:
     load() to construct instances — do not construct directly.
 
     Mounts can use the unified type system:
-        - type: "bind"     -> --bind SRC DEST
-        - type: "ro-bind"   -> --ro-bind SRC DEST
-        - type: "dev-bind"  -> --dev-bind SRC DEST
-        - type: "tmpfs"     -> --tmpfs TARGET [SIZE]
-        - type: "proc"      -> --proc TARGET
-        - type: "dev"       -> --dev TARGET
-        - type: "dir"       -> --dir TARGET
+        - type: "bind"     → --bind SRC DEST
+        - type: "ro-bind"   → --ro-bind SRC DEST
+        - type: "dev-bind"  → --dev-bind SRC DEST
+        - type: "tmpfs"     → --tmpfs TARGET [SIZE]
+        - type: "proc"      → --proc TARGET
+        - type: "dev"       → --dev TARGET
+        - type: "dir"       → --dir TARGET
+
+    Timeout:
+        - timeout: int or None (default) → No timeout
+        - timeout: 60                    → Command fails after 60s
     """
 
     name: str
@@ -313,6 +317,7 @@ class SandboxConfig:
     die_with_parent: bool = True
     new_session: bool = True
     hostname: str | None = None
+    timeout: int | None = None
     env_vars: dict[str, str] = field(default_factory=dict)
     unenv_vars: list[str] = field(default_factory=list)
     _raw_config: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -367,6 +372,10 @@ class SandboxConfig:
         This builds the core bwrap arguments from the config.
         For full command construction including the actual command to run,
         use BwrapBuilder.build() instead.
+
+        Returns:
+            A list of bwrap CLI arguments. Does NOT include the command
+            to run or its arguments.
         """
         args: list[str] = ["bwrap"]
 
@@ -375,6 +384,10 @@ class SandboxConfig:
             args.append("--die-with-parent")
         if self.new_session:
             args.append("--new-session")
+
+        # Timeout (if set and not None)
+        if self.timeout is not None:
+            args.extend(["--timeout", str(self.timeout)])
 
         # Proc mount
         for mount in self.mounts:

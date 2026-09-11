@@ -164,7 +164,7 @@ class ConfigLoader:
 
         # Step 2: Validate known keys
         known_keys = {"name", "root", "mounts", "capabilities", "unshare",
-                      "die_with_parent", "new_session", "hostname",
+                      "die_with_parent", "new_session", "hostname", "timeout",
                       "env_vars", "unenv_vars"}
         for key in raw.keys():
             if key not in known_keys:
@@ -195,7 +195,7 @@ class ConfigLoader:
         self._raw_config = data
 
         known_keys = {"name", "root", "mounts", "capabilities", "unshare",
-                      "die_with_parent", "new_session", "hostname",
+                      "die_with_parent", "new_session", "hostname", "timeout",
                       "env_vars", "unenv_vars"}
         for key in data.keys():
             if key not in known_keys:
@@ -243,6 +243,7 @@ class ConfigLoader:
         # Boolean flags
         die_with_parent = data.get("die_with_parent", True)
         new_session = data.get("new_session", True)
+        timeout = data.get("timeout", None)
 
         # Environment variables
         env_vars = data.get("env_vars", {})
@@ -263,6 +264,7 @@ class ConfigLoader:
             die_with_parent=die_with_parent,
             new_session=new_session,
             hostname=hostname,
+            timeout=timeout,
             env_vars=env_vars,
             unenv_vars=unenv_vars,
             _raw_config=data,

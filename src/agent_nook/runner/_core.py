@@ -131,7 +131,7 @@ def validate_config(config: SandboxConfig) -> None:
 def run_in_sandbox(
     config: SandboxConfig,
     command: list[str],
-    timeout: int | None = 3600,
+    timeout: int | None = None,
 ) -> SandboxResult:
     """Run a command inside a bwrap sandbox.
 
@@ -142,7 +142,9 @@ def run_in_sandbox(
     Args:
         config: The sandbox configuration (must be a SandboxConfig dataclass).
         command: The command and arguments to run inside the sandbox.
-        timeout: Optional timeout in seconds (default: 3600).
+        timeout: Optional timeout in seconds. Defaults to None (no timeout).
+            If set, the command will be terminated after the specified duration
+            with a TimeoutExpired exception.
 
     Returns:
         SandboxResult describing the outcome.
@@ -152,6 +154,7 @@ def run_in_sandbox(
         BwrapError: If bubblewrap fails to set up the sandbox.
         SandboxExecutionError: If the command fails to start or an
             unrecoverable error occurs.
+        subprocess.TimeoutExpired: If the command exceeds the timeout.
     """
     logger = _get_sandbox_logger()
 
@@ -201,7 +204,7 @@ def _execute_command(
     bwrap_cmd: list[str],
     command: list[str],
     logger: logging.Logger,
-    timeout: int | None = 3600,
+    timeout: int | None = None,
 ) -> SandboxResult:
     """Execute the bwrap command and return the result.
 
@@ -209,14 +212,16 @@ def _execute_command(
         bwrap_cmd: The full bwrap command line.
         command: The original command (for logging).
         logger: Logger for debug output.
-        timeout: Maximum time to wait for the command (default: 3600 seconds).
+        timeout: Maximum time to wait for the command in seconds.
+            If None (default), no timeout is applied and the command
+            runs until completion.
 
     Returns:
         SandboxResult with stdout/stderr capture.
 
     Raises:
         BwrapError: If bubblewrap itself fails.
-        subprocess.TimeoutExpired: If the command times out.
+        subprocess.TimeoutExpired: If the command exceeds the timeout.
     """
     # bwrap runs the command as-is inside the sandbox
     full_cmd = bwrap_cmd
