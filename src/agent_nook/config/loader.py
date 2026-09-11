@@ -24,7 +24,6 @@ try:
     from agent_nook.config.config import (
         SandboxConfig,
         Mount,
-        TmpfsMount,
         CapabilitySet,
         NamespaceSet,
     )
@@ -32,17 +31,13 @@ except ImportError:
     from ..config.config import (
         SandboxConfig,
         Mount,
-        TmpfsMount,
         CapabilitySet,
         NamespaceSet,
     )
 
+from .config import ConfigValidationError
 
 logger = logging.getLogger(__name__)
-
-
-# Re-export from config module
-from .config import ConfigValidationError
 
 
 class ConfigLoader:
@@ -52,11 +47,11 @@ class ConfigLoader:
         name: "my-sandbox"
         root: "/tmp"
         mounts:
-          - source: /host/path
-            target: /sandbox/path
-        tmpfs_mounts:
-          - target: /tmp
-            size: 100M
+          - target: /proc
+            type: proc
+          - target: "/home"
+            type: tmpfs
+            size: "100M"
         capabilities:
           drop: ALL
           keep: CHOWN
@@ -68,6 +63,9 @@ class ConfigLoader:
           - user
         die_with_parent: true
         new_session: true
+
+    All mount types are unified under the `mounts` list. There is no
+    separate `tmpfs_mounts` section — use `type: tmpfs` instead.
     """
 
     def __init__(self, config_dir: str | None = None) -> None:
@@ -114,7 +112,6 @@ class ConfigLoader:
         Raises:
             FileNotFoundError: If no default config is found.
         """
-        # Priority 1: Installed package location
         import agent_nook
         package_dir = Path(agent_nook.__file__).parent
         default_config_path = package_dir / "config" / "sandbox.yaml"
@@ -165,10 +162,18 @@ class ConfigLoader:
             raw = yaml.safe_load(f) or {}
             self._raw_config = raw
 
-        # Step 2: Convert raw YAML dict to dataclasses
+        # Step 2: Validate known keys
+        known_keys = {"name", "root", "mounts", "capabilities", "unshare",
+                      "die_with_parent", "new_session", "hostname",
+                      "env_vars", "unenv_vars"}
+        for key in raw.keys():
+            if key not in known_keys:
+                raise ConfigValidationError(f"unknown key '{key}'")
+
+        # Step 3: Convert raw YAML dict to dataclasses
         converted = self._yaml_to_dataclasses(raw)
 
-        # Step 3: Apply overrides
+        # Step 4: Apply overrides
         if override:
             converted = self._merge(converted, override)
 
@@ -183,8 +188,27 @@ class ConfigLoader:
 
         Returns:
             A validated SandboxConfig.
+
+        Raises:
+            ConfigValidationError: If required keys are missing or invalid.
         """
         self._raw_config = data
+
+        known_keys = {"name", "root", "mounts", "capabilities", "unshare",
+                      "die_with_parent", "new_session", "hostname",
+                      "env_vars", "unenv_vars"}
+        for key in data.keys():
+            if key not in known_keys:
+                raise ConfigValidationError(f"unknown key '{key}'")
+
+        # Validate required fields
+        if "name" not in data or not data["name"].strip():
+            raise ConfigValidationError("name cannot be empty")
+        if "root" not in data or not data["root"].strip():
+            raise ConfigValidationError("root cannot be empty")
+        if "mounts" not in data:
+            raise ConfigValidationError("mounts cannot be empty")
+
         converted = self._yaml_to_dataclasses(data)
         if override := data.get("override"):
             converted = self._merge(converted, override)
@@ -195,28 +219,23 @@ class ConfigLoader:
         """Convert raw YAML dict to SandboxConfig dataclass.
 
         Handles:
-        - mounts: flat dict format or list of dicts
-        - tmpfs_mounts: flat dict format or list of dicts
-        - capabilities: flat dict or lists
-        - unshare: flat list of namespace names
+        - mounts: unified list with type field
+          - List of dicts: [{"target": "...", "type": "tmpfs", "size": "100M"}]
+          - Dict: {"/proc": {"type": "proc"}, "/host": {"type": "ro-bind", "target": "/sandbox"}}
         """
         # Extract fields
         name: str = data.get("name", "default-sandbox")
         root: str = data.get("root", "./sandbox")
         hostname: str | None = data.get("hostname")
 
-        # mounts
+        # Mounts (unified format)
         mounts: list[Mount] = self._convert_mounts(data.get("mounts", []))
-
-        # tmpfs_mounts
-        tmpfs_mounts: list[TmpfsMount] = self._convert_tmpfs_mounts(
-            data.get("tmpfs_mounts", [])
-        )
 
         # capabilities
         capabilities: CapabilitySet = self._convert_capabilities(
             data.get("capabilities", {})
         )
+        capabilities.validate()
 
         # unshare
         unshare: NamespaceSet = self._convert_unshare(data.get("unshare", []))
@@ -224,8 +243,6 @@ class ConfigLoader:
         # Boolean flags
         die_with_parent = data.get("die_with_parent", True)
         new_session = data.get("new_session", True)
-        proc_enabled = data.get("proc_enabled", True)
-        dev_enabled = data.get("dev_enabled", True)
 
         # Environment variables
         env_vars = data.get("env_vars", {})
@@ -241,7 +258,6 @@ class ConfigLoader:
             name=name,
             root=root,
             mounts=mounts,
-            tmpfs_mounts=tmpfs_mounts,
             capabilities=capabilities,
             unshare=unshare,
             die_with_parent=die_with_parent,
@@ -249,31 +265,45 @@ class ConfigLoader:
             hostname=hostname,
             env_vars=env_vars,
             unenv_vars=unenv_vars,
-            proc_enabled=proc_enabled,
-            dev_enabled=dev_enabled,
+            _raw_config=data,
         )
 
     def _convert_mounts(self, mounts: list | dict) -> list[Mount]:
         """Convert mounts to list[Mount].
 
         Handles:
-        - List of dicts: [{"source": "...", "target": "..."}]
-        - Dict: {"/host/path": "/sandbox/path"}
+        - List of dicts: [{"target": "...", "type": "tmpfs", "size": "100M"}]
+        - Dict: {"/host/path": {"target": "/sandbox/path", "type": "ro-bind"}}
+        - Dict (flat format, no nested target): {"/host/path": "/sandbox/path"}
         """
         if isinstance(mounts, list):
             result: list[Mount] = []
             for i, m in enumerate(mounts):
                 if isinstance(m, dict):
+                    mount_type = m.get("type", "bind")
+                    # Validate mount type
+                    valid_types = {"bind", "ro-bind", "dev-bind", "tmpfs", "proc", "dev", "dir"}
+                    if mount_type not in valid_types:
+                        raise ValueError(
+                            f"Mount type '{mount_type}' is not valid. "
+                            f"Valid types: {', '.join(sorted(valid_types))}"
+                        )
+                    source = m.get("source", "")
+                    target = m.get("target", "")
+                    readonly = m.get("readonly", False)
+                    device = m.get("device", False)
                     result.append(
                         Mount(
-                            source=m.get("source", ""),
-                            target=m.get("target", ""),
-                            readonly=m.get("readonly", False),
-                            device=m.get("device", False),
+                            source=source,
+                            target=target,
+                            readonly=readonly,
+                            device=device,
+                            type=mount_type,
+                            size=m.get("size", ""),
                         )
                     )
                 elif isinstance(m, str):
-                    # Flat format: source:target
+                    # Flat format: source:target (deprecated, falls back to bind)
                     if ":" in m:
                         parts = m.split(":", 1)
                         result.append(Mount(source=parts[0], target=parts[1]))
@@ -283,41 +313,27 @@ class ConfigLoader:
 
         if isinstance(mounts, dict):
             result: list[Mount] = []
-            for source, target in mounts.items():
-                if isinstance(target, str):
-                    result.append(Mount(source=source, target=target))
-            return result
-
-        return []
-
-    def _convert_tmpfs_mounts(self, tmpfs: list | dict) -> list[TmpfsMount]:
-        """Convert tmpfs_mounts to list[TmpfsMount].
-
-        Handles:
-        - List of dicts: [{"target": "...", "size": "100M"}]
-        - Dict: {"/tmp": "100M"}
-        """
-        if isinstance(tmpfs, list):
-            result: list[TmpfsMount] = []
-            for i, t in enumerate(tmpfs):
-                if isinstance(t, dict):
+            for source, target_or_dict in mounts.items():
+                if isinstance(target_or_dict, str):
+                    result.append(Mount(source=source, target=target_or_dict))
+                elif isinstance(target_or_dict, dict):
+                    mount_type = target_or_dict.get("type", "bind")
+                    valid_types = {"bind", "ro-bind", "dev-bind", "tmpfs", "proc", "dev", "dir"}
+                    if mount_type not in valid_types:
+                        raise ValueError(
+                            f"Mount type '{mount_type}' is not valid. "
+                            f"Valid types: {', '.join(sorted(valid_types))}"
+                        )
                     result.append(
-                        TmpfsMount(
-                            target=t.get("target", ""),
-                            size=t.get("size", ""),
-                            device=t.get("device", False),
+                        Mount(
+                            source=source,
+                            target=target_or_dict.get("target", source),
+                            readonly=target_or_dict.get("readonly", False),
+                            device=target_or_dict.get("device", False),
+                            type=mount_type,
+                            size=target_or_dict.get("size", ""),
                         )
                     )
-                elif isinstance(t, str):
-                    result.append(TmpfsMount(target=t, size=""))
-            return result
-
-        if isinstance(tmpfs, dict):
-            result: list[TmpfsMount] = []
-            for target, size in tmpfs.items():
-                result.append(
-                    TmpfsMount(target=target, size=str(size) if size else "")
-                )
             return result
 
         return []
@@ -331,6 +347,23 @@ class ConfigLoader:
         - "dropped": ["CAP_NET_ADMIN"]
         - "kept": ["CAP_CHOWN"]
         """
+        # Valid Linux capabilities (from /usr/include/linux/capability.h)
+        # "ALL" is a special value meaning all capabilities
+        valid_capabilities = frozenset({
+            "ALL", "CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_DAC_READ_SEARCH",
+            "CAP_FOWNER", "CAP_FSETID", "CAP_KILL", "CAP_SETGID",
+            "CAP_SETUID", "CAP_SETPCAP", "CAP_LINUX_IMMUTABLE",
+            "CAP_NET_BIND_SERVICE", "CAP_NET_BROADCAST", "CAP_NET_ADMIN",
+            "CAP_NET_RAW", "CAP_IPC_LOCK", "CAP_IPC_OWNER", "CAP_SYS_MODULE",
+            "CAP_SYS_RAWIO", "CAP_SYS_CHROOT", "CAP_SYS_PTRACE",
+            "CAP_SYS_PACCT", "CAP_SYS_ADMIN", "CAP_SYS_BOOT", "CAP_SYS_NICE",
+            "CAP_SYS_RESOURCE", "CAP_SYS_TIME", "CAP_SYS_TTY_CONFIG",
+            "CAP_MKNOD", "CAP_LEASE", "CAP_AUDIT_WRITE", "CAP_AUDIT_READ",
+            "CAP_AUDIT_CONTROL", "CAP_SETFCAP", "CAP_MAC_OVERRIDE",
+            "CAP_MAC_ADMIN", "CAP_SYSLOG", "CAP_WAKE_ALARM",
+            "CAP_BLOCK_SUSPEND", "CAP_AUDIT_READ", "CAP_PERFMON",
+            "CAP_BPF", "CAP_CHECKPOINT_RESTORE",
+        })
         dropped: list[str] = []
         kept: list[str] = []
 
@@ -360,6 +393,22 @@ class ConfigLoader:
                 else:
                     kept = list(val)
 
+        # Check for conflicting drop ALL + keep
+        if "ALL" in dropped and kept:
+            raise ConfigValidationError(
+                "Cannot keep capabilities when dropping ALL"
+            )
+
+        # Validate capability names
+        all_caps = dropped + kept
+        invalid = [cap for cap in all_caps if cap not in valid_capabilities]
+        if invalid:
+            raise ConfigValidationError(
+                f"Invalid capability{'' if len(invalid) == 1 else 's'}: "
+                f"{', '.join(invalid)}.{'' if len(invalid) == 1 else ''} "
+                f"Valid: {', '.join(sorted(valid_capabilities))}"
+            )
+
         return CapabilitySet(dropped=dropped, kept=kept)
 
     def _convert_unshare(self, unshare: list) -> NamespaceSet:
@@ -368,6 +417,8 @@ class ConfigLoader:
         Handles:
         - List: ["pid", "uts", "network"]
         - Dict: {"pid": True, "uts": False}
+
+        Uses opt-in semantics: only namespaces explicitly set to True are unshared.
         """
         if isinstance(unshare, list):
             ns_dict: dict[str, bool] = {}
@@ -382,43 +433,41 @@ class ConfigLoader:
             ns_dict = {}
 
         return NamespaceSet(
-            pid=ns_dict.get("pid", True),
-            uts=ns_dict.get("uts", True),
-            ipc=ns_dict.get("ipc", True),
-            cgroup=ns_dict.get("cgroup", True),
-            user=ns_dict.get("user", True),
+            pid=ns_dict.get("pid", False),
+            uts=ns_dict.get("uts", False),
+            ipc=ns_dict.get("ipc", False),
+            cgroup=ns_dict.get("cgroup", False),
+            user=ns_dict.get("user", False),
             network=ns_dict.get("network", False),
         )
 
     def _merge(self, base: SandboxConfig, override: dict[str, Any]) -> SandboxConfig:
         """Merge override into base config.
 
-        Only handles top-level fields that are dicts or lists.
+        Handles:
+          - dict/list fields: mounts, env_vars, unenv_vars, capabilities, unshare
+          - scalar fields: hostname (uses override value if present)
         """
         new_mounts = base.mounts
         if "mounts" in override:
             new_mounts = base.mounts + self._convert_mounts(override["mounts"])
 
-        new_tmpfs = base.tmpfs_mounts
-        if "tmpfs_mounts" in override:
-            new_tmpfs = base.tmpfs_mounts + self._convert_tmpfs_mounts(
-                override["tmpfs_mounts"]
-            )
+        new_hostname = base.hostname
+        if "hostname" in override and override["hostname"] is not None:
+            new_hostname = override["hostname"]
 
         return SandboxConfig(
             name=base.name,
             root=base.root,
             mounts=new_mounts,
-            tmpfs_mounts=new_tmpfs,
             capabilities=base.capabilities,
             unshare=base.unshare,
             die_with_parent=base.die_with_parent,
             new_session=base.new_session,
-            hostname=base.hostname,
+            hostname=new_hostname,
             env_vars=base.env_vars | override.get("env_vars", {}),
             unenv_vars=base.unenv_vars + override.get("unenv_vars", []),
-            proc_enabled=base.proc_enabled,
-            dev_enabled=base.dev_enabled,
+            _raw_config=base._raw_config,
         )
 
     @property

@@ -4,7 +4,7 @@
 __version__ = "0.1.0"
 
 # Re-export runner for convenience
-from agent_nook.runner._core import (
+from agent_nook.runner import (
     BwrapError,
     ConfigError,
     SandboxExecutionError,

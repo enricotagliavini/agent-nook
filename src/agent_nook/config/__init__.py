@@ -1,31 +1,32 @@
-"""Config module — provides global access to the loaded configuration."""
+"""Configuration module for Agent Nook sandbox.
 
-from agent_nook.config.config import (
+Exports the core dataclasses and utilities for defining sandbox
+configuration via YAML.
+"""
+
+from .config import (
     SandboxConfig,
     Mount,
-    TmpfsMount,
     CapabilitySet,
     NamespaceSet,
     ConfigValidationError,
-)
-from agent_nook.config.loader import ConfigLoader
-from agent_nook.config.config import (
-    nook_config,
     get_config,
     set_config,
     reset_config,
+    nook_config,
 )
+from .loader import ConfigLoader, ConfigValidationError as ConfigValidationError2
 
 __all__ = [
-    "nook_config",
-    "get_config",
-    "set_config",
-    "reset_config",
     "SandboxConfig",
     "Mount",
-    "TmpfsMount",
     "CapabilitySet",
     "NamespaceSet",
     "ConfigValidationError",
+    "get_config",
+    "set_config",
+    "reset_config",
+    "nook_config",
     "ConfigLoader",
+    "ConfigValidationError2",
 ]

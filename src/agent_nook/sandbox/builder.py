@@ -2,16 +2,19 @@
 
 Provides a dataclass-driven API for building bwrap command lines.
 Accepts ONLY SandboxConfig dataclass — no dict normalization.
+
+No validation, no normalization, no defaults — the builder is a pure
+consumer of a validated SandboxConfig.
 """
 
 from __future__ import annotations
 
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, fields
 from typing import Any
 
-from agent_nook.config.config import SandboxConfig, Mount, TmpfsMount
+from agent_nook.config.config import SandboxConfig
 
 # Re-export BwrapError from runner for CLI compatibility
 try:
@@ -29,72 +32,31 @@ class BwrapBuilder:
         builder = BwrapBuilder(config)
         cmd = builder.build(["python3", "agent.py", "arg1", "arg2"])
         subprocess.run(cmd)
+
+    The builder does NOT validate the config — it assumes the config
+    has already been validated by ConfigLoader. It is a pure consumer
+    that produces the final bwrap command line.
     """
 
-    # Default mounts that are always applied
-    DEFAULT_MOUNTS: list[Mount] = field(
-        default_factory=lambda: [
-            Mount(source="/proc", target="/proc", readonly=True),
-            Mount(source="/dev", target="/dev", device=True),
-            Mount(source="/sys", target="/sys", readonly=True),
-            Mount(source="/run", target="/run", readonly=False),
-        ]
-    )
-
-    # Default tmpfs mounts (writable, private to sandbox)
-    DEFAULT_TMPFS_MOUNTS: list[TmpfsMount] = field(
-        default_factory=lambda: [
-            TmpfsMount(target="/home"),
-            TmpfsMount(target="/tmp"),
-        ]
-    )
-
-    def __init__(
-        self,
-        config: SandboxConfig,
-        default_mounts: list[Mount] | None = None,
-        default_tmpfs_mounts: list[TmpfsMount] | None = None,
-    ) -> None:
+    def __init__(self, config: SandboxConfig) -> None:
         """Initialize the builder.
 
         Args:
             config: The sandbox configuration (must be a SandboxConfig dataclass).
-            default_mounts: Optional override for default mounts.
-            default_tmpfs_mounts: Optional override for default tmpfs mounts.
 
         Raises:
             ValueError: If config is not a SandboxConfig dataclass.
         """
-        # Default mounts for the sandbox
-        self.DEFAULT_MOUNTS: list[Mount] = [
-            Mount(source="/proc", target="/proc"),
-            Mount(source="/dev", target="/dev"),
-            Mount(source="/sys", target="/sys"),
-        ]
-        # Default tmpfs mounts
-        self.DEFAULT_TMPFS_MOUNTS: list[TmpfsMount] = [
-            TmpfsMount(target="/tmp"),
-            TmpfsMount(target="/run"),
-            TmpfsMount(target="/var/tmp"),
-        ]
-
         if not isinstance(config, SandboxConfig):
             raise ValueError(
                 f"Expected SandboxConfig dataclass, got {type(config).__name__}. "
                 "Use ConfigLoader.load() to obtain a SandboxConfig."
             )
         self._config = config
-        self._default_mounts = (
-            default_mounts if default_mounts is not None else self.DEFAULT_MOUNTS
-        )
-        self._default_tmpfs_mounts = (
-            default_tmpfs_mounts
-            if default_tmpfs_mounts is not None
-            else self.DEFAULT_TMPFS_MOUNTS
-        )
 
     @property
     def config(self) -> SandboxConfig:
+        """Return the config as-is (no validation, no transformation)."""
         return self._config
 
     def build(self, command: list[str]) -> list[str]:
@@ -106,70 +68,58 @@ class BwrapBuilder:
         Returns:
             A list that can be passed directly to subprocess.run().
         """
-        # Collect mounts: config overrides defaults
-        all_mounts: list[Mount] = []
-        # Start with defaults
-        all_mounts.extend(self._default_mounts)
-        # Config mounts override defaults at the same source+target
+        args: list[str] = ["bwrap", "--die-with-parent", "--new-session"]
+
+        # Proc mount (from Mount with type="proc")
         for mount in self._config.mounts:
-            # Remove any default with the same source+target
-            all_mounts = [
-                m for m in all_mounts
-                if not (m.source == mount.source and m.target == mount.target)
-            ]
-            all_mounts.append(mount)
+            if mount.type == "proc":
+                args.extend(mount.build())
 
-        # Collect tmpfs mounts: config overrides defaults
-        all_tmpfs: list[TmpfsMount] = []
-        # Start with defaults
-        all_tmpfs.extend(self._default_tmpfs_mounts)
-        # Config tmpfs mounts override defaults at the same target
-        for tmpfs in self._config.tmpfs_mounts:
-            # Remove any default with the same target
-            all_tmpfs = [t for t in all_tmpfs if t.target != tmpfs.target]
-            all_tmpfs.append(tmpfs)
+        # Dev mount (from Mount with type="dev")
+        for mount in self._config.mounts:
+            if mount.type == "dev":
+                args.extend(mount.build())
 
-        # Build args
-        args: list[str] = [
-            "bwrap",
-            "--die-with-parent",
-            "--new-session",
-        ]
+        # Tmpfs mounts (from Mount with type="tmpfs")
+        for mount in self._config.mounts:
+            if mount.type == "tmpfs":
+                args.extend(mount.build())
 
-        # Add --proc /proc only if proc_enabled is True
-        if self._config.proc_enabled:
-            args.append("--proc")
-            args.append("/proc")
-
-        # Add --dev /dev only if dev_enabled is True
-        if self._config.dev_enabled:
-            args.append("--dev")
-            args.append("/dev")
-
-        # Add tmpfs mounts
-        for tmpfs in all_tmpfs:
-            args.extend(tmpfs.build())
-
-        # Add custom mounts
-        for mount in all_mounts:
-            args.extend(mount.build())
+        # Other mounts (bind, ro-bind, dev-bind, dir)
+        for mount in self._config.mounts:
+            if mount.type not in ("proc", "dev", "tmpfs"):
+                args.extend(mount.build())
 
         # Capabilities
         args.extend(self._config.capabilities.build())
 
         # Namespaces
-        for ns in self._config.unshare.namespaces:
-            args.append(f"--unshare={ns}")
+        # bwrap uses --unshare-<type> syntax (not --unshare TYPE)
+        if self._config.unshare.pid:
+            args.extend(["--unshare-pid"])
+        if self._config.unshare.uts:
+            args.extend(["--unshare-uts"])
+        if self._config.unshare.ipc:
+            args.extend(["--unshare-ipc"])
+        if self._config.unshare.cgroup:
+            args.extend(["--unshare-cgroup"])
+        if self._config.unshare.user:
+            args.extend(["--unshare-user"])
+        if self._config.unshare.network:
+            args.extend(["--unshare-net"])
 
         # Hostname
         if self._config.hostname:
-            args.extend(["--unshare-uts", f"--hostname={self._config.hostname}"])
+            args.extend(["--unshare-uts", "--hostname", self._config.hostname])
 
         # Environment variables
         for key, value in self._config.env_vars.items():
             args.extend(["--setenv", key, str(value)])
         for var in self._config.unenv_vars:
-            args.extend(["--unsetenv", var])
+            if var == "ALL":
+                args.append("--clearenv")
+            else:
+                args.extend(["--unsetenv", var])
 
         # Add the actual command
         args.extend(command)
@@ -179,17 +129,16 @@ class BwrapBuilder:
     def validate(self) -> None:
         """Validate the configuration.
 
+        Note: This method is kept for API compatibility but does nothing.
+        The SandboxConfig dataclass performs all validation in __post_init__.
+        The builder is a pure consumer and does no validation.
+
         Raises:
             ConfigValidationError: If the configuration has invalid values.
         """
-        self._config.validate()
-
-        # Check mount sources exist (for read-write mounts)
-        for mount in self._config.mounts:
-            if mount.source and not os.path.exists(mount.source):
-                if not mount.readonly:
-                    # Can't verify existence at build time, just warn
-                    pass
+        # No validation here — the config is assumed validated
+        # This is kept for API compatibility but is a no-op
+        pass
 
 
 __all__ = ["BwrapBuilder", "BwrapError", "SandboxConfig"]

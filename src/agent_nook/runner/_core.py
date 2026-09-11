@@ -19,13 +19,19 @@ from __future__ import annotations
 import subprocess
 import logging
 import tempfile
-from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agent_nook.config.config import SandboxConfig
 
 from agent_nook.config.config import SandboxConfig
 from agent_nook.config.loader import ConfigValidationError
 from agent_nook.sandbox.builder import BwrapBuilder, BwrapError
+
+
+ConfigError = ConfigValidationError
 
 
 # Try to import the global nook_config
@@ -35,7 +41,7 @@ except ImportError:
     _nook_config = None
 
 
-def get_global_config() -> SandboxConfig:
+def get_global_config() -> SandboxConfig | None:
     """Get the global nook_config or return None."""
     global _nook_config
     if _nook_config is None:
@@ -53,58 +59,37 @@ _sandbox_logger: logging.Logger | None = None
 
 
 def _get_sandbox_logger() -> logging.Logger:
-    """Get the sandbox logger (child of runner logger)."""
+    """Get or create a dedicated sandbox logger."""
     global _sandbox_logger
     if _sandbox_logger is None:
-        _sandbox_logger = _runner_logger.getChild("sandbox")
-        _sandbox_logger.setLevel(logging.DEBUG)
+        _sandbox_logger = logging.getLogger("agent_nook.runner.sandbox")
     return _sandbox_logger
 
 
 @dataclass
 class SandboxResult:
-    """Result of running a sandboxed command.
+    """Result of a sandboxed command execution.
 
     Attributes:
-        success: Whether the command completed successfully.
-        return_code: Exit code (None if no result).
-        stdout: Captured stdout (if captured).
-        stderr: Captured stderr (if captured).
-        error: Error message if any.
-        log_file: Path to log file if created.
+        success: Whether the command exited with code 0.
+        return_code: The exit code of the command.
+        stdout: Standard output from the command (if captured).
+        stderr: Standard error from the command (if captured).
     """
 
     success: bool
-    return_code: int | None = None
+    return_code: int
     stdout: str | None = None
     stderr: str | None = None
-    error: str | None = None
-    log_file: str | None = None
 
 
-class ConfigError(Exception):
-    """Raised when configuration is invalid or missing."""
-
-    pass
-
-
-class BwrapError(Exception):
-    """Raised when bubblewrap setup fails."""
-
-    pass
-
-
-class SandboxExecutionError(Exception):
-    """Raised when sandbox execution fails with an unrecoverable error."""
-
-    pass
-
-
-def build_command(config: SandboxConfig) -> list[str]:
+def build_command(config: SandboxConfig, command: list[str] | None = None) -> list[str]:
     """Build the bwrap command line from a configuration.
 
     Args:
         config: The sandbox configuration (must be a SandboxConfig dataclass).
+        command: The command and arguments to run inside the sandbox.
+            If None, no command is appended to the bwrap command line.
 
     Returns:
         A list representing the bwrap command line.
@@ -113,24 +98,41 @@ def build_command(config: SandboxConfig) -> list[str]:
         ValueError: If config is not a SandboxConfig dataclass.
     """
     builder = BwrapBuilder(config)
-    return builder.build([])
+    cmd_args = command if command is not None else []
+    return builder.build(cmd_args)
 
 
 def validate_config(config: SandboxConfig) -> None:
     """Validate a sandbox configuration.
 
     Args:
-        config: The sandbox configuration to validate (must be a SandboxConfig dataclass).
+        config: The sandbox configuration to validate.
 
     Raises:
-        ValueError: If config is not a SandboxConfig dataclass.
+        ConfigValidationError: If the configuration is invalid.
     """
-    builder = BwrapBuilder(config)
-    builder.validate()
+    # Validate mounts
+    if not isinstance(config.mounts, list):
+        raise ConfigValidationError("mounts must be a list")
+
+    for mount in config.mounts:
+        try:
+            mount.build()
+        except ValueError as e:
+            raise ConfigValidationError(f"Invalid mount: {e}")
+
+    # Validate capabilities
+    try:
+        config.capabilities.build()
+    except ValueError as e:
+        raise ConfigValidationError(f"Invalid capabilities: {e}")
 
 
-@contextmanager
-def run_in_sandbox(config: SandboxConfig, command: list[str]) -> SandboxResult:
+def run_in_sandbox(
+    config: SandboxConfig,
+    command: list[str],
+    timeout: int | None = 3600,
+) -> SandboxResult:
     """Run a command inside a bwrap sandbox.
 
     This is the main entry point for sandboxed execution. It handles
@@ -140,6 +142,7 @@ def run_in_sandbox(config: SandboxConfig, command: list[str]) -> SandboxResult:
     Args:
         config: The sandbox configuration (must be a SandboxConfig dataclass).
         command: The command and arguments to run inside the sandbox.
+        timeout: Optional timeout in seconds (default: 3600).
 
     Returns:
         SandboxResult describing the outcome.
@@ -163,64 +166,22 @@ def run_in_sandbox(config: SandboxConfig, command: list[str]) -> SandboxResult:
                      config.name, len(config.mounts), config.capabilities)
 
         # Step 2: Build the command
-        bwrap_cmd = build_command(config)
+        bwrap_cmd = build_command(config, command)
         logger.debug("bwrap command: %s", " ".join(bwrap_cmd))
 
-        # Step 3: Create sandbox temp directory
-        sandbox_dir = Path(tempfile.mkdtemp(prefix="agent-nook-sandbox-"))
-        logger.debug("Sandbox directory: %s", sandbox_dir)
-
-        # Add --root and --chdir
-        full_cmd = bwrap_cmd + [
-            "--root", str(sandbox_dir),
-            "--chdir", str(sandbox_dir),
-        ] + command
-
-        # Execute
+        # Step 3: Execute
         logger.info("Running command: %s", " ".join(command))
-        logger.info("Full bwrap command: %s", " ".join(full_cmd))
+        logger.info("Full bwrap command: %s", " ".join(bwrap_cmd))
 
-        result = subprocess.run(
-            full_cmd,
-            capture_output=True,
-            text=True,
-            timeout=3600,  # 1 hour default timeout
-        )
+        result = _execute_command(bwrap_cmd, command, logger, timeout=timeout)
 
-        # Log output for debugging (truncate to avoid log flooding)
-        if result.stdout and len(result.stdout) > 2000:
-            logger.debug("STDOUT (truncated): %s...", result.stdout[:2000])
-        elif result.stdout:
-            logger.debug("STDOUT: %s", result.stdout)
-
-        if result.stderr and len(result.stderr) > 2000:
-            logger.debug("STDERR (truncated): %s...", result.stderr[:2000])
-        elif result.stderr:
-            logger.debug("STDERR: %s", result.stderr)
-
-        # Check for bwrap-specific errors
-        if result.returncode != 0:
-            if "not permitted" in result.stderr.lower():
-                raise BwrapError(
-                    f"bwrap failed with permission error: {result.stderr[:500]}"
-                )
-            if "No such file or directory" in result.stderr:
-                raise BwrapError(
-                    f"bwrap path error: {result.stderr[:500]}"
-                )
-
-        return SandboxResult(
-            success=result.returncode == 0,
-            return_code=result.returncode,
-            stdout=result.stdout,
-            stderr=result.stderr,
-        )
+        return result
 
     except BwrapError as e:
         logger.error("Bubblewrap setup failed: %s", e, exc_info=True)
         raise
 
-    except ConfigError as e:
+    except ConfigValidationError as e:
         logger.error("Configuration error: %s", e, exc_info=True)
         raise
 
@@ -240,6 +201,7 @@ def _execute_command(
     bwrap_cmd: list[str],
     command: list[str],
     logger: logging.Logger,
+    timeout: int | None = 3600,
 ) -> SandboxResult:
     """Execute the bwrap command and return the result.
 
@@ -247,86 +209,80 @@ def _execute_command(
         bwrap_cmd: The full bwrap command line.
         command: The original command (for logging).
         logger: Logger for debug output.
+        timeout: Maximum time to wait for the command (default: 3600 seconds).
 
     Returns:
         SandboxResult with stdout/stderr capture.
 
     Raises:
         BwrapError: If bubblewrap itself fails.
+        subprocess.TimeoutExpired: If the command times out.
     """
-    # Create a temporary directory for the sandbox
-    sandbox_dir = Path(tempfile.mkdtemp(prefix="agent-nook-sandbox-"))
-    logger.debug("Sandbox directory created: %s", sandbox_dir)
+    # bwrap runs the command as-is inside the sandbox
+    full_cmd = bwrap_cmd
 
-    try:
-        # Add --root to specify the sandbox root
-        # The command we passed in should be run with chdir to sandbox root
-        full_cmd = bwrap_cmd + [
-            "--root", str(sandbox_dir),
-            "--chdir", str(sandbox_dir),
-            "-c",
-        ] + command
+    logger.debug("Full bwrap command: %s", " ".join(full_cmd))
 
-        logger.debug("Full bwrap command: %s", " ".join(full_cmd))
+    # Execute
+    result = subprocess.run(
+        full_cmd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
 
-        # Execute
-        result = subprocess.run(
-            full_cmd,
-            capture_output=True,
-            text=True,
-            timeout=3600,  # 1 hour default timeout
-        )
+    # Log output for debugging (truncate to avoid log flooding)
+    if result.stdout and len(result.stdout) > 2000:
+        logger.debug("STDOUT (truncated): %s...", result.stdout[:2000])
+    elif result.stdout:
+        logger.debug("STDOUT: %s", result.stdout)
 
-        # Log output for debugging (truncate to avoid log flooding)
-        if result.stdout and len(result.stdout) > 2000:
-            logger.debug("STDOUT (truncated): %s...", result.stdout[:2000])
-        elif result.stdout:
-            logger.debug("STDOUT: %s", result.stdout)
+    if result.stderr and len(result.stderr) > 2000:
+        logger.debug("STDERR (truncated): %s...", result.stderr[:2000])
+    elif result.stderr:
+        logger.debug("STDERR: %s", result.stderr)
 
-        if result.stderr and len(result.stderr) > 2000:
-            logger.debug("STDERR (truncated): %s...", result.stderr[:2000])
-        elif result.stderr:
-            logger.debug("STDERR: %s", result.stderr)
+    # Check for bwrap-specific errors
+    if result.returncode != 0:
+        if "not permitted" in result.stderr.lower():
+            raise BwrapError(
+                f"bwrap failed with permission error: {result.stderr[:500]}"
+            )
+        if "No such file or directory" in result.stderr:
+            raise BwrapError(
+                f"bwrap path error: {result.stderr[:500]}"
+            )
 
-        # Check for bwrap-specific errors
-        if result.returncode != 0:
-            if "not permitted" in result.stderr.lower():
-                raise BwrapError(
-                    f"bwrap failed with permission error: {result.stderr[:500]}"
-                )
-            if "No such file or directory" in result.stderr:
-                raise BwrapError(
-                    f"bwrap path error: {result.stderr[:500]}"
-                )
+    return SandboxResult(
+        success=result.returncode == 0,
+        return_code=result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
+    )
 
-        return SandboxResult(
-            success=result.returncode == 0,
-            return_code=result.returncode,
-            stdout=result.stdout,
-            stderr=result.stderr,
-        )
 
-    except subprocess.TimeoutExpired as e:
-        logger.error("Timeout after %d seconds", e.timeout)
-        raise
+def run_in_sandbox_with_config(path: str | Path, command: list[str]) -> SandboxResult:
+    """Load configuration from a file and run a command in a sandbox.
 
-    except subprocess.SubprocessError as e:
-        logger.error("Subprocess error: %s", e, exc_info=True)
-        raise
+    Args:
+        path: Path to a YAML configuration file.
+        command: The command and arguments to run inside the sandbox.
 
-    except BwrapError:
-        raise
+    Returns:
+        SandboxResult describing the outcome.
 
-    except Exception as e:
-        logger.exception("Unexpected error during execution: %s", e)
-        raise
+    Raises:
+        ConfigValidationError: If the configuration is invalid.
+        BwrapError: If bubblewrap fails to set up the sandbox.
+        SandboxExecutionError: If execution fails.
+    """
+    from agent_nook.config.loader import ConfigLoader
 
-    finally:
-        # Cleanup: let bwrap's --die-with-parent handle it,
-        # but remove the temp dir if bwrap failed
-        try:
-            if sandbox_dir.exists():
-                import shutil
-                shutil.rmtree(sandbox_dir, ignore_errors=True)
-        except Exception:
-            logger.warning("Failed to cleanup sandbox directory: %s", sandbox_dir)
+    config = ConfigLoader().load(path)
+    return run_in_sandbox(config, command)
+
+
+class SandboxExecutionError(Exception):
+    """Raised when a sandboxed command fails to execute."""
+
+    pass

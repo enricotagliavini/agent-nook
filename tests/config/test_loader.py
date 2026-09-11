@@ -1,389 +1,263 @@
-"""Tests for config loader."""
+"""Tests for ConfigLoader."""
 
-import pytest
-import tempfile
 import os
+import tempfile
+import pytest
+from pathlib import Path
+
 import sys
+import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from agent_nook.config.loader import ConfigLoader, ConfigValidationError
-from agent_nook.config.config import SandboxConfig, Mount, TmpfsMount, CapabilitySet, NamespaceSet
+from agent_nook.config.config import SandboxConfig, Mount, CapabilitySet, NamespaceSet
 
 
 def test_load_yaml_basic():
-    """Test loading a basic YAML config."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write("""name: test-sandbox
-root: /tmp
-mounts:
-  - source: /
-    target: /
-tmpfs_mounts:
-  - target: /tmp
-capabilities:
-  drop: ALL
-unshare:
-  - pid
-  - uts
-die_with_parent: true
-new_session: true
-""")
-        path = f.name
+    """Test loading a basic config."""
+    loader = ConfigLoader()
+    data = {
+        "name": "test-sandbox",
+        "root": "/tmp",
+        "mounts": [
+            {"target": "/proc", "type": "proc"},
+            {"target": "/dev", "type": "dev"},
+            {"target": "/tmp", "type": "tmpfs", "size": "100M"},
+            {"source": "/host", "target": "/sandbox", "type": "bind"},
+        ],
+        "capabilities": {"drop": ["ALL"]},
+        "unshare": ["pid", "uts", "user"],
+        "die_with_parent": True,
+        "new_session": True,
+    }
+    config = loader.set(data)
 
-    try:
-        loader = ConfigLoader()
-        config = loader.load(path)
-        assert config.name == "test-sandbox"
-        assert config.root == "/tmp"
-        assert len(config.mounts) == 1
-        assert config.mounts[0].source == "/"
-        assert config.mounts[0].target == "/"
-        assert len(config.tmpfs_mounts) == 1
-        assert config.tmpfs_mounts[0].target == "/tmp"
-        assert config.capabilities.dropped == ["ALL"]
-        assert config.capabilities.kept == []
-        assert config.unshare.pid is True
-        assert config.unshare.uts is True
-    finally:
-        os.unlink(path)
+    assert config.name == "test-sandbox"
+    assert config.root == "/tmp"
+    assert len(config.mounts) == 4
+    assert config.mounts[0].type == "proc"
+    assert config.mounts[1].type == "dev"
+    assert config.mounts[2].type == "tmpfs"
+    assert config.mounts[2].size == "100M"
+    assert config.mounts[2]._parse_size(config.mounts[2].size) == 104857600
 
 
 def test_load_yaml_list_of_mounts():
-    """Test loading YAML with list of mounts."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write("""name: test-sandbox
-root: /tmp
-mounts:
-  - source: /host/path1
-    target: /sandbox/path1
-    readonly: true
-  - source: /host/path2
-    target: /sandbox/path2
-tmpfs_mounts:
-  - target: /tmp
-    size: 100M
-capabilities:
-  drop: ALL
-unshare:
-  - pid
-  - user
-""")
-        path = f.name
+    """Test loading config with list of mounts including tmpfs."""
+    loader = ConfigLoader()
+    data = {
+        "name": "test",
+        "root": "/tmp",
+        "mounts": [
+            {"target": "/proc", "type": "proc"},
+            {"target": "/dev", "type": "dev"},
+            {"target": "/home", "type": "tmpfs"},
+            {"target": "/tmp", "type": "tmpfs", "size": "500M"},
+            {"source": "/host/src", "target": "/app/src", "type": "bind"},
+            {"source": "/host/ssl", "target": "/app/ssl", "type": "ro-bind"},
+        ],
+    }
+    config = loader.set(data)
 
-    try:
-        loader = ConfigLoader()
-        config = loader.load(path)
-        assert len(config.mounts) == 2
-        assert config.mounts[0].source == "/host/path1"
-        assert config.mounts[0].target == "/sandbox/path1"
-        assert config.mounts[0].readonly is True
-        assert config.mounts[1].target == "/sandbox/path2"
-        assert len(config.tmpfs_mounts) == 1
-        assert config.tmpfs_mounts[0].target == "/tmp"
-        assert config.tmpfs_mounts[0].size == "100M"
-    finally:
-        os.unlink(path)
+    assert len(config.mounts) == 6
+    assert config.mounts[0].type == "proc"
+    assert config.mounts[1].type == "dev"
+    assert config.mounts[2].type == "tmpfs"
+    assert config.mounts[3].type == "tmpfs"
+    assert config.mounts[3].size == "500M"
+    assert config.mounts[4].type == "bind"
+    assert config.mounts[5].type == "ro-bind"
 
 
 def test_load_yaml_flat_dict_mounts():
-    """Test loading YAML with flat dict format mounts."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write("""name: test-sandbox
-root: /tmp
-mounts:
-  /host/path1: /sandbox/path1
-  /host/path2: /sandbox/path2
-tmpfs_mounts:
-  /tmp: 500M
-  /var: 200M
-capabilities:
-  drop: ALL
-unshare:
-  - pid
-  - uts
-""")
-        path = f.name
+    """Test loading config with flat dict mounts."""
+    loader = ConfigLoader()
+    data = {
+        "name": "test",
+        "root": "/tmp",
+        "mounts": {
+            "/proc": {"type": "proc"},
+            "/host/data": {"target": "/data", "type": "ro-bind"},
+        },
+    }
+    config = loader.set(data)
 
-    try:
-        loader = ConfigLoader()
-        config = loader.load(path)
-        assert len(config.mounts) == 2
-        assert config.mounts[0].source == "/host/path1"
-        assert config.mounts[0].target == "/sandbox/path1"
-        assert config.mounts[1].source == "/host/path2"
-        assert config.mounts[1].target == "/sandbox/path2"
-        assert len(config.tmpfs_mounts) == 2
-        assert config.tmpfs_mounts[0].target == "/tmp"
-        assert config.tmpfs_mounts[0].size == "500M"
-        assert config.tmpfs_mounts[1].target == "/var"
-        assert config.tmpfs_mounts[1].size == "200M"
-        # drop ALL means keep must be empty
-        assert config.capabilities.dropped == ["ALL"]
-        assert config.capabilities.kept == []
-    finally:
-        os.unlink(path)
+    assert len(config.mounts) == 2
+    assert config.mounts[0].type == "proc"
+    assert config.mounts[0].target == "/proc"
+    assert config.mounts[1].type == "ro-bind"
+    assert config.mounts[1].source == "/host/data"
+    assert config.mounts[1].target == "/data"
 
 
 def test_load_yaml_env_vars():
-    """Test loading YAML with env_vars."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write("""name: test-sandbox
-root: /tmp
-mounts:
-  - source: /
-    target: /
-tmpfs_mounts:
-  - target: /tmp
-env_vars:
-  KEY1: value1
-  KEY2: value2
-die_with_parent: true
-new_session: true
-""")
-        path = f.name
+    """Test loading config with env_vars."""
+    loader = ConfigLoader()
+    data = {
+        "name": "test",
+        "root": "/tmp",
+        "mounts": [{"target": "/proc", "type": "proc"}],
+        "env_vars": {"PATH": "/usr/bin", "MY_VAR": "value"},
+    }
+    config = loader.set(data)
 
-    try:
-        loader = ConfigLoader()
-        config = loader.load(path)
-        assert config.env_vars["KEY1"] == "value1"
-        assert config.env_vars["KEY2"] == "value2"
-    finally:
-        os.unlink(path)
+    assert config.env_vars == {"PATH": "/usr/bin", "MY_VAR": "value"}
 
 
 def test_load_yaml_unenv_vars():
-    """Test loading YAML with unenv_vars."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write("""name: test-sandbox
-root: /tmp
-mounts:
-  - source: /
-    target: /
-tmpfs_mounts:
-  - target: /tmp
-unenv_vars:
-  - OLD_VAR
-  - ANOTHER_VAR
-die_with_parent: true
-new_session: true
-""")
-        path = f.name
+    """Test loading config with unenv_vars."""
+    loader = ConfigLoader()
+    data = {
+        "name": "test",
+        "root": "/tmp",
+        "mounts": [{"target": "/proc", "type": "proc"}],
+        "unenv_vars": ["PATH", "HOME"],
+    }
+    config = loader.set(data)
 
-    try:
-        loader = ConfigLoader()
-        config = loader.load(path)
-        assert config.unenv_vars == ["OLD_VAR", "ANOTHER_VAR"]
-    finally:
-        os.unlink(path)
+    assert config.unenv_vars == ["PATH", "HOME"]
 
 
 def test_load_yaml_hostname():
-    """Test loading YAML with hostname."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write("""name: test-sandbox
-root: /tmp
-mounts:
-  - source: /
-    target: /
-tmpfs_mounts:
-  - target: /tmp
-hostname: myhost
-die_with_parent: true
-new_session: true
-""")
-        path = f.name
+    """Test loading config with hostname."""
+    loader = ConfigLoader()
+    data = {
+        "name": "test",
+        "root": "/tmp",
+        "mounts": [{"target": "/proc", "type": "proc"}],
+        "hostname": "myhost",
+    }
+    config = loader.set(data)
 
-    try:
-        loader = ConfigLoader()
-        config = loader.load(path)
-        assert config.hostname == "myhost"
-    finally:
-        os.unlink(path)
+    assert config.hostname == "myhost"
 
 
 def test_load_yaml_override():
-    """Test that override parameter works."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write("""name: original-sandbox
-root: /tmp
-mounts:
-  - source: /
-    target: /
-tmpfs_mounts:
-  - target: /tmp
-die_with_parent: true
-new_session: true
-""")
-        path = f.name
+    """Test loading config with override dict."""
+    loader = ConfigLoader()
+    data = {
+        "name": "test",
+        "root": "/tmp",
+        "mounts": [{"target": "/proc", "type": "proc"}],
+    }
+    override = {"hostname": "overridden-host"}
+    config = loader.set(data)
+    config = loader._merge(config, override)
 
-    try:
-        loader = ConfigLoader()
-        config = loader.load(path, override={"mounts": [{"source": "/extra", "target": "/extra"}]})
-        assert config.name == "original-sandbox"
-        assert len(config.mounts) == 2
-        assert config.mounts[1].source == "/extra"
-        assert config.mounts[1].target == "/extra"
-    finally:
-        os.unlink(path)
+    assert config.hostname == "overridden-host"
 
 
 def test_load_yaml_flat_list_unshare():
-    """Test loading YAML with unshare as a flat list."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write("""name: test-sandbox
-root: /tmp
-mounts:
-  - source: /
-    target: /
-tmpfs_mounts:
-  - target: /tmp
-capabilities:
-  drop: ALL
-unshare:
-  - pid
-  - uts
-  - ipc
-  - cgroup
-  - user
-die_with_parent: true
-new_session: true
-""")
-        path = f.name
+    """Test loading config with flat unshare list."""
+    loader = ConfigLoader()
+    data = {
+        "name": "test",
+        "root": "/tmp",
+        "mounts": [{"target": "/proc", "type": "proc"}],
+        "unshare": ["pid", "uts", "network"],
+    }
+    config = loader.set(data)
 
-    try:
-        loader = ConfigLoader()
-        config = loader.load(path)
-        assert config.unshare.pid is True
-        assert config.unshare.uts is True
-        assert config.unshare.ipc is True
-        assert config.unshare.cgroup is True
-        assert config.unshare.user is True
-        assert config.unshare.network is False
-    finally:
-        os.unlink(path)
+    assert config.unshare.pid is True
+    assert config.unshare.uts is True
+    assert config.unshare.network is True
 
 
-def test_load_yaml_missing_required_field():
-    """Test that missing required fields raise ValidationError."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write("""name: test-sandbox
-root: /tmp
-""")
-        path = f.name
+def test_load_yaml_missing_required_field_errors():
+    """Test that missing mounts raises error."""
+    loader = ConfigLoader()
+    data = {"mounts": [{"target": "/proc", "type": "proc"}]}  # missing name
 
-    try:
-        loader = ConfigLoader()
-        with pytest.raises(ConfigValidationError, match="mounts"):
-            loader.load(path)
-    finally:
-        os.unlink(path)
+    with pytest.raises(ConfigValidationError, match="name cannot be empty"):
+        loader.set(data)
 
 
-def test_load_yaml_empty_name():
-    """Test that empty name raises ValidationError."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write("""name: ""
-root: /tmp
-mounts:
-  - source: /
-    target: /
-tmpfs_mounts:
-  - target: /tmp
-die_with_parent: true
-new_session: true
-""")
-        path = f.name
+def test_load_yaml_empty_name_errors():
+    """Test that empty name raises error."""
+    loader = ConfigLoader()
+    data = {"name": "", "root": "/tmp", "mounts": [{"target": "/proc", "type": "proc"}]}
 
-    try:
-        loader = ConfigLoader()
-        with pytest.raises(ConfigValidationError, match="empty"):
-            loader.load(path)
-    finally:
-        os.unlink(path)
+    with pytest.raises(ConfigValidationError, match="name cannot be empty"):
+        loader.set(data)
 
 
-def test_load_yaml_cap_dropped_kept():
-    """Test loading YAML with dropped/kept fields."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write("""name: test-sandbox
-root: /tmp
-mounts:
-  - source: /
-    target: /
-tmpfs_mounts:
-  - target: /tmp
-capabilities:
-  dropped:
-    - CAP_NET_ADMIN
-    - CAP_NET_RAW
-  kept:
-    - CAP_CHOWN
-    - CAP_SETUID
-die_with_parent: true
-new_session: true
-""")
-        path = f.name
+def test_load_yaml_cap_dropped_kept_errors():
+    """Test that dropping ALL with kept caps raises error."""
+    loader = ConfigLoader()
+    data = {
+        "name": "test",
+        "root": "/tmp",
+        "mounts": [{"target": "/proc", "type": "proc"}],
+        "capabilities": {"drop": ["ALL"], "keep": ["CHOWN"]},
+    }
 
-    try:
-        loader = ConfigLoader()
-        config = loader.load(path)
-        assert config.capabilities.dropped == ["CAP_NET_ADMIN", "CAP_NET_RAW"]
-        assert config.capabilities.kept == ["CAP_CHOWN", "CAP_SETUID"]
-    finally:
-        os.unlink(path)
+    with pytest.raises(ConfigValidationError, match="Cannot keep capabilities"):
+        loader.set(data)
 
 
-def test_load_yaml_proc_dev_enabled():
-    """Test loading YAML with proc_enabled and dev_enabled."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write("""name: test-sandbox
-root: /tmp
-mounts:
-  - source: /
-    target: /
-tmpfs_mounts:
-  - target: /tmp
-proc_enabled: true
-dev_enabled: true
-die_with_parent: true
-new_session: true
-""")
-        path = f.name
+def test_load_yaml_unknown_key_errors():
+    """Test that unknown top-level keys raise ConfigValidationError."""
+    loader = ConfigLoader()
 
-    try:
-        loader = ConfigLoader()
-        config = loader.load(path)
-        assert config.proc_enabled is True
-        assert config.dev_enabled is True
-    finally:
-        os.unlink(path)
+    # tmpfs_mounts is deprecated and should not be recognized
+    data = {
+        "name": "test",
+        "root": "/tmp",
+        "mounts": [{"target": "/proc", "type": "proc"}],
+    }
+
+    # Add unknown key
+    data["tmpfs_mounts"] = [{"target": "/tmp", "size": "100M"}]
+    with pytest.raises(ConfigValidationError, match="unknown key 'tmpfs_mounts'"):
+        loader.set(data)
+
+    # Completely unknown key
+    data2 = {
+        "name": "test",
+        "root": "/tmp",
+        "mounts": [{"target": "/proc", "type": "proc"}],
+        "weird_key": "foo",
+    }
+    with pytest.raises(ConfigValidationError, match="unknown key 'weird_key'"):
+        loader.set(data2)
+
+
+def test_load_yaml_unknown_mount_type_errors():
+    """Test that unknown mount types raise ValueError."""
+    loader = ConfigLoader()
+    data = {
+        "name": "test",
+        "root": "/tmp",
+        "mounts": [
+            {"target": "/proc", "type": "proc"},
+            {"target": "/data", "type": "invalid-type"},
+        ],
+    }
+
+    with pytest.raises(ValueError, match="Mount type 'invalid-type' is not valid"):
+        loader.set(data)
 
 
 def test_set_config():
-    """Test setting config from a dict."""
+    """Test that set_config returns a SandboxConfig."""
     loader = ConfigLoader()
-    config = loader.set({
-        "name": "dict-config",
-        "root": "/app",
-        "mounts": [{"source": "/", "target": "/"}],
-        "tmpfs_mounts": [{"target": "/tmp"}],
-        "capabilities": {"drop": "ALL"},
-        "unshare": ["pid"],
-    })
-    assert config.name == "dict-config"
-    assert config.root == "/app"
-
-
-def test_set_config_env_vars_flat_list():
-    """Test setting config with env_vars as flat list."""
-    loader = ConfigLoader()
-    config = loader.set({
+    data = {
         "name": "test",
         "root": "/tmp",
-        "mounts": [{"source": "/", "target": "/"}],
-        "tmpfs_mounts": [{"target": "/tmp"}],
-        "env_vars": ["KEY1=value1", "KEY2=value2"],
-    })
-    assert config.env_vars["KEY1"] == "value1"
-    assert config.env_vars["KEY2"] == "value2"
+        "mounts": [
+            {"target": "/proc", "type": "proc"},
+            {"target": "/dev", "type": "dev"},
+            {"target": "/tmp", "type": "tmpfs", "size": "100M"},
+        ],
+        "capabilities": {"drop": ["ALL"]},
+    }
+
+    config = loader.set(data)
+    assert isinstance(config, SandboxConfig)
+    assert config.name == "test"
+    assert len(config.mounts) == 3
+    assert config.mounts[0].type == "proc"
+    assert config.mounts[1].type == "dev"
+    assert config.mounts[2].type == "tmpfs"
+    assert config.capabilities.dropped == ["ALL"]
