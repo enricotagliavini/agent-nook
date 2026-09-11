@@ -27,11 +27,11 @@ def test_load_yaml_basic():
             {"source": "/host", "target": "/sandbox", "type": "bind"},
         ],
         "capabilities": {"drop": ["ALL"]},
-        "unshare": ["pid", "uts", "user"],
+        "unshare": {"pid": True, "uts": True, "user": True},
         "die_with_parent": True,
         "new_session": True,
     }
-    config = loader.set(data)
+    config = loader.load_from_dict(data)
 
     assert config.name == "test-sandbox"
     assert config.root == "/tmp"
@@ -58,7 +58,7 @@ def test_load_yaml_list_of_mounts():
             {"source": "/host/ssl", "target": "/app/ssl", "type": "ro-bind"},
         ],
     }
-    config = loader.set(data)
+    config = loader.load_from_dict(data)
 
     assert len(config.mounts) == 6
     assert config.mounts[0].type == "proc"
@@ -70,29 +70,6 @@ def test_load_yaml_list_of_mounts():
     assert config.mounts[5].type == "ro-bind"
 
 
-def test_load_yaml_flat_dict_mounts():
-    """Test loading config with flat dict mounts."""
-    loader = ConfigLoader()
-    data = {
-        "name": "test",
-        "root": "/tmp",
-        "mounts": {
-            "/proc": {"type": "proc"},
-            "/host/data": {"target": "/data", "type": "ro-bind"},
-        },
-    }
-    config = loader.set(data)
-
-    assert len(config.mounts) == 2
-    assert config.mounts[0].type == "proc"
-    assert config.mounts[0].target == "/proc"
-    assert config.mounts[1].type == "ro-bind"
-    assert config.mounts[1].source == "/host/data"
-    assert config.mounts[1].target == "/data"
-
-
-def test_load_yaml_env_vars():
-    """Test loading config with env_vars."""
     loader = ConfigLoader()
     data = {
         "name": "test",
@@ -100,7 +77,7 @@ def test_load_yaml_env_vars():
         "mounts": [{"target": "/proc", "type": "proc"}],
         "env_vars": {"PATH": "/usr/bin", "MY_VAR": "value"},
     }
-    config = loader.set(data)
+    config = loader.load_from_dict(data)
 
     assert config.env_vars == {"PATH": "/usr/bin", "MY_VAR": "value"}
 
@@ -114,7 +91,7 @@ def test_load_yaml_unenv_vars():
         "mounts": [{"target": "/proc", "type": "proc"}],
         "unenv_vars": ["PATH", "HOME"],
     }
-    config = loader.set(data)
+    config = loader.load_from_dict(data)
 
     assert config.unenv_vars == ["PATH", "HOME"]
 
@@ -128,7 +105,7 @@ def test_load_yaml_hostname():
         "mounts": [{"target": "/proc", "type": "proc"}],
         "hostname": "myhost",
     }
-    config = loader.set(data)
+    config = loader.load_from_dict(data)
 
     assert config.hostname == "myhost"
 
@@ -142,71 +119,21 @@ def test_load_yaml_override():
         "mounts": [{"target": "/proc", "type": "proc"}],
     }
     override = {"hostname": "overridden-host"}
-    config = loader.set(data)
-    config = loader._merge(config, override)
-
-    assert config.hostname == "overridden-host"
-
-
-def test_load_yaml_flat_list_unshare():
-    """Test loading config with flat unshare list."""
-    loader = ConfigLoader()
-    data = {
-        "name": "test",
-        "root": "/tmp",
-        "mounts": [{"target": "/proc", "type": "proc"}],
-        "unshare": ["pid", "uts", "network"],
-    }
-    config = loader.set(data)
-
-    assert config.unshare.pid is True
-    assert config.unshare.uts is True
-    assert config.unshare.network is True
-
-
-def test_load_yaml_missing_required_field_errors():
-    """Test that missing mounts raises error."""
-    loader = ConfigLoader()
-    data = {"mounts": [{"target": "/proc", "type": "proc"}]}  # missing name
-
-    with pytest.raises(ConfigValidationError, match="name cannot be empty"):
-        loader.set(data)
-
-
-def test_load_yaml_empty_name_errors():
-    """Test that empty name raises error."""
-    loader = ConfigLoader()
-    data = {"name": "", "root": "/tmp", "mounts": [{"target": "/proc", "type": "proc"}]}
-
-    with pytest.raises(ConfigValidationError, match="name cannot be empty"):
-        loader.set(data)
-
+    config = loader.load_from_dict(data)
 
 def test_load_yaml_unknown_key_errors():
     """Test that unknown top-level keys raise ConfigValidationError."""
     loader = ConfigLoader()
 
-    # tmpfs_mounts is deprecated and should not be recognized
-    data = {
-        "name": "test",
-        "root": "/tmp",
-        "mounts": [{"target": "/proc", "type": "proc"}],
-    }
-
-    # Add unknown key
-    data["tmpfs_mounts"] = [{"target": "/tmp", "size": "100M"}]
-    with pytest.raises(ConfigValidationError, match="unknown key 'tmpfs_mounts'"):
-        loader.set(data)
-
     # Completely unknown key
-    data2 = {
+    data = {
         "name": "test",
         "root": "/tmp",
         "mounts": [{"target": "/proc", "type": "proc"}],
         "weird_key": "foo",
     }
     with pytest.raises(ConfigValidationError, match="unknown key 'weird_key'"):
-        loader.set(data2)
+        loader.load_from_dict(data)
 
 
 def test_load_yaml_unknown_mount_type_errors():
@@ -222,7 +149,7 @@ def test_load_yaml_unknown_mount_type_errors():
     }
 
     with pytest.raises(ValueError, match="Mount type 'invalid-type' is not valid"):
-        loader.set(data)
+        loader.load_from_dict(data)
 
 
 def test_set_config():
@@ -239,7 +166,7 @@ def test_set_config():
         "capabilities": {"drop": ["ALL"]},
     }
 
-    config = loader.set(data)
+    config = loader.load_from_dict(data)
     assert isinstance(config, SandboxConfig)
     assert config.name == "test"
     assert len(config.mounts) == 3

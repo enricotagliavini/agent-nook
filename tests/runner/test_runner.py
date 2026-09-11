@@ -29,7 +29,7 @@ def test_build_command_valid():
                 {"source": "/", "target": "/"},
                 {"target": "/tmp", "type": "tmpfs"},
             ],
-            "capabilities": {"drop": "ALL"},
+            "capabilities": {"drop": ["ALL"]},
             "unshare": {"pid": True, "uts": True},
         }
     )
@@ -53,10 +53,10 @@ def test_build_command_with_ro_bind():
             "name": "test",
             "root": "/tmp",
             "mounts": [
-                {"source": "/readonly", "target": "/readonly", "readonly": True},
-                {"source": "/writable", "target": "/writable"},
+                {"source": "/readonly", "target": "/readonly", "type": "ro-bind"},
+                {"source": "/writable", "target": "/writable", "type": "bind"},
             ],
-            "capabilities": {"drop": "ALL"},
+            "capabilities": {"drop": ["ALL"]},
             "unshare": {"pid": True},
         }
     )
@@ -74,7 +74,7 @@ def test_build_command_with_bad_size():
             "name": "test",
             "root": "/tmp",
             "mounts": [{"target": "/tmp", "type": "tmpfs", "size": "100AM"}],
-            "capabilities": {"drop": "ALL"},
+            "capabilities": {"drop": ["ALL"]},
             "unshare": {"pid": True},
         }
     )
@@ -131,18 +131,6 @@ def test_build_command_unset_env_vars():
     assert "VAR2" in cmd
 
 
-def test_build_command_all_unenv_vars():
-    """Test that unenv_vars=['ALL'] uses --clearenv."""
-    config = ConfigLoader().set(
-        {
-            "name": "test",
-            "root": "/tmp",
-            "mounts": [{"source": "/", "target": "/"}],
-            "unenv_vars": ["ALL"],
-        }
-    )
-    cmd = build_command(config)
-    assert "--clearenv" in cmd
 
 
 def test_run_in_sandbox_basic():

@@ -1,4 +1,7 @@
+# Name and root (required)
 # Agent Nook Default Sandbox Configuration
+name: "agent-sandbox"
+root: "/"
 #
 # This file contains all recommended mounts for a typical agent sandbox.
 # Mounts are grouped by type for clarity.
@@ -123,13 +126,11 @@ capabilities:
 # === Namespaces ===
 # Unshare all standard namespaces.
 unshare:
-  - pid
-  - uts
-  - ipc
-  - cgroup
-  - user
-# Unsharing network will prevent network access from inside the sandbox
-#  - network
+  pid: true
+  uts: true
+  ipc: false
+  cgroup: false
+  user: false
 
 # === Session and hostname ===
 die_with_parent: true

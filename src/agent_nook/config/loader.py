@@ -1,21 +1,12 @@
 """XDG-compliant configuration loader.
 
-Reads configuration from user's XDG directories:
-- ~/.config/agent-nook/sandbox.yaml   (main config)
-- ~/.config/agent-nook/logging.yaml   (logging config)
-- ~/.local/state/agent-nook/logs/     (log output)
-- ~/.local/state/agent-nook/cache/    (temporary data)
-
-On first run, copies the bundled default config to ~/.config/agent-nook/
-if it does not already exist.
+Reads configuration from YAML files and validates against a strict canonical schema.
+The canonical format is enforced at load time with zero tolerance for deviations.
 """
 
 from __future__ import annotations
 
-import os
-import shutil
 import logging
-from pathlib import Path
 from typing import Any
 
 import yaml
@@ -26,6 +17,7 @@ try:
         Mount,
         CapabilitySet,
         NamespaceSet,
+        ConfigValidationError,
     )
 except ImportError:
     from ..config.config import (
@@ -33,105 +25,51 @@ except ImportError:
         Mount,
         CapabilitySet,
         NamespaceSet,
+        ConfigValidationError,
     )
-
-from .config import ConfigValidationError
 
 logger = logging.getLogger(__name__)
 
 
 class ConfigLoader:
-    """Loads and validates sandbox configuration from YAML files.
+    """Loads and validates sandbox configuration from a YAML file.
 
-    The config file should be a flat structure at root level:
-        name: "my-sandbox"
-        root: "/tmp"
-        mounts:
-          - target: /proc
-            type: proc
-          - target: "/home"
-            type: tmpfs
-            size: "100M"
-        capabilities:
-          drop: ALL
-          keep: CHOWN
-        unshare:
-          - pid
-          - uts
-          - ipc
-          - cgroup
-          - user
-        die_with_parent: true
-        new_session: true
-
-    All mount types are unified under the `mounts` list. There is no
-    separate `tmpfs_mounts` section — use `type: tmpfs` instead.
+    The configuration must match the canonical schema exactly. No type
+    coercion or format conversion is performed.
     """
+
+    _FIELDS: dict[str, str] = {
+        "name": "str",
+        "root": "str",
+        "mounts": "list[dict]",
+        "capabilities": "dict",
+        "unshare": "dict",
+        "die_with_parent": "bool",
+        "new_session": "bool",
+        "hostname": "str | None",
+        "timeout": "int | None",
+        "env_vars": "dict[str, str]",
+        "unenv_vars": "list[str]",
+    }
+
+    _VALID_MOUNT_TYPES = frozenset(
+        {"bind", "ro-bind", "dev-bind", "tmpfs", "proc", "dev", "dir"}
+    )
 
     def __init__(self, config_dir: str | None = None) -> None:
         self._config_dir = config_dir
-        self._logger = logging.getLogger(__name__)
-        self._raw_config: dict[str, Any] | None = None
-        self._config: SandboxConfig | None = None
-        self.sandbox_config_path: str | None = None
 
     def find_default_config(self) -> str:
-        """Find the bundled default configuration file.
-
-        Looks in the following locations in order of preference:
-        1. Installed package location: src/agent_nook/config/sandbox.yaml
-        2. Repo root: config/sandbox.yaml (fallback for development)
-
-        Sets self.sandbox_config_path on success.
-
-        Returns:
-            Path to the default config file.
-
-        Raises:
-            FileNotFoundError: If no default config is found.
-        """
+        """Find the bundled default configuration file."""
         import agent_nook
-        package_dir = Path(agent_nook.__file__).parent
-        default_config_path = package_dir / "config" / "sandbox.yaml"
+        from pathlib import Path
 
-        if default_config_path.exists():
-            self.sandbox_config_path = str(default_config_path)
-            return str(default_config_path)
-
-        # Priority 2: Repo root (fallback for development)
-        loader_path = Path(__file__).resolve()
-        repo_root = loader_path.parent.parent.parent.parent
-        default_config_path = repo_root / "config" / "sandbox.yaml"
-
-        if default_config_path.exists():
-            self.sandbox_config_path = str(default_config_path)
-            return str(default_config_path)
-
-        raise FileNotFoundError(
-            f"Default sandbox.yaml not found at {default_config_path}. "
-            f"Make sure agent-nook is properly installed or "
-            f"the config directory exists with a sandbox.yaml file."
-        )
-        """Find the bundled default configuration file.
-
-        Looks in the following locations in order of preference:
-        1. Installed package location: src/agent_nook/config/sandbox.yaml
-        2. Repo root: config/sandbox.yaml (fallback for development)
-
-        Returns:
-            Path to the default config file.
-
-        Raises:
-            FileNotFoundError: If no default config is found.
-        """
-        import agent_nook
         package_dir = Path(agent_nook.__file__).parent
         default_config_path = package_dir / "config" / "sandbox.yaml"
 
         if default_config_path.exists():
             return str(default_config_path)
 
-        # Priority 2: Repo root (fallback for development)
         loader_path = Path(__file__).resolve()
         repo_root = loader_path.parent.parent.parent.parent
         default_config_path = repo_root / "config" / "sandbox.yaml"
@@ -145,437 +83,408 @@ class ConfigLoader:
             f"the config directory exists with a sandbox.yaml file."
         )
 
-    def load(
+    def set(
         self,
-        path: str | None = None,
+        data: dict[str, Any],
         override: dict[str, Any] | None = None,
     ) -> SandboxConfig:
+        """Load configuration from a raw dict."""
+        if override is not None:
+            data = {**data, **override}
+        return self._parse_config(data)
+
+    def set_config(self, data: dict[str, Any], override: dict | None = None) -> SandboxConfig:
+        """Alias for set()."""
+        return self.set(data, override)
+
+    def set_from_yaml(self, path: str) -> SandboxConfig:
+        """Load configuration from a YAML file path."""
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return self.set(data)
+
+    def set_from_json(self, path: str) -> SandboxConfig:
+        """Load configuration from a JSON file path."""
+        import json
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return self.set(data)
+
+    def _parse_config(self, data: dict[str, Any]) -> SandboxConfig:
+        """Parse raw config data into a SandboxConfig.
+
+        Raises:
+            ConfigValidationError: If the data does not match the canonical schema.
+            ValueError: If mount types are invalid.
+        """
+        # Validate field presence and types (strict, no coercion)
+        self._validate_structure(data)
+
+        # Build dataclasses from validated data
+        mounts = self._parse_mounts(data.get("mounts", []))
+        capabilities = self._parse_capabilities(data.get("capabilities", {}))
+        unshare = self._parse_unshare(data.get("unshare", {}))
+        env_vars = data.get("env_vars", {})
+        unenv_vars = data.get("unenv_vars", [])
+        hostname = data.get("hostname")
+        timeout = data.get("timeout")
+
+        return SandboxConfig(
+            name=data["name"],
+            root=data["root"],
+            mounts=mounts,
+            capabilities=capabilities,
+            unshare=unshare,
+            die_with_parent=data.get("die_with_parent", True),
+            new_session=data.get("new_session", True),
+            hostname=hostname,
+            timeout=timeout,
+            env_vars=env_vars,
+            unenv_vars=unenv_vars,
+        )
+
+    def _validate_structure(self, data: dict[str, Any]) -> None:
+        """Validate that the config data matches the canonical schema.
+
+        Single gate — if it passes, all downstream code can assume canonical form.
+        """
+        for required in ("name", "root"):
+            if required not in data:
+                raise ConfigValidationError(f"{required} cannot be empty")
+
+        valid_keys = set(self._FIELDS.keys())
+        for key in data:
+            if key not in valid_keys:
+                raise ConfigValidationError(f"unknown key '{key}'")
+
+        for field_name, expected_type in self._FIELDS.items():
+            value = data.get(field_name)
+            if field_name == "mounts" and value is None:
+                value = []
+            elif field_name == "capabilities":
+                value = data.get("capabilities", {})
+            elif field_name == "unshare":
+                value = data.get("unshare", {})
+            elif field_name == "env_vars":
+                value = data.get("env_vars", {})
+            elif field_name == "unenv_vars":
+                value = data.get("unenv_vars", [])
+            elif field_name == "hostname":
+                value = data.get("hostname", None)
+            elif field_name == "timeout":
+                value = data.get("timeout", None)
+            elif field_name == "die_with_parent":
+                value = data.get("die_with_parent", True)
+            elif field_name == "new_session":
+                value = data.get("new_session", True)
+
+            if expected_type == "str":
+                if not isinstance(value, str):
+                    raise ConfigValidationError(
+                        f"Field '{field_name}' must be a string, got "
+                        f"{type(value).__name__}. Value: {value!r}"
+                    )
+            elif expected_type == "list[dict]":
+                if not isinstance(value, list):
+                    raise ConfigValidationError(
+                        f"Field '{field_name}' must be a list of dicts, got "
+                        f"{type(value).__name__}"
+                    )
+                for i, m in enumerate(value):
+                    if not isinstance(m, dict):
+                        raise ConfigValidationError(
+                            f"mount[{i}] must be a dict, got {type(m).__name__}"
+                        )
+            elif expected_type == "dict":
+                if not isinstance(value, dict):
+                    raise ConfigValidationError(
+                        f"Field '{field_name}' must be a dict, got "
+                        f"{type(value).__name__}"
+                    )
+            elif expected_type == "bool":
+                if not isinstance(value, bool):
+                    raise ConfigValidationError(
+                        f"Field '{field_name}' must be a boolean, got "
+                        f"{type(value).__name__}"
+                    )
+            elif expected_type == "list[str]":
+                if not isinstance(value, list):
+                    raise ConfigValidationError(
+                        f"Field '{field_name}' must be a list of strings, got "
+                        f"{type(value).__name__}"
+                    )
+                for i, item in enumerate(value):
+                    if not isinstance(item, str):
+                        raise ConfigValidationError(
+                            f"Field '{field_name}'[{i}] must be a string, "
+                            f"got {type(item).__name__}: {item!r}"
+                        )
+
+    def _parse_mounts(self, mounts: list[dict]) -> list[Mount]:
+        """Parse mounts from a list of dicts.
+
+        Each mount must be a dict with exactly one of:
+          - "source" and "target" (bind types)
+          - or a single "target" (tmpfs, proc, dev, dir)
+        """
+        result: list[Mount] = []
+
+        for i, m in enumerate(mounts):
+            if not isinstance(m, dict):
+                raise ConfigValidationError(
+                    f"mount[{i}] must be a dict, got {type(m).__name__}"
+                )
+
+            mount_type_str = m.get("type", "bind").lower().strip()
+            if mount_type_str == "":
+                mount_type_str = "bind"
+
+            if mount_type_str not in self._VALID_MOUNT_TYPES:
+                raise ValueError(
+                    f"Mount type '{mount_type_str}' is not valid. "
+                    f"Valid types: {', '.join(sorted(self._VALID_MOUNT_TYPES))}"
+                )
+
+            mount = Mount(source=None, target=None, type=mount_type_str)
+
+            if mount_type_str == "bind":
+                source = m.get("source")
+                target = m.get("target")
+                if source is None:
+                    raise ConfigValidationError(
+                        f"mount[{i}] with type 'bind' must have a 'source' field"
+                    )
+                if target is None:
+                    raise ConfigValidationError(
+                        f"mount[{i}] with type 'bind' must have a 'target' field"
+                    )
+                mount.source = source
+                mount.target = target
+
+            elif mount_type_str == "ro-bind":
+                source = m.get("source")
+                target = m.get("target")
+                if source is None:
+                    raise ConfigValidationError(
+                        f"mount[{i}] with type 'ro-bind' must have a 'source' field"
+                    )
+                if target is None:
+                    raise ConfigValidationError(
+                        f"mount[{i}] with type 'ro-bind' must have a 'target' field"
+                    )
+                mount.source = source
+                mount.target = target
+
+            elif mount_type_str == "dev-bind":
+                source = m.get("source")
+                target = m.get("target")
+                if source is None:
+                    raise ConfigValidationError(
+                        f"mount[{i}] with type 'dev-bind' must have a 'source' field"
+                    )
+                if target is None:
+                    raise ConfigValidationError(
+                        f"mount[{i}] with type 'dev-bind' must have a 'target' field"
+                    )
+                mount.source = source
+                mount.target = target
+                device = m.get("device", False)
+                mount.device = device == True
+
+            elif mount_type_str == "tmpfs":
+                target = m.get("target")
+                if target is None:
+                    raise ConfigValidationError(
+                        f"mount[{i}] with type 'tmpfs' must have a 'target' field"
+                    )
+                mount.target = target
+                mount.size = m.get("size", "")
+
+            elif mount_type_str == "proc":
+                target = m.get("target")
+                if target is None:
+                    mount.target = "/proc"
+                else:
+                    mount.target = target
+
+            elif mount_type_str == "dev":
+                target = m.get("target")
+                if target is None:
+                    mount.target = "/dev"
+                else:
+                    mount.target = target
+
+            elif mount_type_str == "dir":
+                target = m.get("target")
+                if target is None:
+                    raise ConfigValidationError(
+                        f"mount[{i}] with type 'dir' must have a 'target' field"
+                    )
+                mount.target = target
+
+            result.append(mount)
+
+        return result
+
+    def _parse_capabilities(self, caps: dict[str, Any]) -> CapabilitySet:
+        """Parse capabilities from a dict.
+
+        Canonical format:
+            capabilities:
+              drop: ["ALL"]
+              keep: ["CAP_CHOWN"]
+        """
+        dropped: list[str] = []
+        kept: list[str] = []
+
+        if "drop" in caps:
+            if not isinstance(caps["drop"], list):
+                raise ConfigValidationError(
+                    f"capabilities.drop must be a list, got "
+                    f"{type(caps['drop']).__name__}. Use: drop: ['ALL'] or drop: []"
+                )
+            for i, item in enumerate(caps["drop"]):
+                if not isinstance(item, str):
+                    raise ConfigValidationError(
+                        f"capabilities.drop[{i}] must be a string, "
+                        f"got {type(item).__name__}: {item!r}"
+                    )
+            dropped = list(caps["drop"])
+
+        if "keep" in caps:
+            if not isinstance(caps["keep"], list):
+                raise ConfigValidationError(
+                    f"capabilities.keep must be a list, got "
+                    f"{type(caps['keep']).__name__}. Use: keep: ['CAP_CHOWN']"
+                )
+            for i, item in enumerate(caps["keep"]):
+                if not isinstance(item, str):
+                    raise ConfigValidationError(
+                        f"capabilities.keep[{i}] must be a string, "
+                        f"got {type(item).__name__}: {item!r}"
+                    )
+            kept = list(caps["keep"])
+
+        return CapabilitySet(dropped=dropped, kept=kept)
+
+    def _parse_unshare(self, unshare: dict[str, bool]) -> NamespaceSet:
+        """Parse unshare settings from a dict.
+
+        Canonical format:
+            unshare:
+              pid: true
+              uts: true
+              ipc: false
+              ...
+        """
+        namespace_dict: dict[str, bool] = {}
+
+        if not isinstance(unshare, dict):
+            raise ConfigValidationError(
+                "unshare must be a dict mapping namespace names to booleans. "
+                f"Got {type(unshare).__name__}: {unshare!r}"
+            )
+
+        for key, value in unshare.items():
+            if key not in {"pid", "uts", "ipc", "cgroup", "user", "network"}:
+                raise ConfigValidationError(
+                    f"unshare key '{key}' is not valid. "
+                    f"Valid keys: pid, uts, ipc, cgroup, user, network"
+                )
+            if not isinstance(value, bool):
+                raise ConfigValidationError(
+                    f"unshare.{key} must be a boolean (true/false), "
+                    f"got {type(value).__name__}: {value!r}"
+                )
+            namespace_dict[key] = bool(value)
+
+        return NamespaceSet(**namespace_dict)
+
+    def _merge(self, config: SandboxConfig, override: dict[str, Any]) -> SandboxConfig:
+        """Merge override values into a config."""
+        return SandboxConfig(
+            name=config.name,
+            root=config.root,
+            mounts=config.mounts,
+            capabilities=config.capabilities,
+            unshare=config.unshare,
+            die_with_parent=override.get("die_with_parent", config.die_with_parent),
+            new_session=override.get("new_session", config.new_session),
+            hostname=override.get("hostname", config.hostname),
+            timeout=override.get("timeout", config.timeout),
+            env_vars=override.get("env_vars", config.env_vars),
+            unenv_vars=override.get("unenv_vars", config.unenv_vars),
+            _raw_config=config._raw_config,
+        )
+
+    def _copy_to_user_config_dir(self, data: dict[str, Any]) -> str:
+        """Copy the bundled default config to the user config directory."""
+        import shutil
+        from pathlib import Path
+
+        source = self.find_default_config()
+        dest = str(Path("~/.config/agent-nook/sandbox.yaml").expanduser())
+
+        Path(dest).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, dest)
+
+        logger.info("Default sandbox config copied to %s", dest)
+        return str(Path(dest).resolve())
+
+    def load(self, path: str | None = None) -> SandboxConfig:
         """Load and validate configuration from a YAML file.
 
         Args:
-            path: Optional path override. If None, uses the default config path.
-            override: Optional dictionary to override/merge with loaded config.
+            path: Optional path override. If None, uses the default config.
 
         Returns:
             A validated SandboxConfig ready for use.
 
         Raises:
             FileNotFoundError: If the config file does not exist.
-            ValueError: If the config structure is invalid.
+            ConfigValidationError: If the config structure is invalid.
         """
+        from os import path as os_path
+
         if path is None:
             path = self.find_default_config()
 
-        if not os.path.exists(path):
+        if not os_path.exists(path):
             raise FileNotFoundError(f"Config file not found: {path}")
 
-        # Step 1: Parse YAML
+        # Parse YAML into raw dict
         with open(path, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
-            self._raw_config = raw
 
-        # Step 2: Validate known keys
-        known_keys = {"name", "root", "mounts", "capabilities", "unshare",
-                      "die_with_parent", "new_session", "hostname", "timeout",
-                      "env_vars", "unenv_vars"}
-        for key in raw.keys():
-            if key not in known_keys:
-                raise ConfigValidationError(f"unknown key '{key}'")
+        # Validate structure (single gate — no legacy normalization)
+        self._validate_structure(raw)
 
-        # Step 3: Convert raw YAML dict to dataclasses
-        converted = self._yaml_to_dataclasses(raw)
+        # Build config
+        config = self._parse_config(raw)
 
-        # Step 4: Apply overrides
-        if override:
-            converted = self._merge(converted, override)
+        # Full validation
+        config.validate()
 
-        self._config = converted
-        return converted
+        return config
 
-    def set(self, data: dict[str, Any]) -> SandboxConfig:
-        """Set configuration from a raw dictionary.
+    def load_from_dict(self, data: dict[str, Any]) -> SandboxConfig:
+        """Load and validate configuration from a dict (for testing).
 
         Args:
             data: Raw configuration dictionary.
 
         Returns:
-            A validated SandboxConfig.
+            A validated SandboxConfig instance.
 
         Raises:
-            ConfigValidationError: If required keys are missing or invalid.
+            ConfigValidationError: If the config structure is invalid.
         """
-        self._raw_config = data
+        self._validate_structure(data)
 
-        known_keys = {"name", "root", "mounts", "capabilities", "unshare",
-                      "die_with_parent", "new_session", "hostname", "timeout",
-                      "env_vars", "unenv_vars"}
-        for key in data.keys():
-            if key not in known_keys:
-                raise ConfigValidationError(f"unknown key '{key}'")
+        config = self._parse_config(data)
+        config.validate()
 
-        # Validate required fields
-        if "name" not in data or not data["name"].strip():
-            raise ConfigValidationError("name cannot be empty")
-        if "root" not in data or not data["root"].strip():
-            raise ConfigValidationError("root cannot be empty")
-        if "mounts" not in data:
-            raise ConfigValidationError("mounts cannot be empty")
-
-        converted = self._yaml_to_dataclasses(data)
-        if override := data.get("override"):
-            converted = self._merge(converted, override)
-        self._config = converted
-        return converted
-
-    def _yaml_to_dataclasses(self, data: dict[str, Any]) -> SandboxConfig:
-        """Convert raw YAML dict to SandboxConfig dataclass.
-
-        Handles:
-        - mounts: unified list with type field
-          - List of dicts: [{"target": "...", "type": "tmpfs", "size": "100M"}]
-          - Dict: {"/proc": {"type": "proc"}, "/host": {"type": "ro-bind", "target": "/sandbox"}}
-        """
-        # Extract fields
-        name: str = data.get("name", "default-sandbox")
-        root: str = data.get("root", "./sandbox")
-        hostname: str | None = data.get("hostname")
-
-        # Mounts (unified format)
-        mounts: list[Mount] = self._convert_mounts(data.get("mounts", []))
-
-        # capabilities
-        capabilities: CapabilitySet = self._convert_capabilities(
-            data.get("capabilities", {})
-        )
-
-        # unshare
-        unshare: NamespaceSet = self._convert_unshare(data.get("unshare", []))
-
-        # Boolean flags
-        die_with_parent = data.get("die_with_parent", True)
-        new_session = data.get("new_session", True)
-        timeout = data.get("timeout", None)
-
-        # Environment variables
-        env_vars = data.get("env_vars", {})
-        if isinstance(env_vars, dict):
-            # Convert flat dict to list format if needed
-            pass
-        elif isinstance(env_vars, list):
-            env_vars = dict(item.split("=", 1) for item in env_vars if "=" in item)
-
-        unenv_vars: list[str] = data.get("unenv_vars", [])
-
-        return SandboxConfig(
-            name=name,
-            root=root,
-            mounts=mounts,
-            capabilities=capabilities,
-            unshare=unshare,
-            die_with_parent=die_with_parent,
-            new_session=new_session,
-            hostname=hostname,
-            timeout=timeout,
-            env_vars=env_vars,
-            unenv_vars=unenv_vars,
-            _raw_config=data,
-        )
-
-    def _convert_mounts(self, mounts: list | dict) -> list[Mount]:
-        """Convert mounts to list[Mount].
-
-        Handles:
-        - List of dicts: [{"target": "...", "type": "tmpfs", "size": "100M"}]
-        - Dict: {"/host/path": {"target": "/sandbox/path", "type": "ro-bind"}}
-        - Dict (flat format, no nested target): {"/host/path": "/sandbox/path"}
-        """
-        if isinstance(mounts, list):
-            result: list[Mount] = []
-            for i, m in enumerate(mounts):
-                if isinstance(m, dict):
-                    mount_type = m.get("type", "bind")
-                    # Validate mount type
-                    valid_types = {"bind", "ro-bind", "dev-bind", "tmpfs", "proc", "dev", "dir"}
-                    if mount_type not in valid_types:
-                        raise ValueError(
-                            f"Mount type '{mount_type}' is not valid. "
-                            f"Valid types: {', '.join(sorted(valid_types))}"
-                        )
-                    source = m.get("source", "")
-                    target = m.get("target", "")
-                    readonly = m.get("readonly", False)
-                    device = m.get("device", False)
-                    result.append(
-                        Mount(
-                            source=source,
-                            target=target,
-                            readonly=readonly,
-                            device=device,
-                            type=mount_type,
-                            size=m.get("size", ""),
-                        )
-                    )
-                elif isinstance(m, str):
-                    # Flat format: source:target (deprecated, falls back to bind)
-                    if ":" in m:
-                        parts = m.split(":", 1)
-                        result.append(Mount(source=parts[0], target=parts[1]))
-                    else:
-                        result.append(Mount(source=m, target=m))
-            return result
-
-        if isinstance(mounts, dict):
-            result: list[Mount] = []
-            for source, target_or_dict in mounts.items():
-                if isinstance(target_or_dict, str):
-                    result.append(Mount(source=source, target=target_or_dict))
-                elif isinstance(target_or_dict, dict):
-                    mount_type = target_or_dict.get("type", "bind")
-                    valid_types = {"bind", "ro-bind", "dev-bind", "tmpfs", "proc", "dev", "dir"}
-                    if mount_type not in valid_types:
-                        raise ValueError(
-                            f"Mount type '{mount_type}' is not valid. "
-                            f"Valid types: {', '.join(sorted(valid_types))}"
-                        )
-                    result.append(
-                        Mount(
-                            source=source,
-                            target=target_or_dict.get("target", source),
-                            readonly=target_or_dict.get("readonly", False),
-                            device=target_or_dict.get("device", False),
-                            type=mount_type,
-                            size=target_or_dict.get("size", ""),
-                        )
-                    )
-            return result
-
-        return []
-
-    def _convert_capabilities(self, caps: Any) -> CapabilitySet:
-        """Convert capabilities configuration to CapabilitySet.
-        
-        Args:
-            caps: The capabilities configuration from the YAML file.
-                  Use "drop" to list capabilities to drop, or "ALL" to drop all.
-                  Use "keep" to list capabilities to keep (after dropping ALL).
-        
-        Returns:
-            A CapabilitySet with the parsed drop and keep lists.
-        """
-        if not isinstance(caps, dict):
-            raise ConfigValidationError(
-                f"Capabilities must be a dict, got {type(caps).__name__}"
-            )
-        
-        dropped: list[str] = []
-        kept: list[str] = []
-        
-        if "drop" in caps:
-            val = caps["drop"]
-            if isinstance(val, str):
-                dropped = [val]
-            elif isinstance(val, list):
-                dropped = list(val)
-            else:
-                dropped = list(val)
-        
-        if "keep" in caps:
-            val = caps["keep"]
-            if isinstance(val, str):
-                kept = [val]
-            elif isinstance(val, list):
-                kept = list(val)
-            else:
-                kept = list(val)
-        
-        return CapabilitySet(dropped=dropped, kept=kept)
-
-        """Convert capabilities to CapabilitySet.
-
-        Handles:
-        - "drop": "ALL"
-        - "keep": ["CHOWN", "SETUID"]
-        - "dropped": ["CAP_NET_ADMIN"]
-        - "kept": ["CAP_CHOWN"]
-        """
-        # Valid Linux capabilities (from /usr/include/linux/capability.h)
-        # "ALL" is a special value meaning all capabilities
-        valid_capabilities = frozenset({
-            "ALL", "CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_DAC_READ_SEARCH",
-            "CAP_FOWNER", "CAP_FSETID", "CAP_KILL", "CAP_SETGID",
-            "CAP_SETUID", "CAP_SETPCAP", "CAP_LINUX_IMMUTABLE",
-            "CAP_NET_BIND_SERVICE", "CAP_NET_BROADCAST", "CAP_NET_ADMIN",
-            "CAP_NET_RAW", "CAP_IPC_LOCK", "CAP_IPC_OWNER", "CAP_SYS_MODULE",
-            "CAP_SYS_RAWIO", "CAP_SYS_CHROOT", "CAP_SYS_PTRACE",
-            "CAP_SYS_PACCT", "CAP_SYS_ADMIN", "CAP_SYS_BOOT", "CAP_SYS_NICE",
-            "CAP_SYS_RESOURCE", "CAP_SYS_TIME", "CAP_SYS_TTY_CONFIG",
-            "CAP_MKNOD", "CAP_LEASE", "CAP_AUDIT_WRITE", "CAP_AUDIT_READ",
-            "CAP_AUDIT_CONTROL", "CAP_SETFCAP", "CAP_MAC_OVERRIDE",
-            "CAP_MAC_ADMIN", "CAP_SYSLOG", "CAP_WAKE_ALARM",
-            "CAP_BLOCK_SUSPEND", "CAP_AUDIT_READ", "CAP_PERFMON",
-            "CAP_BPF", "CAP_CHECKPOINT_RESTORE",
-        })
-        dropped: list[str] = []
-        kept: list[str] = []
-
-        if isinstance(caps, dict):
-            if "drop" in caps:
-                val = caps["drop"]
-                if isinstance(val, str):
-                    dropped = [val]
-                else:
-                    dropped = list(val)
-            if "keep" in caps:
-                val = caps["keep"]
-                if isinstance(val, str):
-                    kept = [val]
-                else:
-                    kept = list(val)
-            if "dropped" in caps:
-                val = caps["dropped"]
-                if isinstance(val, str):
-                    dropped = [val]
-                else:
-                    dropped = list(val)
-            if "kept" in caps:
-                val = caps["kept"]
-                if isinstance(val, str):
-                    kept = [val]
-                else:
-                    kept = list(val)
-
-        # Check for conflicting drop ALL + keep
-        if "ALL" in dropped and kept:
-            raise ConfigValidationError(
-                "Cannot keep capabilities when dropping ALL"
-            )
-
-        # Normalize capability names (accept both "CHOWN" and "CAP_CHOWN")
-        def _normalize_cap(name: str) -> str:
-            if name.startswith("CAP_"):
-                return name
-            return "CAP_" + name
-
-        normalized_dropped = [_normalize_cap(cap) for cap in dropped]
-        normalized_kept = [_normalize_cap(cap) for cap in kept]
-
-        # Validate capability names
-        all_caps = normalized_dropped + normalized_kept
-        invalid = [cap for cap in all_caps if cap not in valid_capabilities]
-        if invalid:
-            raise ConfigValidationError(
-                f"Invalid capability{'' if len(invalid) == 1 else 's'}: "
-                f"{', '.join(invalid)}.{'' if len(invalid) == 1 else ''} "
-                f"Valid: {', '.join(sorted(valid_capabilities))}"
-            )
-
-        return CapabilitySet(dropped=dropped, kept=kept)
-
-    def _convert_unshare(self, unshare: list) -> NamespaceSet:
-        """Convert unshare to NamespaceSet.
-
-        Handles:
-        - List: ["pid", "uts", "network"]
-        - Dict: {"pid": True, "uts": False}
-
-        Uses opt-in semantics: only namespaces explicitly set to True are unshared.
-        """
-        if isinstance(unshare, list):
-            ns_dict: dict[str, bool] = {}
-            for ns in unshare:
-                if isinstance(ns, str):
-                    ns_dict[ns] = True
-                else:
-                    ns_dict[str(ns)] = True
-        elif isinstance(unshare, dict):
-            ns_dict = unshare
-        else:
-            ns_dict = {}
-
-        return NamespaceSet(
-            pid=ns_dict.get("pid", False),
-            uts=ns_dict.get("uts", False),
-            ipc=ns_dict.get("ipc", False),
-            cgroup=ns_dict.get("cgroup", False),
-            user=ns_dict.get("user", False),
-            network=ns_dict.get("network", False),
-        )
-
-    def _merge(self, base: SandboxConfig, override: dict[str, Any]) -> SandboxConfig:
-        """Merge override into base config.
-
-        Handles:
-          - dict/list fields: mounts, env_vars, unenv_vars, capabilities, unshare
-          - scalar fields: hostname (uses override value if present)
-        """
-        new_mounts = base.mounts
-        if "mounts" in override:
-            new_mounts = base.mounts + self._convert_mounts(override["mounts"])
-
-        new_hostname = base.hostname
-        if "hostname" in override and override["hostname"] is not None:
-            new_hostname = override["hostname"]
-
-        return SandboxConfig(
-            name=base.name,
-            root=base.root,
-            mounts=new_mounts,
-            capabilities=base.capabilities,
-            unshare=base.unshare,
-            die_with_parent=base.die_with_parent,
-            new_session=base.new_session,
-            hostname=new_hostname,
-            env_vars=base.env_vars | override.get("env_vars", {}),
-            unenv_vars=base.unenv_vars + override.get("unenv_vars", []),
-            _raw_config=base._raw_config,
-        )
-
-    @property
-    def raw_config(self) -> dict[str, Any]:
-        """Get the raw (unvalidated) config from the YAML file."""
-        if self._raw_config is None:
-            raise ValueError("No config loaded. Call load() first.")
-        return self._raw_config
-
-    @property
-    def config(self) -> SandboxConfig:
-        """Get the normalized, validated config."""
-        if self._config is None:
-            raise ValueError("No config loaded. Call load() first.")
-        return self._config
-
-    def install_default_config(self) -> str:
-        """Copy the default config to the user's config directory if not present.
-
-        Returns:
-            The path to the installed config file.
-        """
-        import agent_nook
-        package_dir = Path(agent_nook.__file__).parent
-        default_config_path = package_dir / "config" / "sandbox.yaml"
-
-        default_path = self.find_default_config()
-        target_path = str(default_config_path)
-        if not os.path.exists(default_path):
-            raise FileNotFoundError(
-                f"Default config not found at {default_path}. "
-                f"Install agent-nook with: pip install -e ."
-            )
-
-        if not os.path.exists(target_path):
-            self._logger.info(
-                "No sandbox config found at %s. Copying default config.",
-                target_path,
-            )
-            shutil.copy2(default_path, target_path)
-            self._logger.info(
-                "Default sandbox config installed to: %s",
-                target_path,
-            )
-            return target_path
-
-        self._logger.info("Using existing config: %s", target_path)
-        return target_path
+        return config
 
 
 __all__ = ["ConfigLoader", "ConfigValidationError"]

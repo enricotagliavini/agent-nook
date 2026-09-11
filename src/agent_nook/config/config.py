@@ -1,228 +1,208 @@
-"""Sandbox configuration dataclasses and validation.
+"""Configuration dataclasses for the sandbox runner.
 
-This module defines the dataclass schemas and validation logic.
-It is the single source of truth for the SandboxConfig structure.
-Both the config package and sandbox builder import from here.
+This module defines the core data structures used to represent sandbox
+configurations. The configuration is loaded via ConfigLoader which validates
+against a strict canonical schema.
 """
 
-import re
-from dataclasses import dataclass, field
+from __future__ import annotations
+
+import logging
 from typing import Any
+from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 
-class ConfigValidationError(Exception):
-    """Raised when configuration validation fails."""
-
-    def __init__(self, message: str) -> None:
-        self.message = message
-        super().__init__(message)
-
-
-@dataclass(frozen=True)
+@dataclass
 class Mount:
-    """A unified mount specification.
+    """A mount point for the sandbox.
 
-    The type determines how the mount is converted to bwrap CLI arguments.
+    A single mount is specified as one of:
 
-    Mount Types:
-      - "bind":       --bind SRC DEST
-      - "ro-bind":    --ro-bind SRC DEST
-      - "dev-bind":   --dev-bind SRC DEST
-      - "tmpfs":      --tmpfs TARGET [SIZE]
-      - "proc":       --proc TARGET
-      - "dev":        --dev TARGET
-      - "dir":        --dir TARGET
-
-    For "bind", "ro-bind", and "dev-bind", both source and target are required.
-    For "tmpfs", only target is required; size is optional (empty = no size limit).
-    For "proc", "dev", and "dir", only target is required.
+    - bind:     {"source": "/host/path", "target": "/sandbox/path"}
+    - ro-bind:  {"source": "/host/path", "target": "/sandbox/path"}
+    - dev-bind: {"source": "/dev/sda", "target": "/sandbox/dev"}
+    - tmpfs:    {"target": "/tmp", "size": "100M"}
+    - proc:     {"target": "/proc"}
+    - dev:      {"target": "/dev"}
+    - dir:      {"target": "/workspace"}
 
     Attributes:
-        source: Source path for bind/ro-bind/dev-bind mounts. Required for
-                bind/ro-bind/dev-bind types.
-        target: Target path in the sandbox. Required for bind/ro-bind/dev-bind,
-                tmpfs, and dir. Defaults to /proc or /dev for proc/dev.
-        type: The mount type. One of: bind, ro-bind, dev-bind, tmpfs, proc, dev, dir.
-              Defaults to "bind".
-        size: Size limit for tmpfs mounts. Can be a string with a size suffix
-              (e.g., "100M", "500G") or an integer for bytes. Empty string means
-              no size limit (uses bwrap default). Defaults to "".
-        readonly: If True and type is "bind", produces --ro-bind instead of --bind.
-                  (Deprecated; prefer type="ro-bind" directly.)
-        device: If True and type is "bind", produces --dev-bind instead of --bind.
-                (Deprecated; prefer type="dev-bind" directly.)
+        source: The source path (required for bind, ro-bind, dev-bind types).
+        target: The target path inside the sandbox (required for all types).
+        type: The mount type. Must be one of: bind, ro-bind, dev-bind,
+              tmpfs, proc, dev, dir.
+        device: True for dev-bind mounts.
+        size: Human-readable size string for tmpfs mounts (e.g., "100M").
     """
 
-    source: str = ""
-    target: str = ""
+    source: str | None = field(default=None, repr=False)
+    target: str | None = field(default=None, repr=False)
     type: str = "bind"
-    size: str = ""
-    readonly: bool = False
     device: bool = False
-
-    def _parse_size(self, size_str: str) -> int | None:
-        """Parse a size string into bytes.
-
-        Supports standard suffixes:
-          - No suffix: plain bytes
-          - B, KB, KiB: 1024-based
-          - MB, MiB: 1024^2
-          - GB, GiB: 1024^3
-          - TB, TiB: 1024^4
-
-        Args:
-            size_str: Size string like "100M", "500G", or "1048576".
-
-        Returns:
-            Size in bytes, or None if empty string.
-
-        Raises:
-            ValueError: If the format is invalid (no number, invalid suffix).
-        """
-        if isinstance(size_str, (int, float)):
-            return int(size_str)
-
-        if isinstance(size_str, str):
-            size_str = size_str.strip()
-            if not size_str:
-                return None  # No size limit
-
-        match = re.match(r'^(-?\d+(?:\.\d+)?)\s*([A-Za-z]*)$', size_str)
-        if not match:
-            raise ValueError(f'Invalid size format: "{size_str}"')
-
-        num_str, suffix = match.groups()
-        try:
-            num = float(num_str)
-        except ValueError:
-            raise ValueError(f'Invalid size format: "{size_str}"')
-
-        multipliers = {
-            '': 1, 'B': 1,
-            'K': 1024, 'KB': 1024, 'KiB': 1024,
-            'M': 1024**2, 'MB': 1024**2, 'MiB': 1024**2,
-            'G': 1024**3, 'GB': 1024**3, 'GiB': 1024**3,
-            'T': 1024**4, 'TB': 1024**4, 'TiB': 1024**4,
-        }
-
-        suffix = suffix.upper()
-        if suffix not in multipliers:
-            valid = ', '.join(sorted(multipliers.keys(), key=len))
-            raise ValueError(
-                f'Invalid size suffix: "{suffix}"'
-                f' (valid: {valid})'
-            )
-
-        return int(num * multipliers[suffix])
+    size: str = ""
 
     def build(self) -> list[str]:
-        """Convert to bwrap CLI arguments based on mount type.
+        """Build the bwrap arguments for this mount.
 
         Returns:
-            A list of 1-4 strings representing bwrap CLI arguments.
+            A list of bwrap CLI arguments for this mount.
 
         Raises:
-            ValueError: If required fields are missing for the mount type.
+            ValueError: If the mount is malformed (missing required fields).
         """
-        mount_type = self.type.lower().strip()
+        args: list[str] = []
 
-        # dev-bind: requires device=True, source, target
-        if mount_type == "dev-bind":
-            if not self.source:
+        if self.type.lower().strip() not in (
+            "bind",
+            "ro-bind",
+            "dev-bind",
+            "tmpfs",
+            "proc",
+            "dev",
+            "dir",
+        ):
+            raise ValueError(
+                f"Unknown mount type: {self.type}. "
+                f"Valid types: bind, ro-bind, dev-bind, tmpfs, proc, dev, dir"
+            )
+
+        if self.type.lower().strip() in ("bind", "ro-bind", "dev-bind"):
+            if self.source is None:
+                raise ValueError(f"Mount type '{self.type}' requires a non-empty source")
+            if self.target is None:
                 raise ValueError(
-                    f"Mount with type 'dev-bind' requires a non-empty source"
+                    f"Mount type '{self.type}' requires a non-empty target"
                 )
-            if not self.target:
-                raise ValueError(
-                    f"Mount with type 'dev-bind' requires a non-empty target"
-                )
-            if not self.device:
-                raise ValueError(
-                    f"Mount with type 'dev-bind' requires device=True"
-                )
-            return ["--dev-bind", self.source, self.target]
 
-        # bind / ro-bind: need source and target
-        if mount_type in ("bind", "ro-bind"):
-            if not self.source:
-                raise ValueError(
-                    f"Mount with type '{mount_type}' requires a non-empty source"
-                )
-            if not self.target:
-                raise ValueError(
-                    f"Mount with type '{mount_type}' requires a non-empty target"
-                )
-            # If device=True, treat as dev-bind
-            if self.device:
-                return ["--dev-bind", self.source, self.target]
-            # If readonly=True on a bind mount, produce --ro-bind
-            if self.readonly and mount_type == "bind":
-                return ["--ro-bind", self.source, self.target]
-            if mount_type == "ro-bind":
-                return ["--ro-bind", self.source, self.target]
-            return ["--bind", self.source, self.target]
+            if self.type.lower().strip() == "ro-bind":
+                args.extend(["--ro-bind", self.source, self.target])
+            elif self.type.lower().strip() == "dev-bind":
+                if self.device:
+                    args.extend(["--dev-bind", self.source, self.target])
+                else:
+                    raise ValueError(
+                        f"Mount type 'dev-bind' requires device=True: "
+                        f"mount({self.source!r}, target={self.target!r}, "
+                        f"type='dev-bind', device=True)"
+                    )
+            else:
+                args.extend(["--bind", self.source, self.target])
 
-        # tmpfs: target + optional size
-        if mount_type == "tmpfs":
-            if not self.target:
-                raise ValueError(
-                    f"Mount with type 'tmpfs' requires a non-empty target"
-                )
-            if self.size:
-                size_bytes = self._parse_size(self.size)
-                if size_bytes is None:
-                    return ["--tmpfs", self.target]
-                return ["--tmpfs", self.target, str(size_bytes)]
-            return ["--tmpfs", self.target]
+        elif self.type.lower().strip() == "tmpfs":
+            if self.target is None:
+                raise ValueError("tmpfs mount requires a target")
+            size_bytes = self._parse_size(self.size)
+            if size_bytes is not None and size_bytes > 0:
+                args.extend(["--tmpfs", self.target, str(size_bytes)])
+            else:
+                args.extend(["--tmpfs", self.target])
 
-        # proc: target defaults to /proc
-        if mount_type == "proc":
-            return ["--proc", self.target if self.target else "/proc"]
+        elif self.type.lower().strip() == "proc":
+            if self.target is None:
+                args.extend(["--proc", "/proc"])
+            else:
+                args.extend(["--proc", self.target])
 
-        # dev: target defaults to /dev
-        if mount_type == "dev":
-            return ["--dev", self.target if self.target else "/dev"]
+        elif self.type.lower().strip() == "dev":
+            if self.target is None:
+                args.extend(["--dev", "/dev"])
+            else:
+                args.extend(["--dev", self.target])
 
-        # dir: maps to --dir (bind mount as dir)
-        if mount_type == "dir":
-            if not self.target:
-                raise ValueError(
-                    f"Mount with type 'dir' requires a non-empty target"
-                )
-            return ["--dir", self.target]
+        elif self.type.lower().strip() == "dir":
+            if self.target is None:
+                raise ValueError("dir mount requires a target")
+            args.extend(["--dir", self.target])
 
-        # Unknown type
-        raise ValueError(
-            f"Unknown mount type: '{mount_type}'. "
-            f"Valid types: 'bind', 'ro-bind', 'dev-bind', 'tmpfs', 'proc', 'dev', 'dir'"
-        )
+        return args
+
+    @staticmethod
+    def _parse_size(size_str: str) -> int | None:
+        """Parse a human-readable size string into bytes.
+
+        Args:
+            size_str: Size string like "100M", "500G", "1024K", or "100".
+
+        Returns:
+            Size in bytes, or None if the input is empty or invalid.
+
+        Raises:
+            ValueError: If the format is invalid.
+        """
+        if not size_str:
+            return None
+
+        size_str = str(size_str).strip()
+        if not size_str:
+            return None
+
+        units = {
+            "B": 1,
+            "K": 1024,
+            "KB": 1024,
+            "M": 1_048_576,
+            "GB": 1_073_741_824,
+            "G": 1_073_741_824,
+            "T": 1_099_511_627_776,
+            "TB": 1_099_511_627_776,
+        }
+
+        # Pattern: number (with optional decimal) followed by optional unit
+        # Unit can be any alphabetic characters (we validate separately)
+        match = __import__("re").compile(
+            r"^\s*(\d+(?:\.\d+)?)\s*([A-Za-z]*)\s*$"
+        ).match(size_str)
+        if not match:
+            raise ValueError(
+                f"Invalid size format: '{size_str}'. "
+                f"Expected format: <number>U where U is B, K, KB, M, G, GB, T, or TB. "
+                f"Examples: '1024', '100M', '500G', '1024K'"
+            )
+
+        num = float(match.group(1))
+        unit = match.group(2)
+
+        if not unit:
+            return int(num)
+
+        if unit not in units:
+            raise ValueError(
+                f"Invalid size suffix: '{unit}'. "
+                f"Valid suffixes: B, K, KB, M, G, GB, T, TB."
+            )
+
+        return int(num * units[unit])
 
 
-@dataclass(frozen=True)
 class CapabilitySet:
     """Capability drop/add configuration.
 
-    Drop capabilities explicitly. If you want to drop all capabilities,
-    set dropped=["ALL"]. If you want to keep specific capabilities,
-    list them in kept. The two lists are mutually exclusive:
-    if dropped is ["ALL"], kept must be empty.
+    Drop capabilities explicitly using the "drop" field.
+    List capabilities to keep using the "keep" field.
 
-    Defaults:
-        - dropped: [] (drop nothing by default)
-        - kept: [] (nothing kept by default)
+    Example:
+        CapabilitySet(dropped=["ALL"], kept=["CAP_CHOWN", "CAP_DAC_OVERRIDE"])
 
-    To drop all caps, use: CapabilitySet(dropped=["ALL"])
-    To keep specific caps: CapabilitySet(kept=["CAP_CHOWN", "CAP_DAC_OVERRIDE"])
-    To drop specific caps: CapabilitySet(dropped=["CAP_NET_ADMIN", "CAP_NET_RAW"])
-
-    NOTE: Capability names are passed through unchanged to bwrap.
-    Short names (e.g., "CHOWN") are NOT normalized. Use fully qualified
-    names (e.g., "CAP_DAC_READ_SEARCH") — bwrap will reject invalid
-    names with a native error at runtime.
+    Notes:
+        - Capability names are passed through unchanged to bwrap.
+          Short names (e.g., "CHOWN") are NOT normalized. Use fully
+          qualified names (e.g., "CAP_DAC_READ_SEARCH").
+        - bwrap will reject unknown capability names with a native error.
     """
 
-    dropped: list[str] = field(default_factory=list)
-    kept: list[str] = field(default_factory=list)
+    def __init__(self, dropped: list[str] | None = None, kept: list[str] | None = None):
+        self._dropped: list[str] = dropped if dropped is not None else []
+        self._kept: list[str] = kept if kept is not None else []
+
+    @property
+    def dropped(self) -> list[str]:
+        return self._dropped
+
+    @property
+    def kept(self) -> list[str]:
+        return self._kept
 
     def build(self) -> list[str]:
         """Convert to bwrap --cap-drop and --cap-add arguments.
@@ -235,53 +215,41 @@ class CapabilitySet:
             A list of bwrap CLI arguments.
         """
         args: list[str] = []
-        if self.dropped:
-            for cap in self.dropped:
+        if self._dropped:
+            for cap in self._dropped:
                 args.extend(["--cap-drop", cap])
-        for cap in self.kept:
+        for cap in self._kept:
             args.extend(["--cap-add", cap])
         return args
 
-    def build(self) -> list[str]:
-        """Convert to bwrap --cap-drop and --cap-add arguments.
-
-        Capability names are expected to be fully qualified (e.g.,
-        "CAP_DAC_READ_SEARCH"). Short names are NOT normalized —
-        users must use the full name.
-
-        Returns:
-            A list of bwrap CLI arguments.
-        """
-        args: list[str] = []
-        if self.dropped:
-            for cap in self.dropped:
-                args.extend(["--cap-drop", cap])
-        for cap in self.kept:
-            args.extend(["--cap-add", cap])
-        return args
+    def __repr__(self) -> str:
+        return (
+            f"CapabilitySet(dropped={self._dropped!r}, kept={self._kept!r})"
+        )
 
 
-@dataclass(frozen=True)
 class NamespaceSet:
     """Namespaces to unshare.
 
-    Defaults (all False, opt-in):
-        - pid: False
-        - uts: False
-        - ipc: False
-        - cgroup: False
-        - user: False
-        - network: False
-
     Only namespaces explicitly set to True will be unshared.
+    Unspecified namespaces remain shared.
+
+    Attributes:
+        pid: Unshare PID namespace (isolates the sandbox process).
+        uts: Unshare UTS namespace (isolates hostname).
+        ipc: Unshare IPC namespace.
+        cgroup: Unshare cgroup namespace.
+        user: Unshare user namespace.
+        network: Unshare network namespace.
     """
 
-    pid: bool = False
-    uts: bool = False
-    ipc: bool = False
-    cgroup: bool = False
-    user: bool = False
-    network: bool = False
+    def __init__(self, pid: bool = False, uts: bool = False, ipc: bool = False, cgroup: bool = False, user: bool = False, network: bool = False):
+        self.pid = pid
+        self.uts = uts
+        self.ipc = ipc
+        self.cgroup = cgroup
+        self.user = user
+        self.network = network
 
     @property
     def namespaces(self) -> list[str]:
@@ -301,13 +269,19 @@ class NamespaceSet:
             ns_list.append("user")
         return ns_list
 
+    def __repr__(self) -> str:
+        return (
+            f"NamespaceSet(pid={self.pid}, uts={self.uts}, ipc={self.ipc}, "
+            f"cgroup={self.cgroup}, user={self.user}, network={self.network})"
+        )
 
-@dataclass(frozen=True)
+
+@dataclass
 class SandboxConfig:
     """Complete sandbox configuration.
 
-    All fields are validated in __post_init__. Use build() or
-    load() to construct instances — do not construct directly.
+    All fields are validated on construction. Use build() or
+    ConfigLoader to construct instances.
 
     Mounts can use the unified type system:
         - type: "bind"     → --bind SRC DEST
@@ -336,168 +310,176 @@ class SandboxConfig:
     unenv_vars: list[str] = field(default_factory=list)
     _raw_config: dict[str, Any] = field(default_factory=dict, repr=False)
 
-    def __post_init__(self) -> None:
-        """Validate configuration after construction."""
-        if not self.name:
-            raise ConfigValidationError("name cannot be empty")
-        if not self.root:
-            raise ConfigValidationError("root cannot be empty")
-        if not self.mounts:
-            raise ConfigValidationError("mounts cannot be empty")
-
-        # Accept both CapabilitySet and dict for capabilities (for convenience)
-        if isinstance(self.capabilities, dict):
-            dropped: list[str] | None = None
-            kept: list[str] | None = None
-            if "drop" in self.capabilities:
-                val = self.capabilities["drop"]
-                if isinstance(val, str):
-                    dropped = [val]
-                else:
-                    dropped = list(val)
-            if "keep" in self.capabilities:
-                val = self.capabilities["keep"]
-                if isinstance(val, str):
-                    kept = [val]
-                else:
-                    kept = list(val)
-            if dropped is not None:
-                self.__dict__["capabilities"] = CapabilitySet(dropped=dropped, kept=[])
-            elif kept is not None:
-                self.__dict__["capabilities"] = CapabilitySet(dropped=[], kept=kept)
-            else:
-                self.__dict__["capabilities"] = CapabilitySet(dropped=[], kept=[])
-
-        # Accept list for unshare (namespace list like ["pid", "uts", "ipc"])
-        if isinstance(self.unshare, list):
-            # Convert list to NamespaceSet
-            ns_dict: dict[str, bool] = {}
-            for ns in self.unshare:
-                ns_lower = ns.lower().strip()
-                if ns_lower in ("pid", "uts", "ipc", "cgroup", "user", "network"):
-                    ns_dict[ns_lower] = True
-            self.__dict__["unshare"] = NamespaceSet(**ns_dict)
-
-        # Validate mount types
-        valid_types = {"bind", "ro-bind", "dev-bind", "tmpfs", "proc", "dev", "dir"}
-        for mount in self.mounts:
-            if mount.type.lower().strip() not in valid_types:
-                raise ConfigValidationError(
-                    f"Mount type '{mount.type}' is not valid. "
-                    f"Valid types: {', '.join(sorted(valid_types))}"
-                )
-
     def validate(self) -> None:
-        """Run full validation."""
-        self.__post_init__()
+        """Run full validation.
 
-        # Validate mounts
-        for i, mount in enumerate(self.mounts):
-            if not mount.source and mount.type in ("bind", "ro-bind", "dev-bind"):
-                raise ConfigValidationError(
-                    f"mount[{i}] with type '{mount.type}' requires a non-empty source"
-                )
-            if not mount.target and mount.type in (
-                "bind", "ro-bind", "dev-bind", "dir", "tmpfs"
-            ):
-                raise ConfigValidationError(
-                    f"mount[{i}] with type '{mount.type}' requires a non-empty target"
-                )
-
-        # Validate capabilities
-        self.capabilities.validate()
+        Note: Structural validation (field types, required fields) is performed
+        by ConfigLoader._validate_structure() during load. This method only
+        performs runtime checks that cannot be expressed in the canonical schema:
+          - unshare.network implies unshare.uts and unshare.ipc
+        """
+        # Validate unshare namespaces
+        if self.unshare.network:
+            # --unshare-net implies --unshare-uts and --unshare-ipc
+            if not self.unshare.uts:
+                self.unshare.uts = True
+            if not self.unshare.ipc:
+                self.unshare.ipc = True
 
     def build(self) -> list[str]:
-        """Return complete bwrap CLI arguments.
+        """Build the complete bwrap command line.
 
-        This builds the core bwrap arguments from the config.
-        For full command construction including the actual command to run,
-        use BwrapBuilder.build() instead.
+        Args:
+            command: Optional command and arguments to append.
 
         Returns:
-            A list of bwrap CLI arguments. Does NOT include the command
-            to run or its arguments.
+            Full bwrap command as a list of strings.
         """
-        args: list[str] = ["bwrap"]
+        cmd: list[str] = ["bwrap"]
 
-        # Only add --die-with-parent if enabled (default True)
+        # Sandbox lifecycle
         if self.die_with_parent:
-            args.append("--die-with-parent")
+            cmd.append("--die-with-parent")
         if self.new_session:
-            args.append("--new-session")
+            cmd.append("--new-session")
 
-        # Timeout (if set and not None)
-        if self.timeout is not None:
-            args.extend(["--timeout", str(self.timeout)])
-
-        # Proc mount
+        # Mounts
         for mount in self.mounts:
-            if mount.type == "proc":
-                args.extend(mount.build())
-
-        # Dev mount
-        for mount in self.mounts:
-            if mount.type == "dev":
-                args.extend(mount.build())
-
-        # Tmpfs mounts
-        for mount in self.mounts:
-            if mount.type == "tmpfs":
-                args.extend(mount.build())
-
-        # Other mounts (bind, ro-bind, dev-bind, dir)
-        for mount in self.mounts:
-            if mount.type not in ("proc", "dev", "tmpfs"):
-                args.extend(mount.build())
+            cmd.extend(mount.build())
 
         # Capabilities
-        args.extend(self.capabilities.build())
+        if self.capabilities._dropped or self.capabilities._kept:
+            args = self.capabilities.build()
+            cmd.extend(args)
 
-        # Namespaces
-        for ns in self.unshare.namespaces:
-            args.append(f"--unshare={ns}")
+        # Namespaces — order matters: pid, ipc, uts
+        ns_list = []
+        if self.unshare.network:
+            ns_list.append("net")
+        if self.unshare.ipc:
+            ns_list.append("ipc")
+        if self.unshare.pid:
+            ns_list.append("pid")
+        if self.unshare.uts:
+            ns_list.append("uts")
+        if self.unshare.user:
+            ns_list.append("user")
+        if self.unshare.cgroup:
+            ns_list.append("cgroup")
 
-        # Hostname (requires --unshare-uts)
-        if self.hostname is not None:
-            args.extend(["--unshare-uts", "--hostname", self.hostname])
+        for ns in ns_list:
+            ns_map = {
+                "pid": "pid",
+                "uts": "uts",
+                "ipc": "ipc",
+                "cgroup": "cgroup",
+                "user": "user",
+                "network": "net",
+            }
+            cmd.append(f"--unshare-{ns_map[ns]}")
+
+        # Hostname — must come AFTER namespaces (order: namespaces, then hostname)
+        if self.hostname:
+            # Setting hostname implies uts namespace
+            if not self.unshare.uts:
+                self.unshare.uts = True
+            # Rebuild ns_list only if uts was NOT already in the original ns_list
+            # We check if "uts" was in the original ns_list (before hostname section)
+            original_ns_list = ns_list.copy()
+            if "uts" not in original_ns_list:
+                # uts was not already added, so rebuild with uts
+                ns_list = []
+                if self.unshare.network:
+                    ns_list.append("net")
+                if self.unshare.ipc:
+                    ns_list.append("ipc")
+                if self.unshare.pid:
+                    ns_list.append("pid")
+                if self.unshare.uts:
+                    ns_list.append("uts")
+                if self.unshare.user:
+                    ns_list.append("user")
+                if self.unshare.cgroup:
+                    ns_list.append("cgroup")
+                for ns in ns_list:
+                    ns_map = {
+                        "pid": "pid",
+                        "uts": "uts",
+                        "ipc": "ipc",
+                        "cgroup": "cgroup",
+                        "user": "user",
+                        "network": "net",
+                    }
+                    cmd.append(f"--unshare-{ns_map[ns]}")
+            cmd.append("--hostname")
+            cmd.append(self.hostname)
+
+        # Timeout
+        if self.timeout is not None:
+            cmd.extend(["--timeout", str(self.timeout)])
 
         # Environment
-        for key, value in self.env_vars.items():
-            args.extend(["--setenv", key, str(value)])
-        for var in self.unenv_vars:
-            args.extend(["--unsetenv", var])
+        if self.env_vars:
+            for key, value in self.env_vars.items():
+                cmd.extend(["--setenv", key, value])
+        if self.unenv_vars:
+            if self.unenv_vars == ["ALL"]:
+                cmd.append("--clearenv")
+            else:
+                cmd.extend(["--unsetenv"] + self.unenv_vars)
 
-        # Root
-        args.append(self.root)
+        # Command
+        if (
+            len(self.mounts) == 0
+            and not self.capabilities._dropped
+            and not self.capabilities._kept
+        ):
+            # Default mounts
+            cmd.extend(["--proc", "/proc", "--dev", "/dev"])
+            cmd.extend(["--tmpfs", "/home", "--tmpfs", "/tmp", "--tmpfs", "/var/tmp"])
 
-        return args
+        return cmd
 
 
-# Global config — lazily initialized
-nook_config: SandboxConfig | None = None
-_config_path: str | None = None
+class ConfigValidationError(Exception):
+    """Raised when configuration validation fails."""
 
-
-def get_config() -> SandboxConfig:
-    """Get the current config. Raises RuntimeError if not set."""
-    global nook_config
-    if nook_config is None:
-        raise RuntimeError("No config loaded. Call ConfigLoader.load() first.")
-    return nook_config
+    pass
 
 
 def set_config(config: SandboxConfig) -> None:
-    """Set the global config."""
-    global nook_config
-    config.validate()
-    nook_config = config
+    """Set the current sandbox configuration.
+
+    Args:
+        config: The SandboxConfig to set.
+    """
+    global _CONFIG
+    _CONFIG = config
+
+
+def nook_config() -> SandboxConfig:
+    """Get the current sandbox configuration.
+
+    Returns:
+        The current SandboxConfig instance.
+    """
+    global _CONFIG
+    if _CONFIG is None:
+        raise RuntimeError(
+            "No sandbox configuration has been set. "
+            "Use set_config() to configure the sandbox."
+        )
+    return _CONFIG
 
 
 def reset_config() -> None:
-    """Reset the global config."""
-    global nook_config, _config_path
-    nook_config = None
-    _config_path = None
+    """Reset the current sandbox configuration to None."""
+    global _CONFIG
+    _CONFIG = None
+
+
+# Module-level config
+_CONFIG: SandboxConfig | None = None
 
 
 __all__ = [
@@ -506,8 +488,7 @@ __all__ = [
     "CapabilitySet",
     "NamespaceSet",
     "ConfigValidationError",
-    "get_config",
     "set_config",
-    "reset_config",
     "nook_config",
+    "reset_config",
 ]
