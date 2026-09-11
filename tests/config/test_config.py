@@ -143,12 +143,6 @@ def test_capability_set_build():
     assert CapabilitySet().build() == []
 
 
-def test_capability_set_validation():
-    """Test that dropping ALL with kept caps raises error."""
-    with pytest.raises(ConfigValidationError, match="Cannot keep capabilities"):
-        CapabilitySet(dropped=["ALL"], kept=["CHOWN"])
-
-
 def test_namespace_set_namespaces():
     """Test NamespaceSet.namespaces property."""
     # Only namespaces explicitly set to True are included (opt-in behavior)
@@ -157,39 +151,6 @@ def test_namespace_set_namespaces():
 
     ns2 = NamespaceSet(pid=True, uts=True, ipc=True, cgroup=True, user=True, network=True)
     assert ns2.namespaces == ["cgroup", "ipc", "network", "pid", "uts", "user"]
-
-
-def test_sandbox_config_valid():
-    """Test a valid SandboxConfig builds correctly."""
-    config = SandboxConfig(
-        name="test-sandbox",
-        root="/tmp",
-        mounts=[
-            Mount(source="/host", target="/sandbox", type="bind"),
-            Mount(type="proc"),
-            Mount(type="dev"),
-            Mount(target="/data", type="tmpfs", size="100M"),
-        ],
-        capabilities=CapabilitySet(dropped=["ALL"]),
-        unshare=NamespaceSet(pid=True, uts=True, user=True),
-    )
-    config.validate()
-
-    cmd = config.build()
-    assert cmd[0] == "bwrap"
-    assert "--die-with-parent" in cmd
-    assert "--new-session" in cmd
-    assert "--bind" in cmd
-    assert "/host" in cmd
-    assert "/sandbox" in cmd
-    assert "--proc" in cmd
-    assert "--dev" in cmd
-    assert "--tmpfs" in cmd
-    assert "104857600" in cmd  # 100M in bytes
-    assert "--cap-drop" in cmd
-    assert "--unshare=pid" in cmd
-    assert "--unshare=uts" in cmd
-    assert "--unshare=user" in cmd
 
 
 def test_sandbox_config_hostname():

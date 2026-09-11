@@ -54,6 +54,22 @@
 - Sandbox failures should be reported prominently to the user.
 - Use `sys.exit()` with non-zero codes for unrecoverable errors.
 
+## Testing
+
+All tests must be updated as part of every change:
+- Remove tests that validate old/removed behavior
+- Fix tests if intended behavior changed
+- Write new tests for new features / code paths
+- Tests are the contract — do not let tests accumulate debt
+
+## Code Quality
+
+### Capability Names
+
+Capability names are passed through unchanged to bwrap. Short names (e.g., `CHOWN`)
+are NOT normalized — users must use fully qualified names (`CAP_DAC_READ_SEARCH`).
+Validation is deferred to bubblewrap; invalid names produce bwrap's native error.
+
 ## Unprivileged Design
 
 The application:

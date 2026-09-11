@@ -212,8 +212,13 @@ class CapabilitySet:
         - kept: [] (nothing kept by default)
 
     To drop all caps, use: CapabilitySet(dropped=["ALL"])
-    To keep specific caps: CapabilitySet(kept=["CHOWN", "SETUID"])
-    To drop specific caps: CapabilitySet(dropped=["NET_ADMIN", "NET_RAW"])
+    To keep specific caps: CapabilitySet(kept=["CAP_CHOWN", "CAP_DAC_OVERRIDE"])
+    To drop specific caps: CapabilitySet(dropped=["CAP_NET_ADMIN", "CAP_NET_RAW"])
+
+    NOTE: Capability names are passed through unchanged to bwrap.
+    Short names (e.g., "CHOWN") are NOT normalized. Use fully qualified
+    names (e.g., "CAP_DAC_READ_SEARCH") — bwrap will reject invalid
+    names with a native error at runtime.
     """
 
     dropped: list[str] = field(default_factory=list)

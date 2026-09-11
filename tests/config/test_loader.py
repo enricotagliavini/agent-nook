@@ -182,20 +182,6 @@ def test_load_yaml_empty_name_errors():
         loader.set(data)
 
 
-def test_load_yaml_cap_dropped_kept_errors():
-    """Test that dropping ALL with kept caps raises error."""
-    loader = ConfigLoader()
-    data = {
-        "name": "test",
-        "root": "/tmp",
-        "mounts": [{"target": "/proc", "type": "proc"}],
-        "capabilities": {"drop": ["ALL"], "keep": ["CHOWN"]},
-    }
-
-    with pytest.raises(ConfigValidationError, match="Cannot keep capabilities"):
-        loader.set(data)
-
-
 def test_load_yaml_unknown_key_errors():
     """Test that unknown top-level keys raise ConfigValidationError."""
     loader = ConfigLoader()

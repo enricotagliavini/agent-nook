@@ -82,20 +82,6 @@ def test_build_command_with_bad_size():
         build_command(config)
 
 
-def test_build_command_with_bad_capability():
-    """Test that invalid capability names are rejected."""
-    with pytest.raises(ConfigValidationError, match="Invalid capability"):
-        ConfigLoader().set(
-            {
-                "name": "test",
-                "root": "/tmp",
-                "mounts": [{"source": "/", "target": "/"}],
-                "capabilities": {"drop": "INVALID_CAP"},
-                "unshare": {"pid": True},
-            }
-        )
-
-
 def test_build_command_hostname():
     """Test that hostname sets unshare-uts and --hostname."""
     config = ConfigLoader().set(
