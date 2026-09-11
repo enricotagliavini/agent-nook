@@ -1,6 +1,6 @@
 # Agent Nook — Simple Agent Sandbox
 
-A lightweight sandbox for AI agents using **bubblewrap (bwrap)** to isolate the agent from the host system.
+A lightweight sandbox for AI agents using **[bubblewrap](https://github.com/containers/bubblewrap) (bwrap)** to isolate the agent from the host system.
 
 > **Lightweight**. **Fast**. **No special privileges**.
 
@@ -9,7 +9,7 @@ A lightweight sandbox for AI agents using **bubblewrap (bwrap)** to isolate the 
 
 ## What is this?
 
-A simple sandbox for AI agents, built on top of **bubblewrap** — the low-level sandboxing tool at the core of [Flatpak](https://flatpak.org/).
+A simple sandbox for AI agents, built on top of **[bubblewrap](https://github.com/containers/bubblewrap)** — the low-level sandboxing tool at the core of [Flatpak](https://flatpak.org/).
 
 Unlike full container systems (podman, docker, apptainer), this is:
 - **No dedicated image required** — sandbox starts from the host filesystem
