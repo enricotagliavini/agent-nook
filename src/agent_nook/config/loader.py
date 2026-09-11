@@ -73,8 +73,45 @@ class ConfigLoader:
         self._logger = logging.getLogger(__name__)
         self._raw_config: dict[str, Any] | None = None
         self._config: SandboxConfig | None = None
+        self.sandbox_config_path: str | None = None
 
     def find_default_config(self) -> str:
+        """Find the bundled default configuration file.
+
+        Looks in the following locations in order of preference:
+        1. Installed package location: src/agent_nook/config/sandbox.yaml
+        2. Repo root: config/sandbox.yaml (fallback for development)
+
+        Sets self.sandbox_config_path on success.
+
+        Returns:
+            Path to the default config file.
+
+        Raises:
+            FileNotFoundError: If no default config is found.
+        """
+        import agent_nook
+        package_dir = Path(agent_nook.__file__).parent
+        default_config_path = package_dir / "config" / "sandbox.yaml"
+
+        if default_config_path.exists():
+            self.sandbox_config_path = str(default_config_path)
+            return str(default_config_path)
+
+        # Priority 2: Repo root (fallback for development)
+        loader_path = Path(__file__).resolve()
+        repo_root = loader_path.parent.parent.parent.parent
+        default_config_path = repo_root / "config" / "sandbox.yaml"
+
+        if default_config_path.exists():
+            self.sandbox_config_path = str(default_config_path)
+            return str(default_config_path)
+
+        raise FileNotFoundError(
+            f"Default sandbox.yaml not found at {default_config_path}. "
+            f"Make sure agent-nook is properly installed or "
+            f"the config directory exists with a sandbox.yaml file."
+        )
         """Find the bundled default configuration file.
 
         Looks in the following locations in order of preference:
@@ -127,7 +164,7 @@ class ConfigLoader:
             ValueError: If the config structure is invalid.
         """
         if path is None:
-            path = self.sandbox_config_path
+            path = self.find_default_config()
 
         if not os.path.exists(path):
             raise FileNotFoundError(f"Config file not found: {path}")
@@ -210,7 +247,6 @@ class ConfigLoader:
         capabilities: CapabilitySet = self._convert_capabilities(
             data.get("capabilities", {})
         )
-        capabilities.validate()
 
         # unshare
         unshare: NamespaceSet = self._convert_unshare(data.get("unshare", []))
@@ -315,7 +351,45 @@ class ConfigLoader:
 
         return []
 
-    def _convert_capabilities(self, caps: dict) -> CapabilitySet:
+    def _convert_capabilities(self, caps: Any) -> CapabilitySet:
+        """Convert capabilities configuration to CapabilitySet.
+        
+        Args:
+            caps: The capabilities configuration from the YAML file.
+                  Use "drop" to list capabilities to drop, or "ALL" to drop all.
+                  Use "keep" to list capabilities to keep (after dropping ALL).
+        
+        Returns:
+            A CapabilitySet with the parsed drop and keep lists.
+        """
+        if not isinstance(caps, dict):
+            raise ConfigValidationError(
+                f"Capabilities must be a dict, got {type(caps).__name__}"
+            )
+        
+        dropped: list[str] = []
+        kept: list[str] = []
+        
+        if "drop" in caps:
+            val = caps["drop"]
+            if isinstance(val, str):
+                dropped = [val]
+            elif isinstance(val, list):
+                dropped = list(val)
+            else:
+                dropped = list(val)
+        
+        if "keep" in caps:
+            val = caps["keep"]
+            if isinstance(val, str):
+                kept = [val]
+            elif isinstance(val, list):
+                kept = list(val)
+            else:
+                kept = list(val)
+        
+        return CapabilitySet(dropped=dropped, kept=kept)
+
         """Convert capabilities to CapabilitySet.
 
         Handles:

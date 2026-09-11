@@ -219,39 +219,40 @@ class CapabilitySet:
     dropped: list[str] = field(default_factory=list)
     kept: list[str] = field(default_factory=list)
 
-    def __post_init__(self) -> None:
-        """Validate after construction."""
-        if self.dropped == ["ALL"] and self.kept:
-            raise ConfigValidationError(
-                "Cannot keep capabilities when dropping ALL"
-            )
-
-    def validate(self) -> None:
-        if self.dropped == ["ALL"] and self.kept:
-            raise ConfigValidationError(
-                "Cannot keep capabilities when dropping ALL"
-            )
-
     def build(self) -> list[str]:
         """Convert to bwrap --cap-drop and --cap-add arguments.
 
-        Capability names are normalized (e.g., "CHOWN" → "CAP_CHOWN").
+        Capability names are expected to be fully qualified (e.g.,
+        "CAP_DAC_READ_SEARCH"). Short names are NOT normalized —
+        users must use the full name.
 
         Returns:
             A list of bwrap CLI arguments.
         """
-        # Normalize capability names (accept both "CHOWN" and "CAP_CHOWN")
-        def _normalize_cap(name: str) -> str:
-            if name.startswith("CAP_"):
-                return name
-            return "CAP_" + name
-
         args: list[str] = []
         if self.dropped:
             for cap in self.dropped:
-                args.extend(["--cap-drop", _normalize_cap(cap)])
+                args.extend(["--cap-drop", cap])
         for cap in self.kept:
-            args.extend(["--cap-add", _normalize_cap(cap)])
+            args.extend(["--cap-add", cap])
+        return args
+
+    def build(self) -> list[str]:
+        """Convert to bwrap --cap-drop and --cap-add arguments.
+
+        Capability names are expected to be fully qualified (e.g.,
+        "CAP_DAC_READ_SEARCH"). Short names are NOT normalized —
+        users must use the full name.
+
+        Returns:
+            A list of bwrap CLI arguments.
+        """
+        args: list[str] = []
+        if self.dropped:
+            for cap in self.dropped:
+                args.extend(["--cap-drop", cap])
+        for cap in self.kept:
+            args.extend(["--cap-add", cap])
         return args
 
 
@@ -339,11 +340,38 @@ class SandboxConfig:
         if not self.mounts:
             raise ConfigValidationError("mounts cannot be empty")
 
-        # Check capability conflict: cannot keep caps when dropping ALL
-        if self.capabilities.dropped == ["ALL"] and self.capabilities.kept:
-            raise ConfigValidationError(
-                "Cannot keep capabilities when dropping ALL"
-            )
+        # Accept both CapabilitySet and dict for capabilities (for convenience)
+        if isinstance(self.capabilities, dict):
+            dropped: list[str] | None = None
+            kept: list[str] | None = None
+            if "drop" in self.capabilities:
+                val = self.capabilities["drop"]
+                if isinstance(val, str):
+                    dropped = [val]
+                else:
+                    dropped = list(val)
+            if "keep" in self.capabilities:
+                val = self.capabilities["keep"]
+                if isinstance(val, str):
+                    kept = [val]
+                else:
+                    kept = list(val)
+            if dropped is not None:
+                self.__dict__["capabilities"] = CapabilitySet(dropped=dropped, kept=[])
+            elif kept is not None:
+                self.__dict__["capabilities"] = CapabilitySet(dropped=[], kept=kept)
+            else:
+                self.__dict__["capabilities"] = CapabilitySet(dropped=[], kept=[])
+
+        # Accept list for unshare (namespace list like ["pid", "uts", "ipc"])
+        if isinstance(self.unshare, list):
+            # Convert list to NamespaceSet
+            ns_dict: dict[str, bool] = {}
+            for ns in self.unshare:
+                ns_lower = ns.lower().strip()
+                if ns_lower in ("pid", "uts", "ipc", "cgroup", "user", "network"):
+                    ns_dict[ns_lower] = True
+            self.__dict__["unshare"] = NamespaceSet(**ns_dict)
 
         # Validate mount types
         valid_types = {"bind", "ro-bind", "dev-bind", "tmpfs", "proc", "dev", "dir"}

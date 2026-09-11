@@ -2,12 +2,12 @@
 #
 # This file contains all recommended mounts for a typical agent sandbox.
 # Mounts are grouped by type for clarity.
-
+#
 # === Process and device mounts (required) ===
 # These are mounted automatically by bwrap but listed here for completeness.
 # Mount type: proc       → --proc /proc
 # Mount type: dev        → --dev /dev
-
+#
 # === Recommended tmpfs mounts ===
 # These provide private writable space within the sandbox.
 # The sandbox is a fresh container — these tmpfs mounts are the
@@ -18,7 +18,7 @@
 # /tmp     → Temporary files, cache, intermediate outputs
 # /var/tmp → Long-lived temp files (survives reboot)
 # /run     → PID namespaces, sockets (often used by agents)
-
+#
 mounts:
   # Re-use the same image as the host
   # Can be changed to use a custom image
@@ -68,18 +68,57 @@ mounts:
   # - target: /workspace
   #   type: dir
 
-# === Capabilities ===
-# Default: drop ALL capabilities, keep CHOWN, SETUID, SETGID, NET_BIND_SERVICE.
-# This is a conservative baseline — adjust as needed.
+# Capabilities
+#
+# Default: drop ALL capabilities, keep none.
+# This matches bwrap's default behavior. Users must explicitly
+# name capabilities they wish to keep (using full names with CAP_ prefix).
+#
+# Common capability names (must include CAP_ prefix)
+# Full list depends on the exact kernel version
+#   CAP_CHOWN                - modify file ownership
+#   CAP_DAC_OVERRIDE         - bypass permission checks
+#   CAP_NET_RAW              - RAW sockets
+#   CAP_NET_BIND_SERVICE     - bind to privileged ports
+#   CAP_SYS_PTRACE           - debug/trace processes
+#   CAP_DAC_READ_SEARCH      - read/write any file
+#   CAP_SETUID               - change user ID
+#   CAP_SETGID               - change group ID
+#   CAP_MKNOD                - create device nodes
+#   CAP_CHROOT               - use chroot
+#   CAP_AUDIT_READ           - read audit logs
+#   CAP_FOWNER               - bypass owner permission checks
+#   CAP_FSETID               - preserve setuid/setgid bits
+#   CAP_LINUX_IMMUTABLE      - modify immutable flags
+#   CAP_KILL                 - send signals to any process
+#   CAP_NET_ADMIN            - manage network stack
+#   CAP_NET_BIND_SERVICE     - bind to privileged ports
+#   CAP_NET_BROADCAST        - use broadcast packets
+#   CAP_NET_RAW              - use RAW sockets
+#   CAP_IPC_LOCK             - lock memory
+#   CAP_IPC_OWNER            - access IPC owned by others
+#   CAP_SYS_MODULE           - load kernel modules
+#   CAP_SYS_RAWIO            - raw I/O operations
+#   CAP_SYS_CHROOT           - use chroot
+#   CAP_SYS_BOOT             - reboot the system
+#   CAP_SYS_NICE             - lower process priority
+#   CAP_SYS_RESOURCE         - override resource limits
+#   CAP_SYS_TIME             - set system clock
+#   CAP_SYS_TTY_CONFIG       - configure tty drivers
+#   CAP_SYS_ADMIN            - override most syscalls
+#   CAP_SYS_PTRACE           - trace/debug processes
+#   CAP_SYSLOG               - read/write syslog
+#   CAP_WAKE_ALARM           - trigger wake alarms
+#   CAP_BLOCK_SUSPEND        - suspend/resume suspend
+#   CAP_PERFMON              - access performance counters
+#   CAP_BPF                  - program/query BPF
+#   CAP_CHECKPOINT_RESTORE   - checkpoint/restore
+#   ALL                      - all permitted capabilities
+#
 capabilities:
   drop:
-    - CAP_SYS_ADMIN
-    - CAP_SYS_PTRACE
-  keep:
-    - CHOWN
-    - SETUID
-    - SETGID
-    - NET_BIND_SERVICE
+    - ALL
+  keep: []
 
 # === Namespaces ===
 # Unshare all standard namespaces.
@@ -89,7 +128,7 @@ unshare:
   - ipc
   - cgroup
   - user
-# Unsharing network will prevent network access from sinde the sandbox
+# Unsharing network will prevent network access from inside the sandbox
 #  - network
 
 # === Session and hostname ===
@@ -107,5 +146,3 @@ hostname: "agent-sandbox"
 # Set a timeout in seconds for command execution.
 # If omitted or set to None, commands run indefinitely.
 # timeout: 60
-
-# === Environment ===
