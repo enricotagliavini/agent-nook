@@ -92,7 +92,7 @@ agent-nook/
 | Concern | Choice | Why |
 |---------|--------|-----|
 | Sandboxing | Bubblewrap | Low-level, no root, no daemon, Flatpak-proven |
-| Images | None | Keep it simple; sandbox uses host filesystem |
+| Images | Optional | Keep it simple; the sandbox can use host filesystem, or, if desired, also a custom image |
 | Runtime | None | bwrap has no background service |
 | Config format | YAML | Human-readable, standard for config files |
 | Logging | `logging` module + XDG | Standard library, no dependencies |
@@ -121,7 +121,7 @@ bwrap --bind /host/path /sandbox --ro-bind /host/path /sandbox/host-path \
 git clone https://github.com/enricotagliavini/agent-nook
 cd agent-nook
 pip install -e ".[dev]"  # with dev dependencies
-pip install -e ".[bubblewrap]"  # with bubblewrap dependency
+pip install -e ".[bubblewrap]"  # with bubblewrap dependency in case it's not already installed and available by the OS
 ```
 
 ### With pip
@@ -197,48 +197,7 @@ This creates `~/.config/agent-nook/sandbox.yaml` with sensible defaults.
 
 ### Default sandbox config
 
-```yaml
-# ~/.config/agent-nook/sandbox.yaml
-sandbox:
-  name: "my-agent"
-  root: "./sandbox"
-  readonly: true
-
-  # Filesystem restrictions
-  mounts:
-    - source: "/home"
-      target: "/data"
-      readonly: true
-
-  # Network controls
-  network:
-    allow_hosts:
-      - "localhost"
-    allow_ports:
-      - 8080
-
-  # Capabilities
-  capabilities:
-    drop:
-      - ALL
-    keep:
-      - CHOWN
-      - SETUID
-
-  # Namespace isolation
-  unshare:
-    pid: true
-    uts: true
-    ipc: true
-    cgroup: true
-    user: true
-    network: false
-
-  # Process isolation
-  die_with_parent: true
-  new_session: true
-  hostname: "agent-nook"
-```
+See [sandbox.yaml](src/agent_nook/config/sandbox.yaml)
 
 ### Customizing config
 
@@ -276,22 +235,6 @@ agent-nook run --cap-drop ALL --command "echo still works but can't chmod/etc"
 
 ### Example: Network isolation
 
-```yaml
-# ~/.config/agent-nook/sandbox.yaml
-sandbox:
-  network:
-    allow_hosts:
-      - "localhost"
-      - "127.0.0.1"
-    allow_ports:
-      - 8080
-      - 9090
-```
-
-```bash
-agent-nook run --config ~/.config/agent-nook/sandbox.yaml --command "curl http://localhost:8080"
-```
-
 ## Technical Details
 
 ### How we sandbox
@@ -303,15 +246,13 @@ agent-nook run --config ~/.config/agent-nook/sandbox.yaml --command "curl http:/
 
 ### Why bubblewrap?
 
-Bubblewrap is the same technology behind Flatpak. It's a single binary (`bubblewrap`, available via `flatpak run com.github.chmlr.Bubblewrap`) that applies sandbox rules without requiring a container runtime.
+Bubblewrap is the same technology behind Flatpak. It's a single binary that applies sandbox rules without requiring a container runtime. It's available out of the box on any distribution supporting Flatpak packages.
 
 ### Conventions
 
 - **Python 3.10+** — type hints, dataclasses, type checking.
 - **`src/` layout** — one module per concern.
-- **Tests first** — we write tests before implementation.
 - **Logging** — use `logging` module with XDG-compliant paths and levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`.
-- **Error handling** — explicit try/except with specific exception types; clear user-facing messages for non-fatal issues.
 - **XDG compliance** — all config, cache, and log files follow the XDG Base Directory Specification.
 
 ## Development
@@ -319,7 +260,7 @@ Bubblewrap is the same technology behind Flatpak. It's a single binary (`bubblew
 ### Prerequisites
 
 - Python 3.10 or newer
-- bubblewrap (install via `flatpak install flathub com.github.chmlr.Bubblewrap` or `apt install bubblewrap`)
+- bubblewrap (install via `dnf install bubblewrap`, `apt install bubblewrap`, `pip install bubblewrap-bin` or download from the [bubblewrap github releases](https://github.com/containers/bubblewrap/releases))
 
 ### Setting up development
 
