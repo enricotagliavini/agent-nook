@@ -2,7 +2,7 @@
 
 A lightweight sandbox for AI agents using **[bubblewrap](https://github.com/containers/bubblewrap) (bwrap)** to isolate the agent from the host system.
 
-> **Lightweight**. **Fast**. **No special privileges**.
+> **Lightweight**. **Fast**. **No special privileges**. **Easy to install**.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![GitHub](https://img.shields.io/badge/github-agent--nook-blue)](https://github.com/enricotagliavini/agent-nook)
@@ -15,8 +15,14 @@ Unlike full container systems (podman, docker, apptainer), this is:
 - **No dedicated image required** — sandbox starts from the host filesystem
 - **No root required** — works with unprivileged users
 - **Lightweight & fast** — minimal overhead, no daemon required
+- **Easy to install** — python based, nearly zero dependencies (Python + PyYAML), pip or pipx install
+- **No online services interaction** — does need to download recipes or templates online. Should be simple enough to setup the configuration from the examples
 
-This project has similarities and shares many goal of the [Docker Sandboxes](https://www.docker.com/products/docker-sandboxes/)
+This project has similarities and shares many goal with the following projects, which you can consider as alternative is you wish:
+ - [Docker Sandboxes](https://www.docker.com/products/docker-sandboxes/)
+ - [Nono](https://github.com/nolabs-ai/nono)
+ - [Fence](https://github.com/fencesandbox/fence)
+ - [Anthropics' sandbox-runtime](https://github.com/anthropics/sandbox-runtime)
 
 While the main driver for writing this project is the sandboxing / isolation of AI agents, <ins>it can be used to sandobox pretty much anything</ins>.
 
