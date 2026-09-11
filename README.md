@@ -16,6 +16,10 @@ Unlike full container systems (podman, docker, apptainer), this is:
 - **No root required** — works with unprivileged users
 - **Lightweight & fast** — minimal overhead, no daemon required
 
+This project has similarities and shares many goal of the [Docker Sandboxes](https://www.docker.com/products/docker-sandboxes/)
+
+While the main driver for writing this project is the sandboxing / isolation of AI agents, <ins>it can be used to sandobox pretty much anything</ins>.
+
 ## Why?
 
 AI Agents usually run with the same UID / GID as your daily user. This means that discretionary access control (DAC) has no way to distinguish it from the human behind the screen. You might not want to share all of your data with the AI Agent, or let it change files in your home directory. As we all know sometimes AI makes mistakes, like in this case, which happened during the development of this very project:
