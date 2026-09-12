@@ -298,7 +298,7 @@ class SandboxConfig:
     """
 
     name: str
-    root: str
+    chdir: str | None = None
     mounts: list[Mount] = field(default_factory=list)
     capabilities: CapabilitySet = field(default_factory=CapabilitySet)
     unshare: NamespaceSet = field(default_factory=NamespaceSet)

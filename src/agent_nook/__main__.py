@@ -67,9 +67,9 @@ def main() -> int:
         help="Path to sandbox config file (default: ~/.config/agent-nook/sandbox.yaml)"
     )
     run_parser.add_argument(
-        "--sandbox-root",
+        "--chdir",
         metavar="DIR",
-        help="Sandbox root directory (overrides config)"
+        help="Change working directory in sandbox (overrides config)"
     )
     run_parser.add_argument(
         "--cap-add",
@@ -484,9 +484,9 @@ def _apply_cli_overrides(config_dict: dict, args: argparse.Namespace) -> Sandbox
     # Convert to dict, mutate, then rebuild SandboxConfig
     result = config_dict.copy()
 
-    # Override sandbox root
-    if hasattr(args, 'sandbox_root') and args.sandbox_root:
-        result["root"] = args.sandbox_root
+    # Override chdir
+    if hasattr(args, 'chdir') and args.chdir:
+        result["chdir"] = args.chdir
 
     # Override die_with_parent
     if hasattr(args, 'die_with_parent') and args.die_with_parent is not True:

@@ -1,7 +1,5 @@
-# Name and root (required)
 # Agent Nook Default Sandbox Configuration
 name: "agent-sandbox"
-root: "/"
 #
 # This file contains all recommended mounts for a typical agent sandbox.
 # Mounts are grouped by type for clarity.
@@ -147,3 +145,8 @@ hostname: "agent-sandbox"
 # Set a timeout in seconds for command execution.
 # If omitted or set to None, commands run indefinitely.
 # timeout: 60
+
+# === Working Directory ===
+# Optional: change the working directory inside the sandbox.
+# If omitted, bwrap uses the default behavior (no --chdir).
+# chdir: "/app"

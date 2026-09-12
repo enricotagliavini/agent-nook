@@ -121,6 +121,10 @@ class BwrapBuilder:
             else:
                 args.extend(["--unsetenv", var])
 
+        # Chdir
+        if self._config.chdir:
+            args.extend(["--chdir", self._config.chdir])
+
         # Add the actual command
         args.extend(command)
 
