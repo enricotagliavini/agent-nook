@@ -3,8 +3,10 @@
 Provides a command-line interface for creating and running sandboxed agents.
 
 Usage:
-    agent-nook run --command "python3 agent.py"
-    agent-nook run --config ~/.config/agent-nook/sandbox.yaml --command "python3 -c 'print(\\\"hello\\\")'"
+    agent-nook run python3 agent.py arg1 arg2
+    agent-nook run --chdir /app echo hello
+    agent-nook run -- /bin/ls /tmp
+    agent-nook run -- /usr/bin/python3 -c "print(42)"
     agent-nook init              # Creates sandbox directory structure
     agent-nook status            # Shows status of running sandboxes
     agent-nook logs              # Shows recent log output
@@ -15,13 +17,6 @@ from __future__ import annotations
 import argparse
 import sys
 import os
-from typing import Optional
-
-from agent_nook.config import nook_config, set_config, get_config_dir, get_state_dir
-from agent_nook.config.loader import ConfigLoader
-from agent_nook.config.config import ConfigValidationError, SandboxConfig
-from agent_nook.utils.directories import ensure_directories
-
 
 __version__ = "0.1.0"
 
@@ -51,20 +46,13 @@ def main() -> int:
 
     # run command
     run_parser = subparsers.add_parser("run", help="Run a command in a sandbox")
+    # Use REMAINDER so that -c, --foo, etc. inside the command are not parsed
+    # as agent-nook options. Pass everything after first arg through to the sandbox.
     run_parser.add_argument(
-        "--command", "-c",
-        metavar="CMD",
-        help="Command to execute in the sandbox (e.g. 'echo hello')"
-    )
-    run_parser.add_argument(
-        "--script",
-        metavar="CODE",
-        help="Python script code to run (e.g. '-c \"print(\\\"hello\\\")\"')"
-    )
-    run_parser.add_argument(
-        "--config", "-f",
-        metavar="PATH",
-        help="Path to sandbox config file (default: ~/.config/agent-nook/sandbox.yaml)"
+        "command",
+        nargs=argparse.REMAINDER,
+        metavar="CMD [ARGS...]",
+        help="Command to execute in the sandbox (e.g. 'python3 agent.py')"
     )
     run_parser.add_argument(
         "--chdir",
@@ -216,8 +204,8 @@ def main() -> int:
         return 130
     except SystemExit as e:
         return e.code if e.code is not None else 0
-    except ConfigValidationError as e:
-        print(f"Configuration error: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
         return 1
 
 
@@ -243,12 +231,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
     """Run a command inside a sandbox."""
     from agent_nook.config import get_config_dir, get_state_dir
     from agent_nook.config.loader import ConfigLoader
-    from agent_nook.runner import run_in_sandbox, SandboxResult, BwrapError
+    from agent_nook.runner import run_in_sandbox, BwrapError
     from agent_nook.config.loader import ConfigValidationError
     from agent_nook.sandbox.builder import BwrapBuilder, SandboxConfig
     from agent_nook.utils.logger import setup_logger
-    import logging
-    import json
+    from agent_nook.utils.directories import ensure_directories
 
     # Setup logging
     logger = setup_logger("agent_nook", level="INFO" if not args.verbose else "DEBUG")
@@ -265,14 +252,16 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     # Load configuration
     try:
-        if args.config:
+        if hasattr(args, "config") and args.config:
             # Override config path with CLI argument
             config_dict = config_loader.load(args.config)
         else:
-            config_path = config_loader.install_default_config()
+            # Find and load the bundled default config
+            config_path = config_loader.find_default_config()
             config_dict = config_loader.load(config_path)
 
         # Set as global config (accessible via `from config import nook_config`)
+        from agent_nook.config import set_config
         set_config(config_dict)
     except FileNotFoundError as e:
         logger.error("Config file not found: %s", e)
@@ -284,14 +273,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
         logger.error("Failed to load config: %s", e)
         return 1
 
-    # Convert SandboxConfig to dict for override processing
-    config_dict = config_dict.__dict__.copy()
-    # Apply CLI overrides (returns SandboxConfig)
-    config_dict = _apply_cli_overrides(config_dict, args)
+    # Apply CLI overrides to config
+    config_dict = _apply_cli_overrides(dict(config_dict.__dict__), args)
 
-    # Build SandboxConfig from the normalized dict (already a SandboxConfig)
+    # Build SandboxConfig from the normalized dict
     try:
-        config = config_dict
+        config = SandboxConfig(**config_dict)
         builder = BwrapBuilder(config)
         builder.validate()
     except TypeError as e:
@@ -301,17 +288,13 @@ def _cmd_run(args: argparse.Namespace) -> int:
         logger.error("Configuration validation failed: %s", e)
         return 1
 
-    # Build the command from --command or --script
-    command = None
-    if args.script:
-        logger.info("Executing script: %s", args.script)
-        command = args.script
-    elif args.command:
-        command = " ".join(args.command)
-        logger.info("Executing: %s", command)
-    else:
-        logger.error("No command specified. Use --command or --script.")
+    # Build the command from positional args
+    command: list[str] = args.command if args.command else []
+    if not command:
+        print("error: no command specified. Use 'agent-nook run <command>'", file=sys.stderr)
         return 1
+
+    logger.debug("Executing: %s", " ".join(command))
 
     full_bwrap_cmd = builder.build(command)
     logger.debug("Full bwrap command: %s", " ".join(full_bwrap_cmd))
@@ -357,7 +340,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
     config_loader = ConfigLoader(config_dir)
 
     try:
-        config_path = config_loader.install_default_config()
+        config_path = config_loader.find_default_config()
     except FileNotFoundError as e:
         logger.error("Cannot find default config. Install agent-nook first.")
         return 1
@@ -370,7 +353,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
     logger.info("Edit %s to customize your sandbox.", config_path)
     logger.info("")
     logger.info("Example:")
-    logger.info("  agent-nook run -c 'python3 -c \\\"print(\\\"\\\"\\\"Hello from sandbox!\\\"\\\"\\\")\\\"'")
+    logger.info("  agent-nook run python3 -c 'print(\\\"hello\\\")'")
 
     return 0
 
@@ -418,7 +401,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
     logger.info("")
     logger.info("Commands:")
-    logger.info("  agent-nook run -c 'python3 script.py'")
+    logger.info("  agent-nook run python3 agent.py")
     logger.info("  agent-nook init")
     logger.info("  agent-nook logs")
     logger.info("  agent-nook list")
@@ -470,7 +453,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
-def _apply_cli_overrides(config_dict: dict, args: argparse.Namespace) -> SandboxConfig:
+def _apply_cli_overrides(config_dict: dict, args: argparse.Namespace) -> dict[str, Any]:
     """Apply command-line argument overrides to the config.
 
     Args:
@@ -481,27 +464,29 @@ def _apply_cli_overrides(config_dict: dict, args: argparse.Namespace) -> Sandbox
         A new SandboxConfig with CLI overrides applied.
     """
     import sys
+    from agent_nook.config.config import SandboxConfig
+
     # Convert to dict, mutate, then rebuild SandboxConfig
     result = config_dict.copy()
 
     # Override chdir
-    if hasattr(args, 'chdir') and args.chdir:
+    if hasattr(args, "chdir") and args.chdir:
         result["chdir"] = args.chdir
 
     # Override die_with_parent
-    if hasattr(args, 'die_with_parent') and args.die_with_parent is not True:
+    if hasattr(args, "die_with_parent") and args.die_with_parent is not True:
         result["die_with_parent"] = args.die_with_parent
 
     # Override new_session
-    if hasattr(args, 'new_session') and args.new_session is not True:
+    if hasattr(args, "new_session") and args.new_session is not True:
         result["new_session"] = args.new_session
 
     # Override hostname
-    if hasattr(args, 'hostname') and args.hostname:
+    if hasattr(args, "hostname") and args.hostname:
         result["hostname"] = args.hostname
 
     # Override mounts from --bind / --ro-bind
-    for bind in getattr(args, 'bind', []):
+    for bind in getattr(args, "bind", []):
         parts = bind.split(":")
         if len(parts) == 2:
             result.setdefault("mounts", []).append({
@@ -510,7 +495,7 @@ def _apply_cli_overrides(config_dict: dict, args: argparse.Namespace) -> Sandbox
                 "readonly": False,
             })
 
-    for bind in getattr(args, 'ro_bind', []):
+    for bind in getattr(args, "ro_bind", []):
         parts = bind.split(":")
         if len(parts) == 2:
             result.setdefault("mounts", []).append({
@@ -520,18 +505,18 @@ def _apply_cli_overrides(config_dict: dict, args: argparse.Namespace) -> Sandbox
             })
 
     # Override capabilities with --cap-add / --cap-drop
-    for cap in getattr(args, 'cap_add', []):
+    for cap in getattr(args, "cap_add", []):
         if "kept" not in result.get("capabilities", {}):
             result.setdefault("capabilities", {})["kept"] = []
         result["capabilities"]["kept"].append(cap)
 
-    for cap in getattr(args, 'cap_drop', []):
+    for cap in getattr(args, "cap_drop", []):
         if "dropped" not in result.get("capabilities", {}):
             result.setdefault("capabilities", {})["dropped"] = []
         result["capabilities"]["dropped"].append(cap)
 
     # Override unshare with --unshare (comma-separated list)
-    for ns_str in getattr(args, 'unshare', []):
+    for ns_str in getattr(args, "unshare", []):
         ns_str = ns_str.strip()
         namespaces = [ns.strip().lower() for ns in ns_str.split(",")]
         for ns in namespaces:
@@ -541,16 +526,16 @@ def _apply_cli_overrides(config_dict: dict, args: argparse.Namespace) -> Sandbox
                 result["unshare"].append(ns)
 
     # Override env with --env
-    for env in getattr(args, 'env', []):
+    for env in getattr(args, "env", []):
         if "=" in env:
             key, value = env.split("=", 1)
             result.setdefault("env_vars", {})[key] = value
 
     # Override unset-env
-    for var in getattr(args, 'unset_env', []):
+    for var in getattr(args, "unset_env", []):
         result.setdefault("unenv_vars", []).append(var)
 
-    return SandboxConfig(**result)
+    return dict(result)
 
 
 if __name__ == "__main__":

@@ -40,7 +40,7 @@ class ConfigLoader:
 
     _FIELDS: dict[str, str] = {
         "name": "str",
-        "root": "str",
+        "chdir": "str | None",
         "mounts": "list[dict]",
         "capabilities": "dict",
         "unshare": "dict",
@@ -131,7 +131,7 @@ class ConfigLoader:
 
         return SandboxConfig(
             name=data["name"],
-            root=data["root"],
+            chdir=data.get("chdir"),
             mounts=mounts,
             capabilities=capabilities,
             unshare=unshare,
@@ -148,7 +148,7 @@ class ConfigLoader:
 
         Single gate — if it passes, all downstream code can assume canonical form.
         """
-        for required in ("name", "root"):
+        for required in ("name",):
             if required not in data:
                 raise ConfigValidationError(f"{required} cannot be empty")
 
@@ -404,7 +404,7 @@ class ConfigLoader:
         """Merge override values into a config."""
         return SandboxConfig(
             name=config.name,
-            root=config.root,
+            chdir=config.chdir,
             mounts=config.mounts,
             capabilities=config.capabilities,
             unshare=config.unshare,
