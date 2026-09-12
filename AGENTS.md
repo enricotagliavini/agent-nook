@@ -118,3 +118,28 @@ This is useful for:
 - Keeping sandbox data isolated from persistent storage
 
 See [`builder.py`](src/agent_nook/sandbox/builder.py#L70-L87) for the `TmpfsMount` dataclass.
+
+## File Integrity & Git Hygiene
+
+### ⚠️ Do NOT delete untracked files
+- **Never** delete untracked files unless:
+  - You are **explicitly** asked to remove them by the user, OR
+  - The file is **clearly** part of the change (e.g., a deleted file that is part of the feature you're implementing)
+- If unsure, **prompt the user** rather than taking independent action.
+- Untracked files that are **not** part of the change should be **ignored**, not deleted.
+- Never run `git add -A` or `git add .` — always explicitly add only the files that are part of the change.
+- When committing, only stage files that are directly part of the change.
+
+### File Deletion Rule
+Before deleting any file (tracked or untracked):
+1. Confirm it is **explicitly** part of the requested change, OR
+2. Ask the user for confirmation.
+
+### Summary of Git Commands
+- ✅ `git add <file1> <file2>` — add specific files
+- ✅ `git add -p` — interactive patch selection
+- ❌ `git add -A` — **NEVER** (adds all files, including untracked)
+- ❌ `git add .` — **NEVER** (adds all files including untracked)
+- ❌ `rm <file>` followed by `git add -A` — **NEVER** without explicit user confirmation
+
+If you are ever uncertain about whether a file should be modified or deleted, **ask the user** before proceeding.
