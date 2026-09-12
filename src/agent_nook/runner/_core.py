@@ -1,53 +1,50 @@
 """Sandbox runner — orchestrates bubblewrap execution.
 
 This module handles the full lifecycle of a sandboxed execution:
-1. Load configuration (from global nook_config)
-2. Build bwrap command
-3. Execute
-4. Handle errors with specific exception types
-5. Clean up
+  1. Load configuration (from global nook_config)
+  2. Build bwrap command
+  3. Execute
+  4. Handle errors with specific exception types
+  5. Clean up
 
 Error handling follows AGENTS.md guidelines:
-- Specific exception types (BwrapError, ConfigError)
-- Clear user-facing messages
-- Stack traces logged at DEBUG level, not shown to user
-- Non-zero exit codes for unrecoverable failures
+  - Specific exception types (BwrapError, ConfigError)
+  - Clear user-facing messages
+  - Stack traces logged at DEBUG level, not shown to user
+  - Non-zero exit codes for unrecoverable failures
+
+## Validation Pipeline
+
+The runner module relies entirely on the config validation pipeline. It
+performs **no** additional validation because the config has already been
+validated upstream:
+
+```
+Layer 1: ConfigLoader._validate_structure()      → schema check
+Layer 2: ConfigLoader._parse_mounts()            → mount type/fields check
+Layer 3: ConfigLoader._parse_capabilities()      → cap list-of-strings check
+Layer 4: ConfigLoader._parse_unshare()           → ns key/type check
+Layer 5: SandboxConfig.__post_init__()           → Mount.build() checks
+Layer 6: BwrapBuilder.build()                    → uses validated config
+Layer 7: run_in_sandbox()                        → executes the command
+```
+
+The runner is a **consumer** of validated data. It does not repeat validation
+because the config is guaranteed valid by Layer 6. If validation errors occur
+during execution, they indicate a programming error (e.g., passing a raw dict
+instead of a ConfigLoader-loaded SandboxConfig).
 """
 
 from __future__ import annotations
 
 import subprocess
 import logging
-import tempfile
 from pathlib import Path
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from agent_nook.config.config import SandboxConfig
+from dataclasses import dataclass
 
 from agent_nook.config.config import SandboxConfig
 from agent_nook.config.loader import ConfigValidationError
 from agent_nook.sandbox.builder import BwrapBuilder, BwrapError
-
-
-# Try to import the global nook_config
-try:
-    from agent_nook.config import nook_config
-except ImportError:
-    _nook_config = None
-
-
-def get_global_config() -> SandboxConfig | None:
-    """Get the global nook_config or return None."""
-    global _nook_config
-    if _nook_config is None:
-        try:
-            from agent_nook.config import nook_config
-            _nook_config = nook_config
-        except (ImportError, RuntimeError):
-            _nook_config = None
-    return _nook_config
 
 
 # Create a dedicated logger for this module
@@ -67,6 +64,19 @@ def _get_sandbox_logger() -> logging.Logger:
 class SandboxResult:
     """Result of a sandboxed command execution.
 
+    This is **Layer 7** of the validation pipeline — the execution layer.
+    It does NOT perform any validation; it is purely a data carrier that
+    wraps the result of executing a command in a sandbox.
+
+    The validation has already been completed by:
+      Layer 1: ConfigLoader._validate_structure()      → schema check
+      Layer 2: ConfigLoader._parse_mounts()            → mount type/fields
+      Layer 3: ConfigLoader._parse_capabilities()      → cap list check
+      Layer 4: ConfigLoader._parse_unshare()           → ns key/type check
+      Layer 5: SandboxConfig.__post_init__ → Mount.build() checks
+      Layer 6: BwrapBuilder.build()                    → uses validated config
+      Layer 7: SandboxResult                          → execution result
+
     Attributes:
         success: Whether the command exited with code 0.
         return_code: The exit code of the command.
@@ -80,7 +90,21 @@ class SandboxResult:
     stderr: str | None = None
 
     def __post_init__(self) -> None:
-        """Validate the result."""
+        """Validate the result.
+
+        This is the final validation gate in the pipeline. It ensures that
+        stdout and stderr are either None or strings. This is important
+        because _execute_command() captures output as bytes by default,
+        and this conversion guarantees type safety at the boundary between
+        the runner and the caller.
+
+        Without this layer, a caller could accidentally assign a bytes
+        object (the raw subprocess output) to stdout/stderr, leading to
+        subtle type errors downstream.
+
+        Raises:
+            TypeError: If stdout or stderr is not a string or None.
+        """
         if self.stdout is not None and not isinstance(self.stdout, str):
             raise TypeError("stdout must be str or None")
         if self.stderr is not None and not isinstance(self.stderr, str):

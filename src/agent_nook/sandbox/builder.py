@@ -3,16 +3,38 @@
 Provides a dataclass-driven API for building bwrap command lines.
 Accepts ONLY SandboxConfig dataclass — no dict normalization.
 
-No validation, no normalization, no defaults — the builder is a pure
-consumer of a validated SandboxConfig.
+## Validation Pipeline
+
+The BwrapBuilder sits at **Layer 6** of the validation pipeline. By design,
+it performs **NO** validation — it assumes the config has already passed
+through all previous layers:
+
+```
+Layer 1: ConfigLoader._validate_structure()      → schema check
+Layer 2: ConfigLoader._parse_mounts()            → mount type/fields check
+Layer 3: ConfigLoader._parse_capabilities()      → cap list-of-strings check
+Layer 4: ConfigLoader._parse_unshare()           → ns key/type check
+Layer 5: SandboxConfig.__post_init__()           → Mount.build() checks
+Layer 6: BwrapBuilder.build()                    → uses validated config
+```
+
+The builder is a **pure consumer** — it transforms validated data into
+a bwrap command line. It does not repeat validation because:
+  - The config is guaranteed valid by Layer 5 (__post_init__).
+  - Re-validating here would be redundant and error-prone.
+  - If an error occurs, the config has already failed validation upstream.
+
+## When errors occur in the builder
+
+If BwrapBuilder encounters invalid data, it is a bug in the code path
+that produced the config (e.g., using a raw dict instead of a
+ConfigLoader-loaded SandboxConfig). The builder will raise an error
+with a clear message pointing to the root cause.
 """
 
 from __future__ import annotations
 
-import os
-import sys
-from dataclasses import dataclass, fields
-from typing import Any
+from dataclasses import dataclass
 
 from agent_nook.config.config import SandboxConfig
 
@@ -129,20 +151,6 @@ class BwrapBuilder:
         args.extend(command)
 
         return args
-
-    def validate(self) -> None:
-        """Validate the configuration.
-
-        Note: This method is kept for API compatibility but does nothing.
-        The SandboxConfig dataclass performs all validation in __post_init__.
-        The builder is a pure consumer and does no validation.
-
-        Raises:
-            ConfigValidationError: If the configuration has invalid values.
-        """
-        # No validation here — the config is assumed validated
-        # This is kept for API compatibility but is a no-op
-        pass
 
 
 __all__ = ["BwrapBuilder", "BwrapError", "SandboxConfig"]

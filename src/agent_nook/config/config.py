@@ -3,6 +3,54 @@
 This module defines the core data structures used to represent sandbox
 configurations. The configuration is loaded via ConfigLoader which validates
 against a strict canonical schema.
+
+## Validation Pipeline
+
+The validation is layered across modules:
+
+  **Layer 1 (loader.py, ConfigLoader._validate_structure()):**
+    → Validates raw dicts against the canonical schema.
+    → Ensures required fields are present and types are correct.
+    → Rejects unknown keys, missing fields, wrong types.
+
+  **Layer 2 (loader.py, ConfigLoader._parse_mounts()):**
+    → Validates mount type enum values.
+    → Validates required fields per mount type (e.g., tmpfs requires target).
+    → Transforms dicts into Mount dataclass instances.
+
+  **Layer 3 (loader.py, ConfigLoader._parse_capabilities()):**
+    → Ensures "drop" and "keep" are lists of strings (not dicts, ints, etc.).
+    → Transforms into CapabilitySet dataclass.
+
+  **Layer 4 (loader.py, ConfigLoader._parse_unshare()):**
+    → Ensures namespace keys are valid and values are booleans.
+    → Transforms into NamespaceSet dataclass.
+
+  **Layer 5 (config.py, SandboxConfig.__post_init__ → Mount.build()):**
+    → The Mount dataclass's build() method validates:
+        - Mount type must be one of the allowed types.
+        - Bind/ro-bind/dev-bind require non-None source and target.
+        - Dir/tmpfs require a non-None target.
+    → This is the **last line of defense** before the config is used.
+
+  **Layer 6 (sandbox/builder.py, BwrapBuilder.build()):**
+    → Pure consumer: assumes config is already valid.
+    → Does NOT repeat validation — it uses the validated config directly.
+    → Errors here indicate a programming error (e.g., wrong type passed).
+
+  **Layer 7 (runner/_core.py, run_in_sandbox):**
+    → Executes the command; handles runtime bwrap errors.
+    → Does NOT repeat validation.
+
+## Why multiple layers?
+
+Each layer has a distinct purpose:
+- Loader layers: structural validation of user input (YAML/JSON).
+- Mount.build() / CapabilitySet / SandboxConfig.__post_init__:
+  semantic validation that the dataclass invariants hold.
+- No layer is truly redundant; each catches a different class of errors.
+  Without Layer 1, raw dicts could slip through. Without Layer 5,
+  semantically incorrect dataclass values could cause runtime failures.
 """
 
 from __future__ import annotations
@@ -28,12 +76,32 @@ class Mount:
     - dev:      {"target": "/dev"}
     - dir:      {"target": "/workspace"}
 
-    Attributes:
+    ## Validation (Layer 5 of the pipeline)
+
+    This dataclass enforces semantic invariants in its build() method.
+    The build() method is the **last line of defense** in the validation
+    pipeline (Layer 5). It ensures that at construction time:
+
+      - Mount type must be one of: bind, ro-bind, dev-bind, tmpfs, proc, dev, dir.
+      - Bind/ro-bind/dev-bind require both `source` and `target` to be non-None.
+      - Dir/tmpfs require a non-None `target`.
+      - Dev-bind requires `device=True`.
+
+    Why this layer exists:
+      - The ConfigLoader (Layers 1-4) transforms user input into Mount objects,
+        but does NOT validate the semantic correctness of each Mount's fields.
+      - Mount.build() provides a final, fast check that catches malformed
+        dataclasses that might have been created programmatically.
+      - This is NOT redundant — it is a defensive boundary that ensures
+        dataclass invariants are maintained even if the config is mutated
+        after loading.
+
+    Args:
         source: The source path (required for bind, ro-bind, dev-bind types).
         target: The target path inside the sandbox (required for all types).
-        type: The mount type. Must be one of: bind, ro-bind, dev-bind,
-              tmpfs, proc, dev, dir.
-        device: True for dev-bind mounts.
+        type: The mount type. Must be one of: bind, ro-bind, dev-bind, tmpfs,
+              proc, dev, dir.
+        device: True for dev-bind mounts (required when type="dev-bind").
         size: Human-readable size string for tmpfs mounts (e.g., "100M").
     """
 
@@ -46,11 +114,27 @@ class Mount:
     def build(self) -> list[str]:
         """Build the bwrap arguments for this mount.
 
+        This is **Layer 5** of the validation pipeline — the last line of
+        defense before the config is used. It validates that the Mount's
+        type and fields are semantically consistent.
+
+        Validation performed:
+          - Mount type must be one of: bind, ro-bind, dev-bind, tmpfs, proc, dev, dir.
+          - Bind/ro-bind/dev-bind require both `source` and `target` to be non-None.
+          - Dir/tmpfs require a non-None `target`.
+          - Dev-bind requires `device=True`.
+          - Size is parsed and converted to bytes for tmpfs.
+
+        Without this layer, a Mount created programmatically with invalid
+        fields could slip through to the bwrap builder, causing cryptic
+        runtime errors or incorrect behavior.
+
         Returns:
             A list of bwrap CLI arguments for this mount.
 
         Raises:
-            ValueError: If the mount is malformed (missing required fields).
+            ValueError: If the mount is malformed (missing required fields,
+                invalid type, or dev-bind without device=True).
         """
         args: list[str] = []
 
@@ -179,6 +263,11 @@ class Mount:
 class CapabilitySet:
     """Capability drop/add configuration.
 
+    This is **Layer 5** of the validation pipeline. The ConfigLoader
+    (Layer 3) validates that "drop" and "keep" are lists of strings,
+    then stores the validated data here. This class does not re-validate;
+    it is a pure container for the already-validated capability sets.
+
     Drop capabilities explicitly using the "drop" field.
     List capabilities to keep using the "keep" field.
 
@@ -190,6 +279,10 @@ class CapabilitySet:
           Short names (e.g., "CHOWN") are NOT normalized. Use fully
           qualified names (e.g., "CAP_DAC_READ_SEARCH").
         - bwrap will reject unknown capability names with a native error.
+
+    Attributes:
+        dropped: List of capability names to drop (e.g., ["ALL", "CAP_SYS_ADMIN"]).
+        kept: List of capability names to explicitly keep (e.g., ["CAP_CHOWN"]).
     """
 
     def __init__(self, dropped: list[str] | None = None, kept: list[str] | None = None):
@@ -230,6 +323,12 @@ class CapabilitySet:
 
 class NamespaceSet:
     """Namespaces to unshare.
+
+    This is **Layer 5** of the validation pipeline. The ConfigLoader
+    (Layer 4) validates that namespace keys are valid and values are
+    booleans, then stores the validated data here. This class does not
+    re-validate; it is a pure container for the already-validated
+    namespace configuration.
 
     Only namespaces explicitly set to True will be unshared.
     Unspecified namespaces remain shared.
@@ -280,8 +379,10 @@ class NamespaceSet:
 class SandboxConfig:
     """Complete sandbox configuration.
 
-    All fields are validated on construction. Use build() or
-    ConfigLoader to construct instances.
+    This is **Layer 5** of the validation pipeline. The __post_init__ method
+    calls Mount.build() on all mounts, which serves as the final validation
+    gate before the config is used. This ensures that no malformed Mount
+    objects can ever reach the bwrap builder.
 
     Mounts can use the unified type system:
         - type: "bind"     → --bind SRC DEST
@@ -295,6 +396,44 @@ class SandboxConfig:
     Timeout:
         - timeout: int or None (default) → No timeout
         - timeout: 60                    → Command fails after 60s
+
+    ## Validation Pipeline
+
+    The SandboxConfig sits at **Layer 5** of the validation pipeline. Its
+    __post_init__ method calls Mount.build() for every mount, which performs
+    the final semantic validation:
+
+      Layer 1: ConfigLoader._validate_structure() → Schema check
+      Layer 2: ConfigLoader._parse_mounts()        → Type/field check
+      Layer 3: ConfigLoader._parse_capabilities()  → Cap list check
+      Layer 4: ConfigLoader._parse_unshare()       → NS key/type check
+      Layer 5: SandboxConfig.__post_init__ → Mount.build() semantic check
+      Layer 6: BwrapBuilder.build()              → Pure consumption
+      Layer 7: run_in_sandbox()                   → Execution
+
+    The __post_init__ call to Mount.build() is critical because it guarantees
+    that even if the config is mutated after loading (e.g., mounts appended
+    programmatically), the resulting Mount objects will be valid.
+
+    ## Why __post_init__ calls build()?
+
+    Mount.build() is NOT a transformation — it is a validation gate.
+    It ensures that no invalid Mount can ever be constructed. Without this
+    layer, a programmer could accidentally create:
+
+        mount = Mount(type="foo")  # No error!
+        config = SandboxConfig(name="test", mounts=[mount])  # No error!
+
+    Until build() is called, the invalid state is invisible. Calling
+    build() in __post_init__ makes invalid configs immediately visible
+    as dataclass construction errors, which are far easier to debug.
+
+    ## Why not just validate in __post_init__?
+
+    Mount.build() is called in __post_init__ because it already performs
+    all necessary validation. Re-validating in __post_init__ would be
+    redundant. The dataclass constructor simply delegates to the
+    canonical validation function (build()).
     """
 
     name: str

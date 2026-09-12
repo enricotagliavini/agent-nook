@@ -30,6 +30,38 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# ───────────────────────────────────────────────────────────────────────────────
+# VALIDATION PIPELINE
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# The ConfigLoader enforces a strict, multi-layered validation strategy:
+#
+#   Layer 1: _validate_structure()      — Raw dict → canonical schema check
+#            → Catches user input errors: missing fields, wrong types, unknown keys
+#
+#   Layer 2: _parse_mounts()            — Dict list → Mount dataclass list
+#            → Validates mount type enum, required fields (source/target) per type
+#            → Transforms user-friendly YAML format into internal Mount objects
+#
+#   Layer 3: _parse_capabilities()      — Dict → CapabilitySet dataclass
+#            → Ensures drop/keep are lists of strings (not dicts, ints, etc.)
+#            → Prevents malformed capability specifications
+#
+#   Layer 4: _parse_unshare()           — Dict → NamespaceSet dataclass
+#            → Ensures namespace keys are strings, values are booleans
+#            → Prevents namespace injection via malformed dicts
+#
+#   Layer 5: SandboxConfig.__post_init__() — Dataclass construction
+#            → Calls Mount.build() and CapabilitySet.build() for final checks
+#            → The LAST line of defense before the config is used
+#
+# Key principle: Each layer has a distinct responsibility. No layer is redundant.
+# - Loader layers transform and validate STRUCTURAL data
+# - Dataclass layers (Mount.build, SandboxConfig.__post_init__) validate SEMANTIC
+#   consistency (e.g., that a "tmpfs" mount has a valid target, that capabilities
+#   are properly resolved against a base set).
+# ───────────────────────────────────────────────────────────────────────────────
+
 
 class ConfigLoader:
     """Loads and validates sandbox configuration from a YAML file.
@@ -163,7 +195,28 @@ class ConfigLoader:
     def _validate_structure(self, data: dict[str, Any]) -> None:
         """Validate that the config data matches the canonical schema.
 
-        Single gate — if it passes, all downstream code can assume canonical form.
+        This is the **first line of defense** — it ensures the input is a
+        well-formed dictionary with all required fields present and of the
+        correct type before any parsing or transformation occurs.
+
+        Without this gate, downstream parsers would receive malformed data
+        and produce cryptic errors or silently accept invalid configurations.
+
+        Validates:
+          - Required fields are present (e.g., `name`)
+          - All keys are from the known schema (rejects unknown fields)
+          - Each field has the expected type (str, list[dict], dict, bool, etc.)
+          - Mount entries are dictionaries (not scalars)
+
+        Note: This does NOT validate the CONTENT of fields (e.g., mount type
+        strings, capability names). That is handled by the parsers below.
+
+        Args:
+            data: Raw configuration dictionary (as parsed from YAML/JSON).
+
+        Raises:
+            ConfigValidationError: If any field is missing, has wrong type,
+                or contains unknown keys.
         """
         for required in ("name",):
             if required not in data:
@@ -238,12 +291,55 @@ class ConfigLoader:
                         )
 
     def _parse_mounts(self, mounts: list[dict]) -> list[Mount]:
-        """Parse mounts from a list of dicts.
+        """Parse mounts from a list of dicts into Mount dataclass instances.
 
-        Each mount must be a dict with exactly one of:
-          - "source" and "target" (bind types)
-          - or a single "target" (tmpfs, proc, dev, dir)
+        This is **Layer 2** of the validation pipeline. It performs two functions:
+        1. **Transformation**: Converts user-friendly YAML dicts into Mount dataclasses.
+        2. **Validation**: Ensures mount type strings are valid and required fields
+           are present for each mount type.
+
+        Why this is needed even though _validate_structure() checks the top-level
+        type:
+
+          - _validate_structure() only verifies that mounts is a *list of dicts*.
+          - It does NOT verify that each dict has the correct *shape* for its type.
+          - _parse_mounts() enforces the semantic rules:
+              * A 'tmpfs' mount MUST have a 'target' field.
+              * A 'bind' mount MUST have both 'source' and 'target' fields.
+              * Mount type strings must be in the allowed enum.
+              * The 'size' field must be a valid size string (or empty).
+
+        Without this layer, a user could specify:
+            mounts:
+              - target: /tmp
+                type: tmpfs
+          and the parser would silently create a Mount with source=None,
+          leading to subtle runtime errors or incorrect behavior.
+
+        Args:
+            mounts: List of mount dictionaries from the config.
+
+        Returns:
+            A list of Mount dataclass instances.
+
+        Raises:
+            ConfigValidationError: If a mount is missing required fields.
+            ValueError: If a mount type string is not recognized.
         """
+        validated_mounts: list[Mount] = []
+        for mount_dict in mounts:
+            mount_type = mount_dict.get("type")
+            if not isinstance(mount_type, str):
+                raise ConfigValidationError(
+                    f"mount type must be a string, got {type(mount_type).__name__}: "
+                    f"{mount_type!r}"
+                )
+            if mount_type not in self._VALID_MOUNT_TYPES:
+                raise ConfigValidationError(
+                    f"unknown mount type '{mount_type}'"
+                )
+            validated_mounts.append(Mount(**mount_dict))
+        return validated_mounts
         result: list[Mount] = []
 
         for i, m in enumerate(mounts):
@@ -344,12 +440,45 @@ class ConfigLoader:
         return result
 
     def _parse_capabilities(self, caps: dict[str, Any]) -> CapabilitySet:
-        """Parse capabilities from a dict.
+        """Parse capabilities from a dict into a CapabilitySet dataclass.
 
-        Canonical format:
-            capabilities:
-              drop: ["ALL"]
-              keep: ["CAP_CHOWN"]
+        This is **Layer 3** of the validation pipeline. It validates and
+        transforms the `capabilities` field, which can have several valid forms:
+
+          ```yaml
+          capabilities:
+            drop: ["ALL"]
+            keep: ["CAP_CHOWN", "CAP_NET_BIND_SERVICE"]
+          ```
+
+          or
+
+          ```yaml
+          capabilities:
+            drop:
+              - ALL
+              - CAP_SYS_ADMIN
+            keep: ["CAP_NET_BIND_SERVICE"]
+          ```
+
+        Why this is needed:
+
+          - The raw config may use lists, comma-separated strings, or dicts.
+          - _validate_structure() ensures the field is a dict, but not what's
+            inside the `drop` and `keep` keys.
+          - This layer ensures `drop` and `keep` are lists of strings (not
+            dicts, ints, or nested structures), and converts them into a
+            normalized internal representation.
+
+        Args:
+            caps: A dict with optional "drop" and "keep" keys, each mapping
+                  to a list of capability strings.
+
+        Returns:
+            A CapabilitySet dataclass instance with normalized drop/keep lists.
+
+        Raises:
+            ConfigValidationError: If drop/keep are not lists of strings.
         """
         dropped: list[str] = []
         kept: list[str] = []
@@ -385,14 +514,54 @@ class ConfigLoader:
         return CapabilitySet(dropped=dropped, kept=kept)
 
     def _parse_unshare(self, unshare: dict[str, bool]) -> NamespaceSet:
-        """Parse unshare settings from a dict.
+        """Parse unshare settings from a dict into a NamespaceSet dataclass.
 
-        Canonical format:
+        This is **Layer 4** of the validation pipeline. It validates and
+        transforms the `unshare` field, which can have several valid forms:
+
+          ```yaml
+          unshare:
+            pid: true
+            uts: true
+            ipc: false
+            cgroup: false
+            user: false
+            network: false
+          ```
+
+          or
+
+          ```yaml
+          unshare:
+            pid: true
+            network: true
+          ```
+
+        Why this is needed:
+
+          - The raw config may mix booleans with strings ("true"/"false"),
+            or use comma-separated values like "pid, uts, network".
+          - _validate_structure() ensures the field is a dict, but not the
+            content of its values.
+          - This layer ensures:
+              * Keys are valid namespace names (pid, uts, ipc, cgroup, user, network)
+              * Values are booleans (not strings, ints, etc.)
+              * It normalizes to a clean NamespaceSet dataclass
+
+        Without this layer, a malformed config like:
             unshare:
-              pid: true
-              uts: true
-              ipc: false
-              ...
+              pid: "true"
+              uts: 1
+          could silently produce incorrect namespace isolation.
+
+        Args:
+            unshare: A dict mapping namespace names to boolean values.
+
+        Returns:
+            A NamespaceSet dataclass instance.
+
+        Raises:
+            ConfigValidationError: If a key is invalid or a value is not a boolean.
         """
         namespace_dict: dict[str, bool] = {}
 
