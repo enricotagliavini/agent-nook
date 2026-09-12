@@ -15,9 +15,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-import sys
 import os
+import sys
+from pathlib import Path
 
 __version__ = "0.1.0"
 
@@ -236,12 +236,11 @@ def _dispatch_command(args: argparse.Namespace) -> int:
 def _cmd_run(args: argparse.Namespace) -> int:
     """Run a command inside a sandbox."""
     from agent_nook.config import get_config_path, get_state_dir
-    from agent_nook.config.loader import ConfigLoader
-    from agent_nook.runner import run_in_sandbox, BwrapError
-    from agent_nook.config.loader import ConfigValidationError
+    from agent_nook.config.loader import ConfigLoader, ConfigValidationError
+    from agent_nook.runner import BwrapError, run_in_sandbox
     from agent_nook.sandbox.builder import BwrapBuilder, SandboxConfig
-    from agent_nook.utils.logger import setup_logger
     from agent_nook.utils.directories import ensure_directories
+    from agent_nook.utils.logger import setup_logger
 
     # Setup logging
     logger = setup_logger("agent_nook", level="INFO" if not args.verbose else "DEBUG")
@@ -286,8 +285,6 @@ def _cmd_run(args: argparse.Namespace) -> int:
     # Build SandboxConfig from the normalized dict
     try:
         config = SandboxConfig(**config_dict)
-        builder = BwrapBuilder(config)
-        builder.validate()
     except TypeError as e:
         logger.error("Configuration error: %s", e)
         return 1
@@ -303,11 +300,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     logger.debug("Executing: %s", " ".join(command))
 
-    full_bwrap_cmd = builder.build(command)
-    logger.debug("Full bwrap command: %s", " ".join(full_bwrap_cmd))
-
+    # Run the command in the sandbox using the unified API
+    # run_in_sandbox logs the full bwrap command internally
     try:
-        with run_in_sandbox(config, full_bwrap_cmd) as result:
+        with run_in_sandbox(config, command, timeout=config.timeout) as result:
             if result.success:
                 logger.info("✓ Sandbox executed successfully")
                 if result.stdout:
@@ -334,7 +330,6 @@ def _cmd_init(args: argparse.Namespace) -> int:
     from agent_nook.config.loader import ConfigLoader
     from agent_nook.utils.logger import setup_logger
     from agent_nook.utils.directories import ensure_directories
-    import logging
 
     logger = setup_logger("agent_nook", level="DEBUG")
     logger.info("Initializing Agent Nook config...")
@@ -349,7 +344,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
     try:
         config_path = config_loader.find_default_config_path()
-    except FileNotFoundError as e:
+    except FileNotFoundError:
         logger.error("Cannot find default config. Install agent-nook first.")
         return 1
 
@@ -367,10 +362,6 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
-    """Show sandbox status."""
-    from agent_nook.config import get_config_path
-    from agent_nook.utils.logger import setup_logger
-    import logging
 
     logger = setup_logger("agent_nook", level="INFO" if args.verbose else "INFO")
     logger.info("Agent Nook Status")
@@ -418,8 +409,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 def _cmd_logs(args: argparse.Namespace) -> int:
     """Show recent logs."""
-    from agent_nook.utils.logger import setup_logger, get_log_directory
-    import logging
+    from agent_nook.utils.logger import get_log_directory, setup_logger
 
     logger = setup_logger("agent_nook", level="INFO")
     logger.info("Showing last %d lines of logs...", args.tail)
@@ -470,9 +460,6 @@ def _apply_cli_overrides(config_dict: dict, args: argparse.Namespace) -> dict[st
     Returns:
         A new SandboxConfig with CLI overrides applied.
     """
-    import sys
-    from agent_nook.config.config import SandboxConfig
-
     # Convert to dict, mutate, then rebuild SandboxConfig
     result = config_dict.copy()
 

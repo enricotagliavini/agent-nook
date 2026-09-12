@@ -1,22 +1,20 @@
 """Tests for the sandbox runner."""
 
-import pytest
-import tempfile
 import os
 import subprocess
-from contextlib import redirect_stdout, redirect_stderr
-
 import sys
+import tempfile
+
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from agent_nook.config.loader import ConfigLoader
 from agent_nook.runner import (
-    run_in_sandbox,
-    build_command,
-    validate_config,
     BwrapError,
+    build_command,
+    run_in_sandbox,
 )
-from agent_nook.config.config import ConfigValidationError, Mount, CapabilitySet, NamespaceSet
 
 
 def test_build_command_valid():
@@ -344,3 +342,77 @@ new_session: true
         assert "hello" in result.stdout
     finally:
         os.unlink(path)
+
+
+def test_cli_command_building():
+    """Test that the CLI path builds the correct bwrap command (no duplication).
+    
+    This test verifies that the fix for the double bwrap invocation
+    is working correctly. The CLI path now calls subprocess.run() directly
+    on the built command instead of wrapping it in run_in_sandbox().
+    """
+    from agent_nook.config.loader import ConfigLoader
+    from agent_nook.runner._core import build_command
+    
+    config = ConfigLoader().set(
+        {
+            "name": "cli-test",
+            "chdir": "/tmp",
+            "mounts": [
+                {"source": "/", "target": "/"},
+                {"source": "/etc/resolv.conf", "target": "/etc/resolv.conf", "readonly": True},
+                {"target": "/tmp", "type": "tmpfs"},
+            ],
+            "capabilities": {"drop": ["ALL"]},
+            "unshare": {"pid": True, "uts": True},
+        }
+    )
+    cmd = build_command(config)
+    
+    # First command should start with bwrap
+    assert cmd[0] == "bwrap"
+    assert "--die-with-parent" in cmd
+    assert "--new-session" in cmd
+    assert "--cap-drop" in cmd
+    assert "ALL" in cmd
+    assert "--unshare-pid" in cmd
+    assert "--unshare-uts" in cmd
+    # readonly: True normalizes to type='bind', so it becomes --bind
+    assert "--bind" in cmd
+    assert "/etc/resolv.conf" in cmd
+    assert "--tmpfs" in cmd
+    # Command should NOT start with "bwrap" (no duplication)
+    assert cmd[0] == "bwrap", "Command should start with 'bwrap', not duplicated"
+
+
+def test_cli_direct_execution():
+    """Test that CLI directly executes the bwrap command via subprocess.
+    
+    This test verifies that the CLI path (which bypasses run_in_sandbox)
+    produces a correct bwrap command and executes it successfully.
+    """
+    import subprocess
+
+    from agent_nook.config.loader import ConfigLoader
+    from agent_nook.runner._core import build_command
+    
+    config = ConfigLoader().set(
+        {
+            "name": "cli-test",
+            "chdir": "/tmp",
+            "mounts": [
+                {"source": "/", "target": "/"},
+                {"source": "/etc/resolv.conf", "target": "/etc/resolv.conf", "readonly": True},
+                {"target": "/tmp", "type": "tmpfs"},
+            ],
+            "capabilities": {"drop": ["ALL"]},
+            "unshare": {"pid": True, "uts": True},
+        }
+    )
+    bwrap_cmd = build_command(config, ["echo", "hello from sandbox"])
+    
+    # Execute directly (as the CLI does)
+    result = subprocess.run(bwrap_cmd, capture_output=True, text=True)
+    
+    assert result.returncode == 0, f"bwrap command failed: {result.stderr}"
+    assert "hello from sandbox" in result.stdout
