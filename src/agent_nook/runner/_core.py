@@ -31,9 +31,6 @@ from agent_nook.config.loader import ConfigValidationError
 from agent_nook.sandbox.builder import BwrapBuilder, BwrapError
 
 
-ConfigError = ConfigValidationError
-
-
 # Try to import the global nook_config
 try:
     from agent_nook.config import nook_config
@@ -118,32 +115,6 @@ def build_command(config: SandboxConfig, command: list[str] | None = None) -> li
     return builder.build(cmd_args)
 
 
-def validate_config(config: SandboxConfig) -> None:
-    """Validate a sandbox configuration.
-
-    Args:
-        config: The sandbox configuration to validate.
-
-    Raises:
-        ConfigValidationError: If the configuration is invalid.
-    """
-    # Validate mounts
-    if not isinstance(config.mounts, list):
-        raise ConfigValidationError("mounts must be a list")
-
-    for mount in config.mounts:
-        try:
-            mount.build()
-        except ValueError as e:
-            raise ConfigValidationError(f"Invalid mount: {e}")
-
-    # Validate capabilities
-    try:
-        config.capabilities.build()
-    except ValueError as e:
-        raise ConfigValidationError(f"Invalid capabilities: {e}")
-
-
 def run_in_sandbox(
     config: SandboxConfig,
     command: list[str],
@@ -177,23 +148,16 @@ def run_in_sandbox(
     logger.debug("Running sandbox with config: name=%s, command=%s",
                  config.name, " ".join(command))
 
-    sandbox_dir = None
+    # Step 1: Build the command
+    bwrap_cmd = build_command(config, command)
+    logger.debug("bwrap command: %s", " ".join(bwrap_cmd))
+
+    # Step 2: Execute
+    logger.info("Running command: %s", " ".join(command))
+    logger.info("Full bwrap command: %s", " ".join(bwrap_cmd), extra={"command_only": True})
+
     try:
-        # Step 1: Validate configuration
-        validate_config(config)
-        logger.debug("Validated configuration: name=%s, mounts=%d, caps=%s",
-                     config.name, len(config.mounts), config.capabilities)
-
-        # Step 2: Build the command
-        bwrap_cmd = build_command(config, command)
-        logger.debug("bwrap command: %s", " ".join(bwrap_cmd))
-
-        # Step 3: Execute
-        logger.info("Running command: %s", " ".join(command))
-        logger.info("Full bwrap command: %s", " ".join(bwrap_cmd), extra={"command_only": True})
-
         result = _execute_command(bwrap_cmd, command, logger, timeout=timeout)
-
         return result
 
     except BwrapError as e:
