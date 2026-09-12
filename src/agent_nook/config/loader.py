@@ -36,6 +36,10 @@ class ConfigLoader:
 
     The configuration must match the canonical schema exactly. No type
     coercion or format conversion is performed.
+
+    Args:
+        config_path: Optional path to the config file. If None, uses
+            the default config path derived from XDG_CONFIG_HOME.
     """
 
     _FIELDS: dict[str, str] = {
@@ -56,11 +60,24 @@ class ConfigLoader:
         {"bind", "ro-bind", "dev-bind", "tmpfs", "proc", "dev", "dir"}
     )
 
-    def __init__(self, config_dir: str | None = None) -> None:
-        self._config_dir = config_dir
+    def __init__(self, config_path: str | None = None) -> None:
+        """Initialize the config loader.
 
-    def find_default_config(self) -> str:
-        """Find the bundled default configuration file."""
+        Args:
+            config_path: Optional path to the config file. If None,
+                the default path is used (from XDG_CONFIG_HOME/agent-nook/sandbox.yaml).
+        """
+        self._config_path: str | None = config_path
+
+    def find_default_config_path(self) -> str:
+        """Find the bundled default configuration file path.
+
+        Returns:
+            The path to the default sandbox.yaml file.
+
+        Raises:
+            FileNotFoundError: If the default config is not found.
+        """
         import agent_nook
         from pathlib import Path
 
@@ -422,7 +439,7 @@ class ConfigLoader:
         import shutil
         from pathlib import Path
 
-        source = self.find_default_config()
+        source = self.find_default_config_path()
         dest = str(Path("~/.config/agent-nook/sandbox.yaml").expanduser())
 
         Path(dest).parent.mkdir(parents=True, exist_ok=True)
@@ -435,7 +452,8 @@ class ConfigLoader:
         """Load and validate configuration from a YAML file.
 
         Args:
-            path: Optional path override. If None, uses the default config.
+            path: Optional path override. If None, uses the default config path
+                (from XDG_CONFIG_HOME/agent-nook/sandbox.yaml).
 
         Returns:
             A validated SandboxConfig ready for use.
@@ -447,7 +465,7 @@ class ConfigLoader:
         from os import path as os_path
 
         if path is None:
-            path = self.find_default_config()
+            path = self.find_default_config_path()
 
         if not os_path.exists(path):
             raise FileNotFoundError(f"Config file not found: {path}")

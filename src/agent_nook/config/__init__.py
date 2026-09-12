@@ -24,21 +24,21 @@ def _get_state_dir() -> str:
     return os.path.join(xdg_state, "agent-nook")
 
 
-def get_config_dir() -> str:
-    """Resolve the config directory path using XDG_CONFIG_HOME.
+def get_config_path() -> str:
+    """Resolve the config path using XDG_CONFIG_HOME.
 
     Reads XDG_CONFIG_HOME from the environment, falls back to
     ~/.config if not set.
 
     Returns:
-        The full path to the config directory.
+        The full path to the config file (agent-nook/sandbox.yaml).
 
     Example:
-        >>> get_config_dir()
-        '/home/username/.config/agent-nook'
+        >>> get_config_path()
+        '/home/username/.config/agent-nook/sandbox.yaml'
     """
     xdg_config = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
-    return os.path.join(xdg_config, "agent-nook")
+    return os.path.join(xdg_config, "agent-nook", "sandbox.yaml")
 
 
 def get_state_dir() -> str:
@@ -59,7 +59,7 @@ def get_state_dir() -> str:
 
 
 __all__ = [
-    "get_config_dir",
+    "get_config_path",
     "get_state_dir",
     "ConfigLoader",
     "ConfigValidationError",
