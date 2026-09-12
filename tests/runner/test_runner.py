@@ -24,7 +24,7 @@ def test_build_command_valid():
     config = ConfigLoader().set(
         {
             "name": "test",
-            "root": "/tmp",
+            "chdir": "/tmp",
             "mounts": [
                 {"source": "/", "target": "/"},
                 {"target": "/tmp", "type": "tmpfs"},
@@ -51,7 +51,7 @@ def test_build_command_with_ro_bind():
     config = ConfigLoader().set(
         {
             "name": "test",
-            "root": "/tmp",
+            "chdir": "/tmp",
             "mounts": [
                 {"source": "/readonly", "target": "/readonly", "type": "ro-bind"},
                 {"source": "/writable", "target": "/writable", "type": "bind"},
@@ -72,7 +72,7 @@ def test_build_command_with_bad_size():
     config = ConfigLoader().set(
         {
             "name": "test",
-            "root": "/tmp",
+            "chdir": "/tmp",
             "mounts": [{"target": "/tmp", "type": "tmpfs", "size": "100AM"}],
             "capabilities": {"drop": ["ALL"]},
             "unshare": {"pid": True},
@@ -87,7 +87,7 @@ def test_build_command_hostname():
     config = ConfigLoader().set(
         {
             "name": "test",
-            "root": "/tmp",
+            "chdir": "/tmp",
             "mounts": [{"source": "/", "target": "/"}],
             "hostname": "sandbox-host",
             "unshare": {"pid": True},
@@ -104,7 +104,7 @@ def test_build_command_env_vars():
     config = ConfigLoader().set(
         {
             "name": "test",
-            "root": "/tmp",
+            "chdir": "/tmp",
             "mounts": [{"source": "/", "target": "/"}],
             "env_vars": {"MY_VAR": "myvalue", "ANOTHER": "another"},
         }
@@ -120,7 +120,7 @@ def test_build_command_unset_env_vars():
     config = ConfigLoader().set(
         {
             "name": "test",
-            "root": "/tmp",
+            "chdir": "/tmp",
             "mounts": [{"source": "/", "target": "/"}],
             "unenv_vars": ["VAR1", "VAR2"],
         }
@@ -138,7 +138,7 @@ def test_run_in_sandbox_basic():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(
             """name: test-sandbox
-root: /tmp
+chdir: "/tmp"
 mounts:
   - source: /
     target: /
@@ -165,7 +165,7 @@ def test_run_in_sandbox_with_hostname():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(
             """name: test-sandbox
-root: /tmp
+chdir: "/tmp"
 mounts:
   - source: /
     target: /
@@ -194,7 +194,7 @@ def test_run_in_sandbox_with_env_vars():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(
             """name: test-sandbox
-root: /tmp
+chdir: "/tmp"
 mounts:
   - source: /
     target: /
@@ -222,7 +222,7 @@ def test_run_in_sandbox_unshare_namespace():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(
             """name: test-sandbox
-root: /tmp
+chdir: "/tmp"
 mounts:
   - source: /
     target: /
@@ -250,7 +250,7 @@ def test_run_in_sandbox_path_error():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(
             """name: test-sandbox
-root: /tmp
+chdir: "/tmp"
 mounts:
   - source: /nonexistent/path
     target: /sandbox
@@ -275,7 +275,7 @@ def test_run_in_sandbox_command_not_found():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(
             """name: test-sandbox
-root: /tmp
+chdir: "/tmp"
 mounts:
   - source: /
     target: /
@@ -300,7 +300,7 @@ def test_run_in_sandbox_timeout():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(
             """name: test-sandbox
-root: /tmp
+chdir: "/tmp"
 mounts:
   - source: /
     target: /
@@ -325,7 +325,7 @@ def test_run_in_sandbox_with_die_with_parent_false():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(
             """name: test-sandbox
-root: /tmp
+chdir: "/tmp"
 mounts:
   - source: /
     target: /

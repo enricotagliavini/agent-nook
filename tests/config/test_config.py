@@ -157,7 +157,7 @@ def test_sandbox_config_hostname():
     """Test hostname adds --unshare-uts and --hostname."""
     config = SandboxConfig(
         name="test",
-        root="/tmp",
+        chdir="/tmp",
         mounts=[Mount(type="proc")],
         hostname="myhost",
     )
@@ -171,7 +171,7 @@ def test_sandbox_config_unenv_vars():
     """Test unenv_vars adds --unsetenv."""
     config = SandboxConfig(
         name="test",
-        root="/tmp",
+        chdir="/tmp",
         mounts=[Mount(type="proc")],
         unenv_vars=["PATH", "HOME"],
     )
@@ -185,7 +185,7 @@ def test_sandbox_config_env_vars():
     """Test env_vars adds --setenv."""
     config = SandboxConfig(
         name="test",
-        root="/tmp",
+        chdir="/tmp",
         mounts=[Mount(type="proc")],
         env_vars={"PATH": "/usr/bin", "VAR": "value"},
     )

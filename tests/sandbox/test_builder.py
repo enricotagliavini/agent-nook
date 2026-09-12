@@ -13,7 +13,7 @@ def test_builder_basic():
     """Test builder with basic config."""
     config = SandboxConfig(
         name="test",
-        root="/tmp",
+        chdir="/tmp",
         mounts=[Mount(source="/host", target="/sandbox"), Mount(type="tmpfs", target="/tmp")],
         capabilities=CapabilitySet(dropped=["ALL"]),
         unshare=NamespaceSet(pid=True, uts=True),
@@ -40,7 +40,7 @@ def test_builder_hostname():
     """Test builder with custom hostname."""
     config = SandboxConfig(
         name="test",
-        root="/tmp",
+        chdir="/tmp",
         mounts=[Mount(source="/host", target="/sandbox")],
         capabilities=CapabilitySet(),
         unshare=NamespaceSet(pid=True, uts=True),
@@ -58,7 +58,7 @@ def test_builder_with_proc_mount():
     """Test builder with proc mount."""
     config = SandboxConfig(
         name="test",
-        root="/tmp",
+        chdir="/tmp",
         mounts=[Mount(type="proc"), Mount(source="/host", target="/sandbox")],
         capabilities=CapabilitySet(),
         unshare=NamespaceSet(),
@@ -74,7 +74,7 @@ def test_builder_with_dev_mount():
     """Test builder with dev mount."""
     config = SandboxConfig(
         name="test",
-        root="/tmp",
+        chdir="/tmp",
         mounts=[Mount(type="dev"), Mount(source="/host", target="/sandbox")],
         capabilities=CapabilitySet(),
         unshare=NamespaceSet(),
@@ -90,7 +90,7 @@ def test_builder_with_dir_mount():
     """Test builder with dir mount."""
     config = SandboxConfig(
         name="test",
-        root="/tmp",
+        chdir="/tmp",
         mounts=[Mount(type="dir", target="/mydir")],
         capabilities=CapabilitySet(),
         unshare=NamespaceSet(),
@@ -106,7 +106,7 @@ def test_builder_with_env_vars():
     """Test builder with environment variables."""
     config = SandboxConfig(
         name="test",
-        root="/tmp",
+        chdir="/tmp",
         mounts=[Mount(source="/host", target="/sandbox")],
         capabilities=CapabilitySet(),
         unshare=NamespaceSet(),
@@ -125,7 +125,7 @@ def test_builder_with_unset_env_vars():
     """Test builder with unenv_vars."""
     config = SandboxConfig(
         name="test",
-        root="/tmp",
+        chdir="/tmp",
         mounts=[Mount(source="/host", target="/sandbox")],
         capabilities=CapabilitySet(),
         unshare=NamespaceSet(),
@@ -141,7 +141,7 @@ def test_builder_with_all_unenv_vars():
     """Test builder with clearenv (all vars unset)."""
     config = SandboxConfig(
         name="test",
-        root="/tmp",
+        chdir="/tmp",
         mounts=[Mount(source="/host", target="/sandbox")],
         capabilities=CapabilitySet(),
         unshare=NamespaceSet(),
@@ -157,7 +157,7 @@ def test_builder_with_specific_capabilities_kept():
     """Test builder with kept capabilities."""
     config = SandboxConfig(
         name="test",
-        root="/tmp",
+        chdir="/tmp",
         mounts=[Mount(source="/host", target="/sandbox")],
         capabilities=CapabilitySet(kept=["CHOWN", "SETUID"]),
         unshare=NamespaceSet(),
@@ -174,7 +174,7 @@ def test_builder_with_specific_capabilities_dropped():
     """Test builder with specific capabilities dropped."""
     config = SandboxConfig(
         name="test",
-        root="/tmp",
+        chdir="/tmp",
         mounts=[Mount(source="/host", target="/sandbox")],
         capabilities=CapabilitySet(dropped=["NET_ADMIN", "NET_RAW"]),
         unshare=NamespaceSet(),
@@ -191,7 +191,7 @@ def test_builder_with_all_capabilities_dropped():
     """Test builder with all capabilities dropped."""
     config = SandboxConfig(
         name="test",
-        root="/tmp",
+        chdir="/tmp",
         mounts=[Mount(type="proc")],
         capabilities=CapabilitySet(dropped=["ALL"]),
     )
@@ -206,7 +206,7 @@ def test_builder_with_network_ns():
     """Test builder with network namespace."""
     config = SandboxConfig(
         name="test",
-        root="/tmp",
+        chdir="/tmp",
         mounts=[Mount(type="proc")],
         unshare=NamespaceSet(network=True),
     )

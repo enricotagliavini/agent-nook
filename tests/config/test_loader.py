@@ -19,7 +19,7 @@ def test_load_yaml_basic():
     loader = ConfigLoader()
     data = {
         "name": "test-sandbox",
-        "root": "/tmp",
+        "chdir": "/tmp",
         "mounts": [
             {"target": "/proc", "type": "proc"},
             {"target": "/dev", "type": "dev"},
@@ -34,7 +34,7 @@ def test_load_yaml_basic():
     config = loader.load_from_dict(data)
 
     assert config.name == "test-sandbox"
-    assert config.root == "/tmp"
+    assert config.chdir == "/tmp"
     assert len(config.mounts) == 4
     assert config.mounts[0].type == "proc"
     assert config.mounts[1].type == "dev"
@@ -48,7 +48,7 @@ def test_load_yaml_list_of_mounts():
     loader = ConfigLoader()
     data = {
         "name": "test",
-        "root": "/tmp",
+        "chdir": "/tmp",
         "mounts": [
             {"target": "/proc", "type": "proc"},
             {"target": "/dev", "type": "dev"},
@@ -73,7 +73,7 @@ def test_load_yaml_list_of_mounts():
     loader = ConfigLoader()
     data = {
         "name": "test",
-        "root": "/tmp",
+        "chdir": "/tmp",
         "mounts": [{"target": "/proc", "type": "proc"}],
         "env_vars": {"PATH": "/usr/bin", "MY_VAR": "value"},
     }
@@ -87,7 +87,7 @@ def test_load_yaml_unenv_vars():
     loader = ConfigLoader()
     data = {
         "name": "test",
-        "root": "/tmp",
+        "chdir": "/tmp",
         "mounts": [{"target": "/proc", "type": "proc"}],
         "unenv_vars": ["PATH", "HOME"],
     }
@@ -101,7 +101,7 @@ def test_load_yaml_hostname():
     loader = ConfigLoader()
     data = {
         "name": "test",
-        "root": "/tmp",
+        "chdir": "/tmp",
         "mounts": [{"target": "/proc", "type": "proc"}],
         "hostname": "myhost",
     }
@@ -115,7 +115,7 @@ def test_load_yaml_override():
     loader = ConfigLoader()
     data = {
         "name": "test",
-        "root": "/tmp",
+        "chdir": "/tmp",
         "mounts": [{"target": "/proc", "type": "proc"}],
     }
     override = {"hostname": "overridden-host"}
@@ -128,7 +128,7 @@ def test_load_yaml_unknown_key_errors():
     # Completely unknown key
     data = {
         "name": "test",
-        "root": "/tmp",
+        "chdir": "/tmp",
         "mounts": [{"target": "/proc", "type": "proc"}],
         "weird_key": "foo",
     }
@@ -141,7 +141,7 @@ def test_load_yaml_unknown_mount_type_errors():
     loader = ConfigLoader()
     data = {
         "name": "test",
-        "root": "/tmp",
+        "chdir": "/tmp",
         "mounts": [
             {"target": "/proc", "type": "proc"},
             {"target": "/data", "type": "invalid-type"},
@@ -157,7 +157,7 @@ def test_set_config():
     loader = ConfigLoader()
     data = {
         "name": "test",
-        "root": "/tmp",
+        "chdir": "/tmp",
         "mounts": [
             {"target": "/proc", "type": "proc"},
             {"target": "/dev", "type": "dev"},
