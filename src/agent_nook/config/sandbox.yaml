@@ -122,13 +122,14 @@ capabilities:
   keep: []
 
 # === Namespaces ===
-# Unshare all standard namespaces.
+# Unshare all standard namespaces by default, except network.
+# Note: this allows unlimited network access from within the sandbox
 unshare:
   pid: true
   uts: true
-  ipc: false
-  cgroup: false
-  user: false
+  ipc: true
+  cgroup: true
+  user: true
 
 # === Session and hostname ===
 die_with_parent: true
