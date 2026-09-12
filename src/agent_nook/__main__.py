@@ -64,14 +64,14 @@ def main() -> int:
         action="append",
         default=[],
         metavar="CAP",
-        help="Add capability (e.g. 'NET_BIND_SERVICE', repeat for multiple)"
+        help="Add capability (e.g. 'CAP_NET_BIND_SERVICE', repeat for multiple)"
     )
     run_parser.add_argument(
         "--cap-drop",
         action="append",
         default=[],
         metavar="CAP",
-        help="Drop capability (e.g. 'SYS_ADMIN', repeat for multiple)"
+        help="Drop capability (e.g. 'CAP_SYS_ADMIN', repeat for multiple)"
     )
     run_parser.add_argument(
         "--unshare",
