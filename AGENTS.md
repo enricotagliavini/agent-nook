@@ -62,6 +62,28 @@ All tests must be updated as part of every change:
 - Write new tests for new features / code paths
 - Tests are the contract — do not let tests accumulate debt
 
+## Docs are Part of the Contract
+
+All documentation is considered part of the public API. When you implement a change, you are responsible for updating:
+
+| What changed?                          | What docs must change?                                                                 |
+|----------------------------------------|----------------------------------------------------------------------------------------|
+| Function/method signature              | Docstring + all public docstrings                                                       |
+| Configuration key name                 | Config file examples + README config section                                            |
+| CLI flag name                         | CLI usage section + README CLI table                                                    |
+| Error type/message                     | README error handling section + docstring                                               |
+| Behavior / algorithm                   | README "How it works" section                                                            |
+| New feature                           | README example section                                                                  |
+| Removed feature                       | README (if still referenced) + old tests                                                |
+
+**Rule of thumb:** If a developer reads the README and expects the behavior to work, it must work. If a developer reads the docstring and writes code that works, it must work.
+
+**Pre-commit checklist:**
+- ✅ Did I update the docstring for every public API change?
+- ✅ Did I update the README usage/CLI section?
+- ✅ Did I remove dead code paths or stale imports?
+- ✅ Do the examples in the README still run as written?
+
 ## Code Quality
 
 ### Capability Names
