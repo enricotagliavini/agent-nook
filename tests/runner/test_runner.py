@@ -1,7 +1,8 @@
 """Tests for the sandbox runner.
 
-Note: This test directory is kept for backward compatibility.
-The functionality has been moved to `tests/sandbox/`.
+Note: This test directory is kept for backward compatibility with
+code that might import from `agent_nook.runner`. The functionality
+has been moved to `tests/sandbox/` and the module no longer exists.
 """
 
 import os
@@ -14,15 +15,11 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from agent_nook.config.loader import ConfigLoader
-from agent_nook.sandbox import (
-    BwrapError,
-    build_command,
-    run_in_sandbox,
-)
+from agent_nook.sandbox import BwrapSandbox, BwrapError
 
 
 def test_build_command_valid():
-    """Test build_command with valid config."""
+    """Test BwrapSandbox.build_command with valid config."""
     config = ConfigLoader().set(
         {
             "name": "test",
@@ -35,7 +32,7 @@ def test_build_command_valid():
             "unshare": {"pid": True, "uts": True},
         }
     )
-    cmd = build_command(config)
+    cmd = BwrapSandbox.build_command(config)
     assert cmd[0] == "bwrap"
     assert "--die-with-parent" in cmd
     assert "--new-session" in cmd
@@ -62,7 +59,7 @@ def test_build_command_with_ro_bind():
             "unshare": {"pid": True},
         }
     )
-    cmd = build_command(config)
+    cmd = BwrapSandbox.build_command(config)
     assert "--ro-bind" in cmd
     assert "/readonly" in cmd
     assert "--bind" in cmd
@@ -70,7 +67,7 @@ def test_build_command_with_ro_bind():
 
 
 def test_build_command_with_bad_size():
-    """Test that invalid mount sizes raise ValueError in build_command()."""
+    """Test that invalid mount sizes raise ValueError in BwrapSandbox.build_command()."""
     config = ConfigLoader().set(
         {
             "name": "test",
@@ -81,7 +78,7 @@ def test_build_command_with_bad_size():
         }
     )
     with pytest.raises(ValueError, match="Invalid size suffix"):
-        build_command(config)
+        BwrapSandbox.build_command(config)
 
 
 def test_build_command_hostname():
@@ -95,7 +92,7 @@ def test_build_command_hostname():
             "unshare": {"pid": True},
         }
     )
-    cmd = build_command(config)
+    cmd = BwrapSandbox.build_command(config)
     assert "--unshare-uts" in cmd
     assert "--hostname" in cmd
     assert "sandbox-host" in cmd
@@ -111,7 +108,7 @@ def test_build_command_env_vars():
             "env_vars": {"MY_VAR": "myvalue", "ANOTHER": "another"},
         }
     )
-    cmd = build_command(config)
+    cmd = BwrapSandbox.build_command(config)
     assert "--setenv" in cmd
     assert "MY_VAR" in cmd
     assert "myvalue" in cmd
@@ -127,14 +124,14 @@ def test_build_command_unset_env_vars():
             "unenv_vars": ["VAR1", "VAR2"],
         }
     )
-    cmd = build_command(config)
+    cmd = BwrapSandbox.build_command(config)
     assert "--unsetenv" in cmd
     assert "VAR1" in cmd
     assert "VAR2" in cmd
 
 
 def test_build_command_no_command():
-    """Test build_command without a command argument."""
+    """Test BwrapSandbox.build_command without a command argument."""
     config = ConfigLoader().set(
         {
             "name": "test",
@@ -142,7 +139,7 @@ def test_build_command_no_command():
             "capabilities": {"drop": ["ALL"]},
         }
     )
-    cmd = build_command(config)
+    cmd = BwrapSandbox.build_command(config)
     assert cmd[0] == "bwrap"
     assert "--die-with-parent" in cmd
     # Should NOT have any command at the end
@@ -151,7 +148,7 @@ def test_build_command_no_command():
 
 
 def test_build_command_with_command():
-    """Test build_command with a command argument."""
+    """Test BwrapSandbox.build_command with a command argument."""
     config = ConfigLoader().set(
         {
             "name": "test",
@@ -159,14 +156,14 @@ def test_build_command_with_command():
             "capabilities": {"drop": ["ALL"]},
         }
     )
-    cmd = build_command(config, command=["echo", "hello"])
+    cmd = BwrapSandbox.build_command(config, command=["echo", "hello"])
     assert cmd[0] == "bwrap"
     assert "echo" in cmd
     assert "hello" in cmd
 
 
-def test_run_in_sandbox_basic():
-    """Test basic sandbox execution."""
+def test_bwrap_sandbox_run_basic():
+    """Test basic sandbox execution via BwrapSandbox.run()."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(
             """name: test-sandbox
@@ -185,7 +182,7 @@ new_session: true
 
     try:
         config = ConfigLoader().load(path)
-        result = run_in_sandbox(config, ["echo", "hello"])
+        result = BwrapSandbox.run(["echo", "hello"], config=config)
         assert result.success is True
         assert result.return_code == 0
         assert "hello" in result.stdout
@@ -193,8 +190,8 @@ new_session: true
         os.unlink(path)
 
 
-def test_run_in_sandbox_with_hostname():
-    """Test run_in_sandbox with custom hostname."""
+def test_bwrap_sandbox_run_with_hostname():
+    """Test BwrapSandbox.run() with custom hostname."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(
             """name: test-sandbox
@@ -216,15 +213,15 @@ new_session: true
 
     try:
         config = ConfigLoader().load(path)
-        result = run_in_sandbox(config, ["bash", "-c", "cat /proc/sys/kernel/hostname"])
+        result = BwrapSandbox.run(["bash", "-c", "cat /proc/sys/kernel/hostname"], config=config)
         assert result.success is True
         assert result.stdout.strip() == "myhost"
     finally:
         os.unlink(path)
 
 
-def test_run_in_sandbox_with_env_vars():
-    """Test run_in_sandbox with environment variables."""
+def test_bwrap_sandbox_run_with_env_vars():
+    """Test BwrapSandbox.run() with environment variables."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(
             """name: test-sandbox
@@ -245,15 +242,15 @@ new_session: true
 
     try:
         config = ConfigLoader().load(path)
-        result = run_in_sandbox(config, ["echo", "hello"])
+        result = BwrapSandbox.run(["echo", "hello"], config=config)
         assert result.success is True
         assert "hello" in result.stdout
     finally:
         os.unlink(path)
 
 
-def test_run_in_sandbox_unshare_namespace():
-    """Test run_in_sandbox with unshare namespace."""
+def test_bwrap_sandbox_run_unshare_namespace():
+    """Test BwrapSandbox.run() with unshare namespace."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(
             """name: test-sandbox
@@ -274,15 +271,15 @@ new_session: true
 
     try:
         config = ConfigLoader().load(path)
-        result = run_in_sandbox(config, ["bash", "-c", "echo sandbox"])
+        result = BwrapSandbox.run(["bash", "-c", "echo sandbox"], config=config)
         assert result.success is True
         assert result.return_code == 0
     finally:
         os.unlink(path)
 
 
-def test_run_in_sandbox_path_error():
-    """Test run_in_sandbox raises BwrapError for non-existent bind source."""
+def test_bwrap_sandbox_run_path_error():
+    """Test BwrapSandbox.run() raises BwrapError for non-existent bind source."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(
             """name: test-sandbox
@@ -302,13 +299,13 @@ new_session: true
     try:
         config = ConfigLoader().load(path)
         with pytest.raises(BwrapError, match="No such file"):
-            run_in_sandbox(config, ["echo", "hello"])
+            BwrapSandbox.run(["echo", "hello"], config=config)
     finally:
         os.unlink(path)
 
 
-def test_run_in_sandbox_command_not_found():
-    """Test run_in_sandbox raises BwrapError for non-existent command."""
+def test_bwrap_sandbox_run_command_not_found():
+    """Test BwrapSandbox.run() raises BwrapError for non-existent command."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(
             """name: test-sandbox
@@ -328,13 +325,13 @@ new_session: true
     try:
         config = ConfigLoader().load(path)
         with pytest.raises(BwrapError, match="No such file"):
-            run_in_sandbox(config, ["nonexistent-cmd-xyz"])
+            BwrapSandbox.run(["nonexistent-cmd-xyz"], config=config)
     finally:
         os.unlink(path)
 
 
-def test_run_in_sandbox_timeout():
-    """Test run_in_sandbox with a timeout."""
+def test_bwrap_sandbox_run_timeout():
+    """Test BwrapSandbox.run() with a timeout."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(
             """name: test-sandbox
@@ -354,13 +351,13 @@ new_session: true
     try:
         config = ConfigLoader().load(path)
         with pytest.raises(subprocess.TimeoutExpired, match="timed out"):
-            run_in_sandbox(config, ["bash", "-c", "sleep 5"], timeout=2)
+            BwrapSandbox.run(["bash", "-c", "sleep 5"], config=config, timeout=2)
     finally:
         os.unlink(path)
 
 
-def test_run_in_sandbox_with_die_with_parent_false():
-    """Test run_in_sandbox with die_with_parent=False."""
+def test_bwrap_sandbox_run_die_with_parent_false():
+    """Test BwrapSandbox.run() with die_with_parent=False."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(
             """name: test-sandbox
@@ -379,7 +376,7 @@ new_session: true
 
     try:
         config = ConfigLoader().load(path)
-        result = run_in_sandbox(config, ["echo", "hello"])
+        result = BwrapSandbox.run(["echo", "hello"], config=config)
         assert result.success is True
         assert "hello" in result.stdout
     finally:
@@ -387,15 +384,11 @@ new_session: true
 
 
 def test_cli_command_building():
-    """Test that the CLI path builds the correct bwrap command (no duplication).
-    
-    This test verifies that the fix for the double bwrap invocation
-    is working correctly. The CLI path now calls subprocess.run() directly
-    on the built command instead of wrapping it in run_in_sandbox().
+    """Test that BwrapSandbox.build_command() builds the correct bwrap command.
+
+    This test verifies that the BwrapSandbox API (preferred over removed
+    stub functions) produces correct bwrap commands with all options.
     """
-    from agent_nook.config.loader import ConfigLoader
-    from agent_nook.sandbox import build_command
-    
     config = ConfigLoader().set(
         {
             "name": "cli-test",
@@ -409,8 +402,8 @@ def test_cli_command_building():
             "unshare": {"pid": True, "uts": True},
         }
     )
-    cmd = build_command(config)
-    
+    cmd = BwrapSandbox.build_command(config)
+
     # First command should start with bwrap
     assert cmd[0] == "bwrap"
     assert "--die-with-parent" in cmd
@@ -429,15 +422,12 @@ def test_cli_command_building():
 
 def test_cli_direct_execution():
     """Test that CLI directly executes the bwrap command via subprocess.
-    
-    This test verifies that the CLI path (which bypasses run_in_sandbox)
-    produces a correct bwrap command and executes it successfully.
-    """
-    import subprocess
 
-    from agent_nook.config.loader import ConfigLoader
-    from agent_nook.sandbox import build_command
-    
+    This test verifies that BwrapSandbox.build_command() produces a
+    correct bwrap command and executes it successfully via subprocess.run().
+    """
+    from agent_nook.sandbox import BwrapSandbox
+
     config = ConfigLoader().set(
         {
             "name": "cli-test",
@@ -451,10 +441,10 @@ def test_cli_direct_execution():
             "unshare": {"pid": True, "uts": True},
         }
     )
-    bwrap_cmd = build_command(config, ["echo", "hello from sandbox"])
-    
+    bwrap_cmd = BwrapSandbox.build_command(config, ["echo", "hello from sandbox"])
+
     # Execute directly (as the CLI does)
     result = subprocess.run(bwrap_cmd, capture_output=True, text=True)
-    
+
     assert result.returncode == 0, f"bwrap command failed: {result.stderr}"
     assert "hello from sandbox" in result.stdout

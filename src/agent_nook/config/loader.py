@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 #            → Prevents namespace injection via malformed dicts
 #
 #   Layer 5: SandboxConfig.__post_init__() — Dataclass construction
-#            → Calls Mount.build() and CapabilitySet.build() for final checks
+#            → Calls Mount.build() on each mount for final validation
 #            → The LAST line of defense before the config is used
 #
 # Key principle: Each layer has a distinct responsibility. No layer is redundant.

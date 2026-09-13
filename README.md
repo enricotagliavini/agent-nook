@@ -255,8 +255,7 @@ Edit `~/.config/agent-nook/sandbox.yaml` to customize:
 
 - **`name`**: Sandbox identifier (used in logs)
 - **`chdir`**: Working directory inside the sandbox
-- **`mounts`**: Read-write bind mounts from host (YAML array of `source:target:type`)
-- **`ro-mounts`**: Read-only bind mounts from host (YAML array of `source:target`)
+- **`mounts`**: Bind mounts from host to sandbox. Use `type: "bind"` for read-write, or `type: "ro-bind"` for read-only (CLI flags: `--bind SRC:DEST`, `--ro-bind SRC:DEST`)
 - **`capabilities`**: Linux capabilities to drop (`drop: ["ALL"]`) or keep (`keep: ["CAP_CHOWN"]`)
 - **`unshare`**: Which namespaces to unshare (isolate) — `pid`, `uts`, `ipc`, `cgroup`, `user`, `network`
 - **`hostname`**: Sandbox hostname (implies UTS namespace unshare)

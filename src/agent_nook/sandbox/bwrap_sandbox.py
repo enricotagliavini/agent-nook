@@ -1,4 +1,22 @@
-"""Unified sandbox executor combining config + builder + execution."""
+"""Unified sandbox executor combining config + builder + execution.
+
+Usage:
+    from agent_nook.sandbox import BwrapSandbox, BwrapBuilder, SandboxConfig
+
+    # Preferred: use BwrapSandbox.run() which handles execution
+    result = BwrapSandbox.run(
+        command=["python3", "agent.py"],
+        config=config,
+        timeout=60,
+    )
+
+    # Manual builder
+    cmd = BwrapBuilder(config).build(["python3", "agent.py"])
+
+    # Context manager
+    with BwrapSandbox(config).run(command=["echo", "hello"]) as result:
+        print(result.stdout)
+"""
 
 from __future__ import annotations
 
@@ -16,6 +34,7 @@ except ImportError:
     SandboxExecutionError = RuntimeError  # Fallback: runner module removed
 
 from agent_nook.sandbox.builder import BwrapBuilder
+from pathlib import Path
 
 
 __all__ = ["BwrapError", "BwrapSandbox", "SandboxExecutionError", "SandboxResult"]
@@ -246,45 +265,4 @@ class BwrapSandbox:
         return cls(config=config, command=command)
 
 
-def run_in_sandbox(
-    config: SandboxConfig,
-    command: list[str],
-    timeout: int | None = None,
-) -> SandboxResult:
-    """Run a command inside a bwrap sandbox.
-
-    This is a convenience wrapper around BwrapSandbox.run().
-    Kept for backward compatibility — prefer BwrapSandbox.run() directly.
-
-    Args:
-        config: The sandbox configuration.
-        command: The command and arguments to run.
-        timeout: Optional timeout in seconds.
-
-    Returns:
-        SandboxResult with execution details.
-    """
-    return BwrapSandbox.run(command, config, timeout=timeout)
-
-
-def build_command(config: SandboxConfig, command: list[str] | None = None) -> list[str]:
-    """Build the bwrap command line from a configuration.
-
-    This is a convenience wrapper around BwrapSandbox.build_command().
-    Kept for backward compatibility — prefer BwrapSandbox.build_command() directly.
-
-    Args:
-        config: The sandbox configuration.
-        command: Optional command to append.
-
-    Returns:
-        The complete bwrap command line.
-    """
-    return BwrapSandbox.build_command(config, command)
-
-
-__all__ += [
-    "run_in_sandbox",
-    "build_command",
-    "SandboxExecutionError",
-]
+__all__ = ["BwrapError", "BwrapSandbox", "SandboxExecutionError", "SandboxResult"]

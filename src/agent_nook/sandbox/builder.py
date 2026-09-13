@@ -14,7 +14,7 @@ Layer 1: ConfigLoader._validate_structure()      → schema check
 Layer 2: ConfigLoader._parse_mounts()            → mount type/fields check
 Layer 3: ConfigLoader._parse_capabilities()      → cap list-of-strings check
 Layer 4: ConfigLoader._parse_unshare()           → ns key/type check
-Layer 5: SandboxConfig.__post_init__()           → Mount.build() checks
+Layer 5: SandboxConfig.__post_init__() → Mount.build() validation gate
 Layer 6: BwrapBuilder.build()                    → uses validated config
 ```
 
@@ -129,6 +129,10 @@ class BwrapBuilder:
             args.extend(["--unshare-user"])
         if self._config.unshare.network:
             args.extend(["--unshare-net"])
+
+        # Timeout
+        if self._config.timeout is not None:
+            args.extend(["--timeout", str(self._config.timeout)])
 
         # Hostname
         if self._config.hostname:

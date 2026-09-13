@@ -38,7 +38,7 @@ The validation is layered across modules:
     → Does NOT repeat validation — it uses the validated config directly.
     → Errors here indicate a programming error (e.g., wrong type passed).
 
-  **Layer 7 (runner/_core.py, run_in_sandbox):**
+  **Layer 7 (sandbox/bwrap_sandbox.py, BwrapSandbox.run):**
     → Executes the command; handles runtime bwrap errors.
     → Does NOT repeat validation.
 
@@ -272,7 +272,7 @@ class CapabilitySet:
     List capabilities to keep using the "keep" field.
 
     Example:
-        CapabilitySet(dropped=["ALL"], kept=["CAP_CHOWN", "CAP_DAC_OVERRIDE"])
+        CapabilitySet(dropped=["ALL"], kept=["CAP_CHOWN", "CAP_NET_BIND_SERVICE"])
 
     Notes:
         - Capability names are passed through unchanged to bwrap.
@@ -379,11 +379,6 @@ class NamespaceSet:
 class SandboxConfig:
     """Complete sandbox configuration.
 
-    This is **Layer 5** of the validation pipeline. The __post_init__ method
-    calls Mount.build() on all mounts, which serves as the final validation
-    gate before the config is used. This ensures that no malformed Mount
-    objects can ever reach the bwrap builder.
-
     Mounts can use the unified type system:
         - type: "bind"     → --bind SRC DEST
         - type: "ro-bind"   → --ro-bind SRC DEST
@@ -399,41 +394,30 @@ class SandboxConfig:
 
     ## Validation Pipeline
 
-    The SandboxConfig sits at **Layer 5** of the validation pipeline. Its
-    __post_init__ method calls Mount.build() for every mount, which performs
-    the final semantic validation:
+    The SandboxConfig sits at **Layer 5** of the validation pipeline.
+    ConfigLoader loads and validates config from YAML/JSON files, producing
+    a fully-validated SandboxConfig dataclass. The dataclass invariants
+    (e.g., mounts must be valid Mount objects) are enforced by ConfigLoader.
 
-      Layer 1: ConfigLoader._validate_structure() → Schema check
-      Layer 2: ConfigLoader._parse_mounts()        → Type/field check
-      Layer 3: ConfigLoader._parse_capabilities()  → Cap list check
-      Layer 4: ConfigLoader._parse_unshare()       → NS key/type check
-      Layer 5: SandboxConfig.__post_init__ → Mount.build() semantic check
-      Layer 6: BwrapBuilder.build()              → Pure consumption
-      Layer 7: run_in_sandbox()                   → Execution
+    BwrapBuilder (Layer 6) consumes the already-validated config and produces
+    the final bwrap command line.
 
-    The __post_init__ call to Mount.build() is critical because it guarantees
-    that even if the config is mutated after loading (e.g., mounts appended
-    programmatically), the resulting Mount objects will be valid.
+    ## Usage
 
-    ## Why __post_init__ calls build()?
+    ```python
+    from agent_nook.sandbox import BwrapSandbox
 
-    Mount.build() is NOT a transformation — it is a validation gate.
-    It ensures that no invalid Mount can ever be constructed. Without this
-    layer, a programmer could accidentally create:
+    # Preferred: use BwrapSandbox.run() which handles everything
+    result = BwrapSandbox.run(
+        command=["python3", "agent.py"],
+        config=config,
+        timeout=60,
+    )
 
-        mount = Mount(type="foo")  # No error!
-        config = SandboxConfig(name="test", mounts=[mount])  # No error!
-
-    Until build() is called, the invalid state is invisible. Calling
-    build() in __post_init__ makes invalid configs immediately visible
-    as dataclass construction errors, which are far easier to debug.
-
-    ## Why not just validate in __post_init__?
-
-    Mount.build() is called in __post_init__ because it already performs
-    all necessary validation. Re-validating in __post_init__ would be
-    redundant. The dataclass constructor simply delegates to the
-    canonical validation function (build()).
+    # Or build the command line manually
+    from agent_nook.sandbox.builder import BwrapBuilder
+    cmd = BwrapBuilder(config).build(["python3", "agent.py"])
+    ```
     """
 
     name: str
@@ -464,120 +448,6 @@ class SandboxConfig:
                 self.unshare.uts = True
             if not self.unshare.ipc:
                 self.unshare.ipc = True
-
-    def build(self) -> list[str]:
-        """Build the complete bwrap command line.
-
-        Args:
-            command: Optional command and arguments to append.
-
-        Returns:
-            Full bwrap command as a list of strings.
-        """
-        cmd: list[str] = ["bwrap"]
-
-        # Sandbox lifecycle
-        if self.die_with_parent:
-            cmd.append("--die-with-parent")
-        if self.new_session:
-            cmd.append("--new-session")
-
-        # Mounts
-        for mount in self.mounts:
-            cmd.extend(mount.build())
-
-        # Capabilities
-        if self.capabilities._dropped or self.capabilities._kept:
-            args = self.capabilities.build()
-            cmd.extend(args)
-
-        # Namespaces — order matters: pid, ipc, uts
-        ns_list = []
-        if self.unshare.network:
-            ns_list.append("net")
-        if self.unshare.ipc:
-            ns_list.append("ipc")
-        if self.unshare.pid:
-            ns_list.append("pid")
-        if self.unshare.uts:
-            ns_list.append("uts")
-        if self.unshare.user:
-            ns_list.append("user")
-        if self.unshare.cgroup:
-            ns_list.append("cgroup")
-
-        for ns in ns_list:
-            ns_map = {
-                "pid": "pid",
-                "uts": "uts",
-                "ipc": "ipc",
-                "cgroup": "cgroup",
-                "user": "user",
-                "network": "net",
-            }
-            cmd.append(f"--unshare-{ns_map[ns]}")
-
-        # Hostname — must come AFTER namespaces (order: namespaces, then hostname)
-        if self.hostname:
-            # Setting hostname implies uts namespace
-            if not self.unshare.uts:
-                self.unshare.uts = True
-            # Rebuild ns_list only if uts was NOT already in the original ns_list
-            # We check if "uts" was in the original ns_list (before hostname section)
-            original_ns_list = ns_list.copy()
-            if "uts" not in original_ns_list:
-                # uts was not already added, so rebuild with uts
-                ns_list = []
-                if self.unshare.network:
-                    ns_list.append("net")
-                if self.unshare.ipc:
-                    ns_list.append("ipc")
-                if self.unshare.pid:
-                    ns_list.append("pid")
-                if self.unshare.uts:
-                    ns_list.append("uts")
-                if self.unshare.user:
-                    ns_list.append("user")
-                if self.unshare.cgroup:
-                    ns_list.append("cgroup")
-                for ns in ns_list:
-                    ns_map = {
-                        "pid": "pid",
-                        "uts": "uts",
-                        "ipc": "ipc",
-                        "cgroup": "cgroup",
-                        "user": "user",
-                        "network": "net",
-                    }
-                    cmd.append(f"--unshare-{ns_map[ns]}")
-            cmd.append("--hostname")
-            cmd.append(self.hostname)
-
-        # Timeout
-        if self.timeout is not None:
-            cmd.extend(["--timeout", str(self.timeout)])
-
-        # Environment
-        if self.env_vars:
-            for key, value in self.env_vars.items():
-                cmd.extend(["--setenv", key, value])
-        if self.unenv_vars:
-            if self.unenv_vars == ["ALL"]:
-                cmd.append("--clearenv")
-            else:
-                cmd.extend(["--unsetenv"] + self.unenv_vars)
-
-        # Command
-        if (
-            len(self.mounts) == 0
-            and not self.capabilities._dropped
-            and not self.capabilities._kept
-        ):
-            # Default mounts
-            cmd.extend(["--proc", "/proc", "--dev", "/dev"])
-            cmd.extend(["--tmpfs", "/home", "--tmpfs", "/tmp", "--tmpfs", "/var/tmp"])
-
-        return cmd
 
 
 class ConfigValidationError(Exception):
