@@ -18,8 +18,7 @@ Usage:
         print(result.stdout)
 """
 
-from __future__ import annotations
-
+import logging
 import subprocess
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -33,11 +32,14 @@ except ImportError:
     BwrapError = RuntimeError  # Fallback: runner module removed
     SandboxExecutionError = RuntimeError  # Fallback: runner module removed
 
+from agent_nook.config.config import SandboxConfig
 from agent_nook.sandbox.builder import BwrapBuilder
 from pathlib import Path
 
+# Module-level logger
+_logger = logging.getLogger("agent_nook.sandbox")
 
-__all__ = ["BwrapError", "BwrapSandbox", "SandboxExecutionError", "SandboxResult"]
+__all__ = ["BwrapError", "BwrapSandbox", "SandboxExecutionError", "SandboxResult", "SandboxConfig", "logger"]
 
 
 @dataclass
@@ -122,8 +124,6 @@ class BwrapSandbox:
             sandbox = BwrapSandbox(config)
             result = sandbox.run(["echo", "hello"])
         """
-        from agent_nook.config.config import SandboxConfig
-
         self._config = config if config is not None else SandboxConfig(name="anonymous-sandbox")
         self._command = command
         self._builder = BwrapBuilder(self._config)
@@ -179,7 +179,12 @@ class BwrapSandbox:
         if config is None:
             config = SandboxConfig(name="anonymous-sandbox")
 
+        _logger.debug("Running sandbox with config: name=%s, command=%s",
+                      config.name, " ".join(command))
+
         bwrap_cmd = BwrapSandbox._build_command(config, command)
+
+        _logger.info("Full bwrap command: %s", " ".join(bwrap_cmd), extra={"command_only": True})
 
         if capture_output:
             result = subprocess.run(
@@ -265,4 +270,4 @@ class BwrapSandbox:
         return cls(config=config, command=command)
 
 
-__all__ = ["BwrapError", "BwrapSandbox", "SandboxExecutionError", "SandboxResult"]
+__all__ = ["BwrapError", "BwrapSandbox", "SandboxExecutionError", "SandboxResult", "SandboxConfig", "logger"]
