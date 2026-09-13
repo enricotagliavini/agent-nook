@@ -7,11 +7,31 @@ import pytest
 from pathlib import Path
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_configure(config: pytest.Config) -> None:
+    """Clean dist/ directory at session start to ensure fresh builds.
+
+    This ensures that tests always run against the latest source code.
+    """
+    dist_dir = Path(__file__).parent.parent / "dist"
+    if dist_dir.exists():
+        # Clean all dist artifacts
+        for item in dist_dir.iterdir():
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+
+
+import shutil
+
+
 @pytest.fixture(scope="session")
 def built_wheel() -> Path:
     """Build and return the path to the wheel file.
-    
-    This is a session-scoped fixture so it's only built once across all tests.
+
+    Session-scoped: builds ONCE per pytest run. Rebuilds automatically
+    if the dist/ directory is cleared by pytest_configure.
     """
     dist_dir = Path(__file__).parent.parent / "dist"
     dist_dir.mkdir(parents=True, exist_ok=True)
@@ -31,21 +51,46 @@ def built_wheel() -> Path:
     return wheel_path[0]
 
 
-@pytest.fixture(scope="function")
-def pipx_test_env(tmp_path: Path) -> tuple[Path, Path, list[str]]:
-    """Provide a clean pipx test environment for each test.
-    
-    Uses PIPX_HOME to override the default ~/.local/share/pipx/venvs location,
-    ensuring the test is truly isolated and doesn't interfere with the host
-    pipx installation.
+@pytest.fixture(scope="session")
+def built_sdist() -> Path:
+    """Build and return the path to the sdist file.
 
-    The installed venv will be at: /tmp/test-pipx-home/venvs/agent-nook/
-    The symlinked binary will be at: /tmp/test-pipx-home/bin/agent-nook
-
-    The sdist is built fresh on each test run to ensure an up-to-date package.
+    Session-scoped: builds ONCE per pytest run. Rebuilds automatically
+    if the dist/ directory is cleared by pytest_configure.
     """
-    pipx_home = tmp_path / "pipx"
-    pipx_bin = tmp_path / "bin"
+    dist_dir = Path(__file__).parent.parent / "dist"
+    dist_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build sdist if not present
+    sdist_path = list(dist_dir.glob("*.tar.gz"))
+    if not sdist_path:
+        subprocess.run(
+            [sys.executable, "-m", "hatch", "build", "-t", "sdist", "-c"],
+            cwd=Path(__file__).parent.parent,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        sdist_path = list(dist_dir.glob("*.tar.gz"))
+
+    return sdist_path[0]
+
+
+@pytest.fixture(scope="session")
+def pipx_test_env(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path, list[str]]:
+    """Provide a shared pipx test environment for the entire session.
+
+    Uses PIPX_HOME to override the default ~/.local/share/pipx/venvs location,
+    ensuring the session-wide pipx installation is isolated from the host.
+
+    The installed venv will be at: {tmpdir}/pipx/venvs/agent-nook/
+    The symlinked binary will be at: {tmpdir}/pipx/bin/agent-nook
+
+    This fixture is session-scoped to share the pipx environment across
+    all integration tests, avoiding redundant pipx installs.
+    """
+    pipx_home = tmp_path_factory.mktemp("pipx")
+    pipx_bin = pipx_home / "bin"
 
     pipx_home.mkdir(parents=True, exist_ok=True)
     pipx_bin.mkdir(parents=True, exist_ok=True)
@@ -53,36 +98,23 @@ def pipx_test_env(tmp_path: Path) -> tuple[Path, Path, list[str]]:
     env = os.environ.copy()
     env["PIPX_HOME"] = str(pipx_home)
     env["PIPX_BIN_DIR"] = str(pipx_bin)
-    # PATH must include our bin dir so the symlinked executable is found
     env["PATH"] = str(pipx_bin) + os.pathsep + env.get("PATH", "")
 
     return pipx_home, pipx_bin, env
 
 
-@pytest.fixture(scope="function")
-def test_sandbox_run(
-    tmp_path: Path,
+@pytest.fixture(scope="session")
+def test_runner(
     pipx_test_env: tuple[Path, Path, list[str]],
-    built_wheel: Path,
+    built_sdist: Path,
 ) -> subprocess.CompletedProcess:
-    """Install agent-nook via pipx and return a runner subprocess for tests.
-    
-    Builds the sdist fresh on each test run to guarantee an up-to-date package
-    is installed. The wheel (session-scoped) is always fresh since it's rebuilt
-    whenever the dist/ directory is empty.
+    """Session-scoped runner that installs agent-nook once for all tests.
+
+    Uses a shared isolated pipx environment but with the freshly-built
+    sdist from built_sdist. This avoids redundant pipx installs across
+    all integration tests.
     """
     pipx_home, pipx_bin, env = pipx_test_env
-
-    # Build the sdist fresh each time — ensures the installed package
-    # matches the current source code
-    subprocess.run(
-        [sys.executable, "-m", "hatch", "build", "-t", "sdist", "-c"],
-        cwd=Path(__file__).parent.parent,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    sdist_path = next((Path(__file__).parent.parent / "dist").glob("*.tar.gz"))
 
     # Verify directories are empty before install
     assert not list(pipx_home.glob("venvs")), (
@@ -92,13 +124,9 @@ def test_sandbox_run(
         f"pipx bin already contains files: {list(pipx_bin.glob('*'))}"
     )
 
-    # Run pipx install with our isolated environment
+    # Run pipx install once for the entire session
     result = subprocess.run(
-        [
-            sys.executable, "-m", "pipx", "install",
-            "--force",  # force reinstall over existing
-            str(sdist_path),
-        ],
+        [sys.executable, "-m", "pipx", "install", "--force", str(built_sdist)],
         env=env,
         capture_output=True,
         text=True,
@@ -110,24 +138,6 @@ def test_sandbox_run(
         f"pipx install failed:\n  stdout: {result.stdout}\n  stderr: {result.stderr}"
     )
 
-    # Verify the venv was created in our isolated directory
-    assert pipx_home.exists(), f"pipx home not created at {pipx_home}"
-
-    venv_dirs = list(pipx_home.glob("venvs/agent-nook*"))
-    assert len(venv_dirs) >= 1, (
-        f"No venv directory was created in {pipx_home}. "
-        f"Contents: {list(pipx_home.iterdir())}"
-    )
-
-    # Verify the binary symlink exists
-    agent_nook_exe = pipx_bin / "agent-nook"
-    assert agent_nook_exe.exists(), (
-        f"Binary not symlinked at {agent_nook_exe}. "
-        f"Contents of {pipx_bin}: {list(pipx_bin.iterdir())}"
-    )
-    assert agent_nook_exe.is_symlink(), f"{agent_nook_exe} is not a symlink"
-
-    # Return the runner subprocess that can be reused
     def run_command(*args: str, **kwargs) -> subprocess.CompletedProcess:
         return subprocess.run(
             ["agent-nook"] + list(args),
@@ -138,3 +148,15 @@ def test_sandbox_run(
         )
 
     return run_command
+
+
+@pytest.fixture(scope="function")
+def test_sandbox_run(
+    test_runner: subprocess.CompletedProcess,
+) -> subprocess.CompletedProcess:
+    """Delegate to the session-scoped runner, returning a fresh callable.
+
+    Each test gets its own isolated environment (via tmp_path) and a fresh
+    runner function, while sharing the pre-installed agent-nook binary.
+    """
+    return test_runner

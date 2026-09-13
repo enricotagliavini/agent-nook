@@ -14,7 +14,7 @@ import subprocess
 
 
 @pytest.mark.integration
-def test_basic_hello_world(pipx_test_env: tuple, test_sandbox_run) -> None:
+def test_basic_hello_world(test_sandbox_run) -> None:
     """Test that agent-nook run produces 'hello world' output.
 
     This is a regression test to ensure basic functionality is not broken
@@ -26,7 +26,6 @@ def test_basic_hello_world(pipx_test_env: tuple, test_sandbox_run) -> None:
             python3 -c "print('hello world')"
 
     Args:
-        pipx_test_env: Fixture providing isolated pipx environment.
         test_sandbox_run: Fixture that returns a subprocess runner.
 
     Raises:
@@ -55,14 +54,13 @@ def test_basic_hello_world(pipx_test_env: tuple, test_sandbox_run) -> None:
 
 
 @pytest.mark.integration
-def test_python_script_execution(pipx_test_env: tuple, test_sandbox_run) -> None:
+def test_python_script_execution(test_sandbox_run) -> None:
     """Test that agent-nook can execute Python scripts.
 
     Verifies that Python scripts run correctly in the sandbox,
     which tests the full sandbox setup (bwrap, mounts, capabilities, etc.).
 
     Args:
-        pipx_test_env: Fixture providing isolated pipx environment.
         test_sandbox_run: Fixture that returns a subprocess runner.
 
     Raises:
@@ -89,13 +87,12 @@ def test_python_script_execution(pipx_test_env: tuple, test_sandbox_run) -> None
 
 
 @pytest.mark.integration
-def test_bash_command_execution(pipx_test_env: tuple, test_sandbox_run) -> None:
+def test_bash_command_execution(test_sandbox_run) -> None:
     """Test that agent-nook can execute bash commands.
 
     Verifies that basic shell functionality works in the sandbox.
 
     Args:
-        pipx_test_env: Fixture providing isolated pipx environment.
         test_sandbox_run: Fixture that returns a subprocess runner.
 
     Raises:
@@ -122,14 +119,13 @@ def test_bash_command_execution(pipx_test_env: tuple, test_sandbox_run) -> None:
 
 
 @pytest.mark.integration
-def test_env_vars_in_sandbox(pipx_test_env: tuple, test_sandbox_run) -> None:
+def test_env_vars_in_sandbox(test_sandbox_run) -> None:
     """Test that environment variables are inherited correctly.
 
     Verifies that the sandbox properly passes through environment
     variables (like HOME, PATH, etc.) from the parent process.
 
     Args:
-        pipx_test_env: Fixture providing isolated pipx environment.
         test_sandbox_run: Fixture that returns a subprocess runner.
 
     Raises:
@@ -156,14 +152,13 @@ def test_env_vars_in_sandbox(pipx_test_env: tuple, test_sandbox_run) -> None:
 
 
 @pytest.mark.integration
-def test_timeout_with_busy_command(pipx_test_env: tuple, test_sandbox_run) -> None:
+def test_timeout_with_busy_command(test_sandbox_run) -> None:
     """Test that agent-nook respects timeouts.
 
     Verifies that the sandbox can be killed when a command exceeds
     its timeout limit.
 
     Args:
-        pipx_test_env: Fixture providing isolated pipx environment.
         test_sandbox_run: Fixture that returns a subprocess runner.
 
     Raises:
@@ -184,14 +179,13 @@ def test_timeout_with_busy_command(pipx_test_env: tuple, test_sandbox_run) -> No
 
 
 @pytest.mark.integration
-def test_command_not_found_error(pipx_test_env: tuple, test_sandbox_run) -> None:
+def test_command_not_found_error(test_sandbox_run) -> None:
     """Test that non-existent commands produce a proper error.
 
     Verifies that the sandbox correctly reports missing commands
     rather than silently failing.
 
     Args:
-        pipx_test_env: Fixture providing isolated pipx environment.
         test_sandbox_run: Fixture that returns a subprocess runner.
 
     Raises:
