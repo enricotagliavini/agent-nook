@@ -137,42 +137,73 @@ agent-nook run --command "echo hello"
 
 ```bash
 # Basic usage
-agent-nook run --command "echo hello from sandbox"
+agent-nook run --chdir /home/enrico python3 my_script.py
 
 # With a Python script
-agent-nook run --command "python3 -c 'print(\"hello\")'"
+agent-nook run python3 -c "print('hello')"
+
+# With bind mounts
+agent-nook run --bind /host/data:/sandbox/data python3 script.py
+
+# Read-only bind mount
+agent-nook run --ro-bind /host/config:/sandbox/config python3 script.py
 
 # Custom config file
-agent-nook run -f /path/to/config.yaml --command "ls -la"
+agent-nook run --config /path/to/config.yaml python3 script.py
 
 # Override capabilities
-agent-nook run --cap-add NET_BIND_SERVICE --cap-add SYS_PTRACE --command "netstat -tlnp"
+agent-nook run --cap-add NET_BIND_SERVICE --cap-add SYS_PTRACE python3 net_script.py
 
 # Unshare namespaces (comma-separated)
-agent-nook run --unshare pid --unshare uts --unshare ipc --command "whoami"
-
-# Bind mount a host directory (read-only)
-agent-nook run --ro-bind /host/data /data --command "ls /data"
+agent-nook run --unshare pid,uts,ipc python3 script.py
 
 # Environment variables
-agent-nook run --env PATH=/usr/bin --env HOME=/root --command "ls -la"
+agent-nook run --env PATH=/usr/bin --env HOME=/root python3 script.py
 
-# Multiple commands
-agent-nook run --command "echo a" --command "echo b"
+# Unset environment variables
+agent-nook run --unset-env PATH --unset-env HOME python3 script.py
 
-# Python script mode
-agent-nook run --script "import sys; print(sys.version)"
+# Custom hostname
+agent-nook run --hostname my-agent python3 script.py
+
+# No new session (allows TIOCSTI)
+agent-nook run --no-new-session python3 script.py
+
+# Exit immediately on failure (no output)
+agent-nook run --exit-on-fail python3 script.py
+
+# Additional capabilities
+agent-nook run --caps CHOWN,DAC_READ_SEARCH python3 script.py
+
+# Drop specific capabilities
+agent-nook run --drop-caps SYS_ADMIN,SYS_PTRACE python3 script.py
+
+# Don't die with parent
+agent-nook run --no-die-with-parent python3 script.py
 ```
 
-### Available subcommands
+### CLI Reference
 
-```bash
-agent-nook run       # Run a command in a sandbox
-agent-nook init      # Initialize config directory
-agent-nook status    # Show sandbox status
-agent-nook logs      # Show recent logs
-agent-nook list      # List available sandboxes
-```
+| Flag | Description |
+|------|-------------|
+| `CMD [ARGS...]` | Command to execute in the sandbox (e.g. `python3 agent.py`) |
+| `--config CONFIG` | Override config file path (default: `~/.config/agent-nook/sandbox.yaml`) |
+| `--chdir DIR` | Change working directory in sandbox (overrides config) |
+| `--cap-add CAP` | Add capability (e.g. `CAP_NET_BIND_SERVICE`, repeat for multiple) |
+| `--cap-drop CAP` | Drop capability (e.g. `CAP_SYS_ADMIN`, repeat for multiple) |
+| `--unshare NS` | Unshare namespace (e.g. `pid,uts,ipc`, repeat for multiple) |
+| `--bind SRC:DEST` | Bind mount host SRC to sandbox DEST (repeat for multiple) |
+| `--ro-bind SRC:DEST` | Read-only bind mount host SRC to sandbox DEST (repeat for multiple) |
+| `--env KEY=VALUE` | Set environment variable (repeat for multiple) |
+| `--unset-env KEY` | Unset environment variable (repeat for multiple) |
+| `--hostname HOSTNAME` | Set sandbox hostname |
+| `--new-session` | Create new session (prevents TIOCSTI attacks, default: on) |
+| `--no-new-session` | Don't create new session (allows TIOCSTI) |
+| `--exit-on-fail` | Exit immediately on failure (don't show logs) |
+| `--caps CAPS` | Additional capabilities to add (repeat for multiple) |
+| `--drop-caps DROP_CAPS` | Additional capabilities to drop (repeat for multiple) |
+| `--die-with-parent` | Kill sandbox child when parent dies (default: on) |
+| `--no-die-with-parent` | Keep sandbox alive after parent exits |
 
 ## Configuration
 
@@ -187,13 +218,32 @@ Configuration follows [XDG Base Directory Specification](https://specifications.
 
 ### Setting up config
 
-Run `agent-nook init` to initialize the config directory and create a default `sandbox.yaml`:
+To create or edit the configuration, edit `~/.config/agent-nook/sandbox.yaml` directly.
 
-```bash
-agent-nook init
+The config uses YAML format with these top-level keys:
+
+```yaml
+name: agent-sandbox
+chdir: /home/enrico
+mounts:
+  - source: /home/enrico/project
+    target: /workspace
+    type: bind
+capabilities:
+  drop: ["ALL"]
+  keep: ["CAP_CHOWN", "CAP_DAC_OVERRIDE"]
+unshare:
+  pid: true
+  ipc: true
+  uts: false
+  user: true
 ```
 
-This creates `~/.config/agent-nook/sandbox.yaml` with sensible defaults.
+You can override any config option at runtime via CLI flags:
+
+```bash
+agent-nook run --chdir /tmp --cap-add NET_BIND_SERVICE python3 agent.py
+```
 
 ### Default sandbox config
 
@@ -204,36 +254,47 @@ See [sandbox.yaml](src/agent_nook/config/sandbox.yaml)
 Edit `~/.config/agent-nook/sandbox.yaml` to customize:
 
 - **`name`**: Sandbox identifier (used in logs)
-- **`root`**: The sandbox root directory (created in tmpfs)
-- **`readonly`**: If true, the sandbox root is mounted read-only
-- **`mounts`**: Read-write bind mounts from host
-- **`ro-mounts`**: Read-only bind mounts from host
-- **`network`**: Hosts and ports allowed for network access
-- **`capabilities`**: Linux capabilities to drop or keep
-- **`unshare`**: Which namespaces to unshare (isolate)
-- **`hostname`**: Sandbox hostname
-- **`die_with_parent`**: Kill sandbox children when parent exits
-- **`new_session`**: Create a new session (prevents TIOCSTI attacks)
+- **`chdir`**: Working directory inside the sandbox
+- **`mounts`**: Read-write bind mounts from host (YAML array of `source:target:type`)
+- **`ro-mounts`**: Read-only bind mounts from host (YAML array of `source:target`)
+- **`capabilities`**: Linux capabilities to drop (`drop: ["ALL"]`) or keep (`keep: ["CAP_CHOWN"]`)
+- **`unshare`**: Which namespaces to unshare (isolate) — `pid`, `uts`, `ipc`, `cgroup`, `user`, `network`
+- **`hostname`**: Sandbox hostname (implies UTS namespace unshare)
+- **`die_with_parent`**: Kill sandbox children when parent exits (default: `true`)
+- **`new_session`**: Create a new session (prevents TIOCSTI attacks, default: `true`)
+- **`env_vars`**: Environment variables to set (YAML map: `KEY: value`)
+- **`unenv_vars`**: Environment variables to unset (YAML array: `["PATH", "HOME"]`)
+- **`timeout`**: Maximum execution time in seconds (`null` = no timeout)
 
 ### Example: Running an agent with specific capabilities
 
 ```bash
 # Allow the agent to read from host directories but restrict system access
 agent-nook run \
-  --ro-bind /home/enrico /data \
-  --ro-bind /var/lib/docker /docker-data \
+  --bind /home/enrico/data:/data \
+  --ro-bind /var/lib/docker:/docker-data \
   --env DOCKER_DATA=/docker-data \
   --env HOME=/data/home \
-  --command "python3 my_agent.py"
+  python3 my_agent.py
 ```
 
 ### Example: Dropping all capabilities
 
 ```bash
-agent-nook run --cap-drop ALL --command "echo still works but can't chmod/etc"
+agent-nook run --cap-drop ALL --chdir /workspace python3 agent.py
 ```
 
-### Example: Network isolation
+### Example: Full isolation
+
+```bash
+agent-nook run \
+  --cap-drop ALL \
+  --unshare pid,ipc,uts,user \
+  --chdir /sandbox \
+  --env HOME=/sandbox/home \
+  --env PATH=/usr/bin:/bin \
+  python3 safe_agent.py
+```
 
 ## Technical Details
 
