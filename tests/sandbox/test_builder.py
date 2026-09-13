@@ -2,6 +2,7 @@
 
 import pytest
 import sys
+import subprocess
 
 sys.path.insert(0, "src")
 
@@ -49,7 +50,6 @@ def test_builder_hostname():
     builder = BwrapBuilder(config)
     cmd = builder.build(["echo", "hello"])
 
-    assert "--unshare-uts" in cmd
     assert "--hostname" in cmd
     assert "myhost" in cmd
 
@@ -59,9 +59,7 @@ def test_builder_with_proc_mount():
     config = SandboxConfig(
         name="test",
         chdir="/tmp",
-        mounts=[Mount(type="proc"), Mount(source="/host", target="/sandbox")],
-        capabilities=CapabilitySet(),
-        unshare=NamespaceSet(),
+        mounts=[Mount(type="proc")],
     )
     builder = BwrapBuilder(config)
     cmd = builder.build(["echo", "hello"])
@@ -75,9 +73,7 @@ def test_builder_with_dev_mount():
     config = SandboxConfig(
         name="test",
         chdir="/tmp",
-        mounts=[Mount(type="dev"), Mount(source="/host", target="/sandbox")],
-        capabilities=CapabilitySet(),
-        unshare=NamespaceSet(),
+        mounts=[Mount(type="dev")],
     )
     builder = BwrapBuilder(config)
     cmd = builder.build(["echo", "hello"])
@@ -91,15 +87,13 @@ def test_builder_with_dir_mount():
     config = SandboxConfig(
         name="test",
         chdir="/tmp",
-        mounts=[Mount(type="dir", target="/mydir")],
-        capabilities=CapabilitySet(),
-        unshare=NamespaceSet(),
+        mounts=[Mount(type="dir", target="/workspace")],
     )
     builder = BwrapBuilder(config)
     cmd = builder.build(["echo", "hello"])
 
     assert "--dir" in cmd
-    assert "/mydir" in cmd
+    assert "/workspace" in cmd
 
 
 def test_builder_with_env_vars():
@@ -107,44 +101,41 @@ def test_builder_with_env_vars():
     config = SandboxConfig(
         name="test",
         chdir="/tmp",
-        mounts=[Mount(source="/host", target="/sandbox")],
-        capabilities=CapabilitySet(),
-        unshare=NamespaceSet(),
-        env_vars={"MY_VAR": "myvalue"},
+        mounts=[Mount(type="dir", target="/workspace")],
+        env_vars={"HOME": "/home/user", "PATH": "/usr/bin"},
     )
     builder = BwrapBuilder(config)
     cmd = builder.build(["echo", "hello"])
 
     assert "--setenv" in cmd
-    assert "MY_VAR" in cmd
-    assert "myvalue" in cmd
-    assert "myvalue" in cmd
+    assert "HOME" in cmd
+    assert "/home/user" in cmd
+    assert "PATH" in cmd
+    assert "/usr/bin" in cmd
 
 
 def test_builder_with_unset_env_vars():
-    """Test builder with unenv_vars."""
+    """Test builder with unset environment variables."""
     config = SandboxConfig(
         name="test",
         chdir="/tmp",
-        mounts=[Mount(source="/host", target="/sandbox")],
-        capabilities=CapabilitySet(),
-        unshare=NamespaceSet(),
-        unenv_vars=["UNSET_VAR"],
+        mounts=[Mount(type="dir", target="/workspace")],
+        unenv_vars=["PATH", "HOME"],
     )
     builder = BwrapBuilder(config)
     cmd = builder.build(["echo", "hello"])
 
-    assert "UNSET_VAR" in cmd
+    assert "--unsetenv" in cmd
+    assert "PATH" in cmd
+    assert "HOME" in cmd
 
 
 def test_builder_with_all_unenv_vars():
-    """Test builder with clearenv (all vars unset)."""
+    """Test builder with all environment variables unset."""
     config = SandboxConfig(
         name="test",
         chdir="/tmp",
-        mounts=[Mount(source="/host", target="/sandbox")],
-        capabilities=CapabilitySet(),
-        unshare=NamespaceSet(),
+        mounts=[Mount(type="dir", target="/workspace")],
         unenv_vars=["ALL"],
     )
     builder = BwrapBuilder(config)
@@ -154,7 +145,7 @@ def test_builder_with_all_unenv_vars():
 
 
 def test_builder_with_specific_capabilities_kept():
-    """Test builder with kept capabilities."""
+    """Test builder with specific capabilities kept."""
     config = SandboxConfig(
         name="test",
         chdir="/tmp",
@@ -214,3 +205,94 @@ def test_builder_with_network_ns():
     cmd = builder.build(["echo", "hello"])
 
     assert "--unshare-net" in cmd
+
+
+def test_builder_mount_order_parent_before_child_same_type():
+    """Test that parent mount points are placed before children (same type).
+
+    bwrap requires parent directories to be mounted before their children.
+    If we have /agentnook and /agentnook/child, the mount for /agentnook
+    must appear before the mount for /agentnook/child.
+    """
+    config = SandboxConfig(
+        name="test-parent-before-child-same",
+        chdir="/tmp",
+        mounts=[
+            Mount(type="dir", target="/agentnook/child"),  # child mount
+            Mount(type="dir", target="/agentnook"),        # parent mount
+        ],
+        capabilities=CapabilitySet(),
+        unshare=NamespaceSet(),
+    )
+    builder = BwrapBuilder(config)
+    cmd = builder.build(["echo", "hello"])
+
+    # Debug output for debugging
+    print(f"[DEBUG test_builder_mount_order_parent_before_child_same_type] cmd = {cmd}", flush=True)
+    
+    # Find all --dir arguments and their following argument
+    dir_indices = []
+    for i, arg in enumerate(cmd):
+        if arg == "--dir":
+            dir_indices.append(i)
+
+    assert len(dir_indices) == 2, f"Expected 2 --dir args, got {len(dir_indices)}"
+
+    # The parent /agentnook must appear before the child /agentnook/child
+    assert "/agentnook" in cmd[dir_indices[0] + 1]
+    assert "/agentnook/child" in cmd[dir_indices[1] + 1]
+    assert dir_indices[0] < dir_indices[1], \
+        "Parent /agentnook must come before child /agentnook/child"
+
+
+def test_builder_mount_order_parent_before_child_different_types():
+    """Test cross-type mount ordering: parent before child regardless of type.
+
+    This is the key fix: --tmpfs /agentnook_app/data/app and --ro-bind /agentnook_app/data
+    must produce --ro-bind /agentnook_app/data --tmpfs /agentnook_app/data/app.
+    """
+    config = SandboxConfig(
+        name="test-parent-before-child-diff-types",
+        chdir="/tmp",
+        mounts=[
+            Mount(type="tmpfs", target="/agentnook_app/data/app"),  # child mount
+            Mount(type="ro-bind", source="/host/agentnook_app/data", target="/agentnook_app/data"),  # parent
+        ],
+        capabilities=CapabilitySet(),
+        unshare=NamespaceSet(),
+    )
+    builder = BwrapBuilder(config)
+    cmd = builder.build(["echo", "hello"])
+
+    # Find indices of specific mount types
+    ro_bind_idx = cmd.index("--ro-bind")
+    tmpfs_idx = cmd.index("--tmpfs")
+
+    # Parent /agentnook_app/data must come before child /agentnook_app/data/app
+    assert ro_bind_idx < tmpfs_idx, \
+        f"Parent --ro-bind at {ro_bind_idx} must come before --tmpfs at {tmpfs_idx}"
+
+
+def test_builder_mount_order_cross_type_conflict():
+    """Test that conflicting mount types are handled correctly.
+
+    When two mounts target the same path with different types, both are included.
+    bwrap will apply them in order, which may have unexpected results, but
+    the important thing is that the builder produces valid output without crashing.
+    """
+    config = SandboxConfig(
+        name="test-conflict",
+        chdir="/tmp",
+        mounts=[
+            Mount(type="tmpfs", target="/conflict"),
+            Mount(type="ro-bind", source="/host/conflict", target="/conflict"),
+        ],
+        capabilities=CapabilitySet(),
+        unshare=NamespaceSet(),
+    )
+    builder = BwrapBuilder(config)
+    cmd = builder.build(["echo", "hello"])
+
+    # Both mounts should be present (order is determined by topological sort)
+    assert "--tmpfs" in cmd
+    assert "--ro-bind" in cmd

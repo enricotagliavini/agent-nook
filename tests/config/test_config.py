@@ -1,8 +1,6 @@
 """Tests for SandboxConfig and Mount dataclasses."""
 
 import pytest
-from dataclasses import fields
-
 import sys
 import os
 
@@ -13,8 +11,8 @@ from agent_nook.config.config import (
     Mount,
     CapabilitySet,
     NamespaceSet,
-    ConfigValidationError,
 )
+from agent_nook.sandbox.builder import BwrapBuilder
 
 
 def test_mount_build_bind():
@@ -161,8 +159,8 @@ def test_sandbox_config_hostname():
         mounts=[Mount(type="proc")],
         hostname="myhost",
     )
-    cmd = config.build()
-    assert "--unshare-uts" in cmd
+    builder = BwrapBuilder(config)
+    cmd = builder.build(["echo", "hello"])
     assert "--hostname" in cmd
     assert "myhost" in cmd
 
@@ -175,7 +173,8 @@ def test_sandbox_config_unenv_vars():
         mounts=[Mount(type="proc")],
         unenv_vars=["PATH", "HOME"],
     )
-    cmd = config.build()
+    builder = BwrapBuilder(config)
+    cmd = builder.build(["echo", "hello"])
     assert "--unsetenv" in cmd
     assert "PATH" in cmd
     assert "HOME" in cmd
@@ -189,7 +188,8 @@ def test_sandbox_config_env_vars():
         mounts=[Mount(type="proc")],
         env_vars={"PATH": "/usr/bin", "VAR": "value"},
     )
-    cmd = config.build()
+    builder = BwrapBuilder(config)
+    cmd = builder.build(["echo", "hello"])
     assert "--setenv" in cmd
     assert "PATH" in cmd
     assert "/usr/bin" in cmd

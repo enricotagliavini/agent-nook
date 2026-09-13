@@ -20,7 +20,7 @@ def built_wheel() -> Path:
     wheel_path = list(dist_dir.glob("*.whl"))
     if not wheel_path:
         subprocess.run(
-            [sys.executable, "-m", "hatch", "build", "--wheel"],
+            [sys.executable, "-m", "hatch", "build", "-t", "wheel"],
             cwd=Path(__file__).parent.parent,
             capture_output=True,
             text=True,
@@ -31,32 +31,8 @@ def built_wheel() -> Path:
     return wheel_path[0]
 
 
-@pytest.fixture(scope="session")
-def built_sdist() -> Path:
-    """Build and return the path to the sdist file.
-    
-    This is a session-scoped fixture so it's only built once across all tests.
-    """
-    dist_dir = Path(__file__).parent.parent / "dist"
-    dist_dir.mkdir(parents=True, exist_ok=True)
-
-    # Build sdist if not present
-    sdist_path = list(dist_dir.glob("*.tar.gz"))
-    if not sdist_path:
-        subprocess.run(
-            [sys.executable, "-m", "hatch", "build", "--sdist"],
-            cwd=Path(__file__).parent.parent,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        sdist_path = list(dist_dir.glob("*.tar.gz"))
-
-    return sdist_path[0]
-
-
 @pytest.fixture(scope="function")
-def pipx_test_env(tmp_path: Path, built_sdist: Path) -> tuple[Path, Path, list[str]]:
+def pipx_test_env(tmp_path: Path) -> tuple[Path, Path, list[str]]:
     """Provide a clean pipx test environment for each test.
     
     Uses PIPX_HOME to override the default ~/.local/share/pipx/venvs location,
@@ -66,7 +42,7 @@ def pipx_test_env(tmp_path: Path, built_sdist: Path) -> tuple[Path, Path, list[s
     The installed venv will be at: /tmp/test-pipx-home/venvs/agent-nook/
     The symlinked binary will be at: /tmp/test-pipx-home/bin/agent-nook
 
-    The sdist is passed as a parameter so it's available to each test.
+    The sdist is built fresh on each test run to ensure an up-to-date package.
     """
     pipx_home = tmp_path / "pipx"
     pipx_bin = tmp_path / "bin"
@@ -87,10 +63,26 @@ def pipx_test_env(tmp_path: Path, built_sdist: Path) -> tuple[Path, Path, list[s
 def test_sandbox_run(
     tmp_path: Path,
     pipx_test_env: tuple[Path, Path, list[str]],
-    built_sdist: Path,
+    built_wheel: Path,
 ) -> subprocess.CompletedProcess:
-    """Install agent-nook via pipx and return a runner subprocess for tests."""
+    """Install agent-nook via pipx and return a runner subprocess for tests.
+    
+    Builds the sdist fresh on each test run to guarantee an up-to-date package
+    is installed. The wheel (session-scoped) is always fresh since it's rebuilt
+    whenever the dist/ directory is empty.
+    """
     pipx_home, pipx_bin, env = pipx_test_env
+
+    # Build the sdist fresh each time — ensures the installed package
+    # matches the current source code
+    subprocess.run(
+        [sys.executable, "-m", "hatch", "build", "-t", "sdist", "-c"],
+        cwd=Path(__file__).parent.parent,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    sdist_path = next((Path(__file__).parent.parent / "dist").glob("*.tar.gz"))
 
     # Verify directories are empty before install
     assert not list(pipx_home.glob("venvs")), (
@@ -104,8 +96,8 @@ def test_sandbox_run(
     result = subprocess.run(
         [
             sys.executable, "-m", "pipx", "install",
-            str(built_sdist),
             "--force",  # force reinstall over existing
+            str(sdist_path),
         ],
         env=env,
         capture_output=True,

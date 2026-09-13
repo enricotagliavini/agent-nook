@@ -34,6 +34,7 @@ with a clear message pointing to the root cause.
 
 from __future__ import annotations
 
+from collections import defaultdict, deque
 from dataclasses import dataclass
 
 from agent_nook.config.config import SandboxConfig
@@ -43,6 +44,105 @@ try:
     from agent_nook.runner import BwrapError
 except ImportError:
     BwrapError = RuntimeError
+
+
+def build_mounts_order(config: SandboxConfig) -> list[list[str]]:
+    """Build a topologically-sorted list of mount arguments for the sandbox.
+
+    All mount types are considered together. The result guarantees that
+    for any two mounts where one is a parent directory of the other,
+    the parent's mount arguments appear before the child's mount arguments.
+
+    When multiple mounts target the same path (conflicting mount types),
+    their arguments are combined in the order mounts appear in the config.
+
+    This is critical because bwrap applies mount arguments in order of
+    appearance on the command line. Without proper ordering, bwrap fails
+    with "no such file or directory" errors when a child mount point is
+    created before its parent.
+
+    Example:
+        Config with:
+          Mount(type="tmpfs", target="/home/user/git")
+          Mount(type="ro-bind", source="/host/home", target="/home")
+        Produces:
+          ["--ro-bind", "/host/home", "/home", "--tmpfs", "/home/user/git"]
+
+    Args:
+        config: The SandboxConfig containing mounts.
+
+    Returns:
+        A list of lists, where each inner list contains the bwrap arguments
+        for a single mount point. The outer list is ordered so that parents
+        appear before children.
+
+    Raises:
+        RuntimeError: If the topological sort detects a cycle or
+            unreachable node (should not happen with valid configs).
+    """
+    # First pass: collect all mount points and their arguments.
+    # When multiple mounts target the same path, combine their arguments.
+    mount_args: dict[str, list[str]] = {}
+
+    for mount in config.mounts:
+        target = mount.target or ""
+        if target in mount_args:
+            # Multiple mounts target the same path — combine their args
+            mount_args[target].extend(mount.build())
+        else:
+            mount_args[target] = mount.build()
+
+    # Second pass: build dependency graph using pre-computed mount_points
+    mount_points: set[str] = set(mount_args.keys())
+
+    children_of: dict[str, list[str]] = defaultdict(list)
+    for mount in config.mounts:
+        target = mount.target or ""
+        # Find all ancestor directories of this mount point.
+        # For target "/home/user/git", ancestors are "/home/user" and "/home".
+        # Only those ancestors that are ALSO mount points are included.
+        path_parts = target.replace("\\", "/").split("/")
+        for i in range(1, len(path_parts)):
+            parent = "/".join(path_parts[:i])
+            if parent and not parent.startswith("."):
+                if parent in mount_points:
+                    children_of[parent].append(target)
+
+    # Topological sort: parents before children (Kahn's algorithm)
+    in_degree: dict[str, int] = {tp: 0 for tp in mount_points}
+    for parent, children in children_of.items():
+        for child in children:
+            in_degree[child] += 1
+
+    queue: deque[str] = deque()
+    for tp in sorted(mount_points):
+        if in_degree[tp] == 0:
+            queue.append(tp)
+
+    sorted_mounts: list[str] = []
+    while queue:
+        current = queue.popleft()
+        sorted_mounts.append(current)
+        for child in sorted(children_of[current]):
+            in_degree[child] -= 1
+            if in_degree[child] == 0:
+                queue.append(child)
+
+    if len(sorted_mounts) != len(mount_points):
+        unreachable = sorted(mount_points - set(sorted_mounts))
+        raise RuntimeError(
+            f"Topological sort failed: {len(unreachable)} unreachable mount point(s): "
+            f"{unreachable}. This indicates a cycle or conflicting mount "
+            f"configuration. Each mount point must be a root of the dependency "
+            f"DAG or have a reachable parent chain from a root."
+        )
+
+    # Build the final ordered argument list
+    result: list[list[str]] = []
+    for target in sorted_mounts:
+        result.append(mount_args[target])
+
+    return result
 
 
 @dataclass
@@ -58,6 +158,10 @@ class BwrapBuilder:
     The builder does NOT validate the config — it assumes the config
     has already been validated by ConfigLoader. It is a pure consumer
     that produces the final bwrap command line.
+
+    Mount ordering is handled automatically via `build_mounts_order()`,
+    which ensures parent directories are always mounted before their
+    children, regardless of mount type.
     """
 
     def __init__(self, config: SandboxConfig) -> None:
@@ -84,6 +188,11 @@ class BwrapBuilder:
     def build(self, command: list[str]) -> list[str]:
         """Build the complete bwrap command line.
 
+        Mounts are ordered via `build_mounts_order()` to ensure that
+        parent directories are always mounted before their children,
+        regardless of mount type. This prevents bwrap failures due to
+        attempting to mount a path before its parent exists.
+
         Args:
             command: The command and arguments to run inside the sandbox.
 
@@ -92,25 +201,11 @@ class BwrapBuilder:
         """
         args: list[str] = ["bwrap", "--die-with-parent", "--new-session"]
 
-        # Proc mount (from Mount with type="proc")
-        for mount in self._config.mounts:
-            if mount.type == "proc":
-                args.extend(mount.build())
+        # Get mounts in topologically sorted order (parents before children)
+        mount_args_list = build_mounts_order(self._config)
 
-        # Dev mount (from Mount with type="dev")
-        for mount in self._config.mounts:
-            if mount.type == "dev":
-                args.extend(mount.build())
-
-        # Tmpfs mounts (from Mount with type="tmpfs")
-        for mount in self._config.mounts:
-            if mount.type == "tmpfs":
-                args.extend(mount.build())
-
-        # Other mounts (bind, ro-bind, dev-bind, dir)
-        for mount in self._config.mounts:
-            if mount.type not in ("proc", "dev", "tmpfs"):
-                args.extend(mount.build())
+        for mount_args in mount_args_list:
+            args.extend(mount_args)
 
         # Capabilities
         args.extend(self._config.capabilities.build())
