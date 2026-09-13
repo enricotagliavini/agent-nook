@@ -3,19 +3,21 @@
 
 __version__ = "0.1.0"
 
-# Re-export runner for convenience
-from agent_nook.runner import (
-    BwrapError,
+# Unified sandbox exports (previously in runner)
+from agent_nook.sandbox import (
+    BwrapSandbox,
     SandboxExecutionError,
     SandboxResult,
     build_command,
     run_in_sandbox,
+    BwrapError,
 )
 
 # Config exports
 from agent_nook.config.loader import ConfigLoader, ConfigValidationError
 
 __all__ = [
+    "BwrapSandbox",
     "BwrapError",
     "SandboxExecutionError",
     "SandboxResult",

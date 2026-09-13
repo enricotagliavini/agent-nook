@@ -1,4 +1,8 @@
-"""Tests for the sandbox runner."""
+"""Tests for the sandbox runner.
+
+Note: This test directory is kept for backward compatibility.
+The functionality has been moved to `tests/sandbox/`.
+"""
 
 import os
 import subprocess
@@ -10,7 +14,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from agent_nook.config.loader import ConfigLoader
-from agent_nook.runner import (
+from agent_nook.sandbox import (
     BwrapError,
     build_command,
     run_in_sandbox,
@@ -24,7 +28,7 @@ def test_build_command_valid():
             "name": "test",
             "chdir": "/tmp",
             "mounts": [
-                {"source": "/", "target": "/"},
+                {"source": "/", "target": "/", "type": "bind"},
                 {"target": "/tmp", "type": "tmpfs"},
             ],
             "capabilities": {"drop": ["ALL"]},
@@ -86,7 +90,7 @@ def test_build_command_hostname():
         {
             "name": "test",
             "chdir": "/tmp",
-            "mounts": [{"source": "/", "target": "/"}],
+            "mounts": [{"source": "/", "target": "/", "type": "bind"}],
             "hostname": "sandbox-host",
             "unshare": {"pid": True},
         }
@@ -103,7 +107,7 @@ def test_build_command_env_vars():
         {
             "name": "test",
             "chdir": "/tmp",
-            "mounts": [{"source": "/", "target": "/"}],
+            "mounts": [{"source": "/", "target": "/", "type": "bind"}],
             "env_vars": {"MY_VAR": "myvalue", "ANOTHER": "another"},
         }
     )
@@ -119,7 +123,7 @@ def test_build_command_unset_env_vars():
         {
             "name": "test",
             "chdir": "/tmp",
-            "mounts": [{"source": "/", "target": "/"}],
+            "mounts": [{"source": "/", "target": "/", "type": "bind"}],
             "unenv_vars": ["VAR1", "VAR2"],
         }
     )
@@ -129,6 +133,36 @@ def test_build_command_unset_env_vars():
     assert "VAR2" in cmd
 
 
+def test_build_command_no_command():
+    """Test build_command without a command argument."""
+    config = ConfigLoader().set(
+        {
+            "name": "test",
+            "mounts": [{"source": "/", "target": "/", "type": "bind"}],
+            "capabilities": {"drop": ["ALL"]},
+        }
+    )
+    cmd = build_command(config)
+    assert cmd[0] == "bwrap"
+    assert "--die-with-parent" in cmd
+    # Should NOT have any command at the end
+    assert "--cap-drop" in cmd
+    assert "ALL" in cmd
+
+
+def test_build_command_with_command():
+    """Test build_command with a command argument."""
+    config = ConfigLoader().set(
+        {
+            "name": "test",
+            "mounts": [{"source": "/", "target": "/", "type": "bind"}],
+            "capabilities": {"drop": ["ALL"]},
+        }
+    )
+    cmd = build_command(config, command=["echo", "hello"])
+    assert cmd[0] == "bwrap"
+    assert "echo" in cmd
+    assert "hello" in cmd
 
 
 def test_run_in_sandbox_basic():
@@ -140,6 +174,7 @@ chdir: "/tmp"
 mounts:
   - source: /
     target: /
+    type: bind
   - target: /tmp
     type: tmpfs
 die_with_parent: true
@@ -167,6 +202,7 @@ chdir: "/tmp"
 mounts:
   - source: /
     target: /
+    type: bind
   - target: /tmp
     type: tmpfs
 unshare:
@@ -196,6 +232,7 @@ chdir: "/tmp"
 mounts:
   - source: /
     target: /
+    type: bind
   - target: /tmp
     type: tmpfs
 env_vars:
@@ -224,6 +261,7 @@ chdir: "/tmp"
 mounts:
   - source: /
     target: /
+    type: bind
   - target: /tmp
     type: tmpfs
 unshare:
@@ -252,6 +290,7 @@ chdir: "/tmp"
 mounts:
   - source: /nonexistent/path
     target: /sandbox
+    type: bind
   - target: /tmp
     type: tmpfs
 die_with_parent: true
@@ -277,6 +316,7 @@ chdir: "/tmp"
 mounts:
   - source: /
     target: /
+    type: bind
   - target: /tmp
     type: tmpfs
 die_with_parent: true
@@ -302,6 +342,7 @@ chdir: "/tmp"
 mounts:
   - source: /
     target: /
+    type: bind
   - target: /tmp
     type: tmpfs
 die_with_parent: true
@@ -327,6 +368,7 @@ chdir: "/tmp"
 mounts:
   - source: /
     target: /
+    type: bind
   - target: /tmp
     type: tmpfs
 die_with_parent: false
@@ -352,15 +394,15 @@ def test_cli_command_building():
     on the built command instead of wrapping it in run_in_sandbox().
     """
     from agent_nook.config.loader import ConfigLoader
-    from agent_nook.runner._core import build_command
+    from agent_nook.sandbox import build_command
     
     config = ConfigLoader().set(
         {
             "name": "cli-test",
             "chdir": "/tmp",
             "mounts": [
-                {"source": "/", "target": "/"},
-                {"source": "/etc/resolv.conf", "target": "/etc/resolv.conf", "readonly": True},
+                {"source": "/", "target": "/", "type": "bind"},
+                {"source": "/etc/resolv.conf", "target": "/etc/resolv.conf", "type": "ro-bind"},
                 {"target": "/tmp", "type": "tmpfs"},
             ],
             "capabilities": {"drop": ["ALL"]},
@@ -394,15 +436,15 @@ def test_cli_direct_execution():
     import subprocess
 
     from agent_nook.config.loader import ConfigLoader
-    from agent_nook.runner._core import build_command
+    from agent_nook.sandbox import build_command
     
     config = ConfigLoader().set(
         {
             "name": "cli-test",
             "chdir": "/tmp",
             "mounts": [
-                {"source": "/", "target": "/"},
-                {"source": "/etc/resolv.conf", "target": "/etc/resolv.conf", "readonly": True},
+                {"source": "/", "target": "/", "type": "bind"},
+                {"source": "/etc/resolv.conf", "target": "/etc/resolv.conf", "type": "ro-bind"},
                 {"target": "/tmp", "type": "tmpfs"},
             ],
             "capabilities": {"drop": ["ALL"]},

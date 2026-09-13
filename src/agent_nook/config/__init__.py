@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import os
 
-from agent_nook.config.config import SandboxConfig, set_config, nook_config, reset_config
+from agent_nook.config.config import set_config, nook_config, reset_config
 from agent_nook.config.loader import ConfigLoader, ConfigValidationError
 
 # Lazy import to avoid circular dependency
-_get_state_dir: Callable[[], str]
+_get_state_dir: annotations.Callable[[], str]
 
 
 def _get_state_dir() -> str:

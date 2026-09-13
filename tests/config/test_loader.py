@@ -1,17 +1,14 @@
 """Tests for ConfigLoader."""
 
 import os
-import tempfile
 import pytest
-from pathlib import Path
 
 import sys
-import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from agent_nook.config.loader import ConfigLoader, ConfigValidationError
-from agent_nook.config.config import SandboxConfig, Mount, CapabilitySet, NamespaceSet
+from agent_nook.config.config import SandboxConfig
 
 
 def test_load_yaml_basic():
@@ -111,15 +108,18 @@ def test_load_yaml_hostname():
 
 
 def test_load_yaml_override():
-    """Test loading config with override dict."""
+    """Test loading config without hostname results in None hostname.
+
+    When hostname is not specified in the config dict, it defaults to None.
+    """
     loader = ConfigLoader()
     data = {
         "name": "test",
         "chdir": "/tmp",
         "mounts": [{"target": "/proc", "type": "proc"}],
     }
-    override = {"hostname": "overridden-host"}
     config = loader.load_from_dict(data)
+    assert config.hostname is None
 
 def test_load_yaml_unknown_key_errors():
     """Test that unknown top-level keys raise ConfigValidationError."""
@@ -137,7 +137,7 @@ def test_load_yaml_unknown_key_errors():
 
 
 def test_load_yaml_unknown_mount_type_errors():
-    """Test that unknown mount types raise ValueError."""
+    """Test that unknown mount types raise ConfigValidationError."""
     loader = ConfigLoader()
     data = {
         "name": "test",
@@ -148,7 +148,7 @@ def test_load_yaml_unknown_mount_type_errors():
         ],
     }
 
-    with pytest.raises(ValueError, match="Mount type 'invalid-type' is not valid"):
+    with pytest.raises(ConfigValidationError, match="unknown mount type 'invalid-type'"):
         loader.load_from_dict(data)
 
 

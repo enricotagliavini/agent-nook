@@ -2,7 +2,6 @@
 
 import os
 import sys
-import shutil
 import subprocess
 import pytest
 from pathlib import Path
@@ -91,7 +90,6 @@ def test_sandbox_run(
     built_sdist: Path,
 ) -> subprocess.CompletedProcess:
     """Install agent-nook via pipx and return a runner subprocess for tests."""
-    import os
     pipx_home, pipx_bin, env = pipx_test_env
 
     # Verify directories are empty before install
@@ -123,8 +121,8 @@ def test_sandbox_run(
     # Verify the venv was created in our isolated directory
     assert pipx_home.exists(), f"pipx home not created at {pipx_home}"
 
-    venv_dirs = list(pipx_home.glob("venvs/agent-nook-*"))
-    assert len(venvs) >= 1, (
+    venv_dirs = list(pipx_home.glob("venvs/agent-nook*"))
+    assert len(venv_dirs) >= 1, (
         f"No venv directory was created in {pipx_home}. "
         f"Contents: {list(pipx_home.iterdir())}"
     )

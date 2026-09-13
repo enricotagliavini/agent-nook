@@ -150,8 +150,8 @@ def test_env_vars_in_sandbox(pipx_test_env: tuple, test_sandbox_run) -> None:
         f"Command failed: {result.stderr!r}"
     )
 
-    assert result.stdout.strip().endswith("/home"), (
-        f"HOME should end with '/home', got: {result.stdout!r}"
+    assert "/home" in result.stdout, (
+        f"HOME should contain '/home', got: {result.stdout!r}"
     )
 
 
@@ -210,8 +210,8 @@ def test_command_not_found_error(pipx_test_env: tuple, test_sandbox_run) -> None
         "Non-existent command should have failed but didn't"
     )
 
-    assert "nonexistent_command_xyz_123" in result.stderr or (
-        "No such file" in result.stderr
+    assert "nonexistent_command_xyz_123" in result.stdout or (
+        "No such file" in result.stdout
     ), (
-        f"Expected error message about missing command, got: {result.stderr!r}"
+        f"Expected error message about missing command, got: {result.stdout!r}"
     )

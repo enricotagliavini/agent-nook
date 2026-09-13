@@ -237,8 +237,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     """Run a command inside a sandbox."""
     from agent_nook.config import get_config_path, get_state_dir
     from agent_nook.config.loader import ConfigLoader, ConfigValidationError
-    from agent_nook.runner import BwrapError, run_in_sandbox
-    from agent_nook.sandbox.builder import BwrapBuilder, SandboxConfig
+    from agent_nook.sandbox import BwrapError, BwrapSandbox, SandboxConfig
     from agent_nook.utils.directories import ensure_directories
     from agent_nook.utils.logger import setup_logger
 
@@ -301,21 +300,24 @@ def _cmd_run(args: argparse.Namespace) -> int:
     logger.debug("Executing: %s", " ".join(command))
 
     # Run the command in the sandbox using the unified API
-    # run_in_sandbox logs the full bwrap command internally
     try:
-        with run_in_sandbox(config, command, timeout=config.timeout) as result:
-            if result.success:
-                logger.info("✓ Sandbox executed successfully")
-                if result.stdout:
-                    print(result.stdout, end="")
-                if result.stderr:
-                    print(result.stderr, end="")
-                return 0
-            else:
-                logger.error("✗ Sandbox execution failed")
-                if result.stderr:
-                    logger.error("  stderr: %s", result.stderr[:2000])
-                return result.return_code or 1
+        result = BwrapSandbox.run(
+            command,
+            config=config,
+            timeout=config.timeout,
+        )
+        if result.success:
+            logger.info("✓ Sandbox executed successfully")
+            if result.stdout:
+                print(result.stdout, end="")
+            if result.stderr:
+                print(result.stderr, end="")
+            return 0
+        else:
+            logger.error("✗ Sandbox execution failed")
+            if result.stderr:
+                logger.error("  stderr: %s", result.stderr[:2000])
+            return result.return_code or 1
     except BwrapError as e:
         logger.error("Bubblewrap error: %s", e)
         return 1
