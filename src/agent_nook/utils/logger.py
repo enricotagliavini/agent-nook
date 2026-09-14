@@ -125,9 +125,7 @@ def _setup_logger(
             )
             handler.setLevel(logging.DEBUG)  # File gets everything
             handler.setFormatter(formatter)
-            handler.addFilter(
-                lambda record: record.levelno >= logging.DEBUG
-            )
+            handler.addFilter(lambda record: record.levelno >= logging.DEBUG)
             logger.addHandler(handler)
         except (PermissionError, OSError) as e:
             # If we can't write to XDG state, fallback to /tmp
@@ -153,9 +151,7 @@ def _setup_logger(
                 )
                 handler.setLevel(logging.DEBUG)
                 handler.setFormatter(formatter)
-                handler.addFilter(
-                    lambda record: record.levelno >= logging.DEBUG
-                )
+                handler.addFilter(lambda record: record.levelno >= logging.DEBUG)
                 logger.addHandler(handler)
             except (PermissionError, OSError) as e2:
                 logger.warning(

@@ -162,6 +162,139 @@ This is useful for:
 
 See [`builder.py`](src/agent_nook/sandbox/builder.py#L70-L87) for the `TmpfsMount` dataclass.
 
+## 📝 LSP / LINTER CONFIGURATION (Ruff)
+
+### Overview
+
+This project uses **Ruff** as its single linting/formatting tool. Ruff replaces:
+- `flake8` (pyflakes, pycodestyle, mccabe, isort, etc.)
+- `autopep8` (automatic formatting)
+- `mypy` (type checking - optional, not used here)
+
+### Why Ruff?
+
+1. **Speed**: 20-30x faster than flake8, autopep8, or mypy
+2. **Single tool**: Replaces multiple linters
+3. **Automatic fixes**: Safe fixes are applied automatically
+4. **Configurable**: Easy to customize what to fix vs. ignore
+5. **Modern**: Actively maintained, supports all Python features
+
+### Configuration Files
+
+- **[pyproject.toml](pyproject.toml)**: Main project configuration
+- **[.ruff.toml](.ruff.toml)**: LSP (pylsp) integration configuration
+
+### What Ruff Fixes Automatically
+
+These are **safe** violations that won't change the program's behavior:
+
+| Rule Category | Rule Code | Example |
+|---------------|-----------|---------|
+| **pycodestyle** | E (errors), W (warnings) | Indentation, line length |
+| **flake8** | F | Undefined names, unused imports |
+| **Bugbear** | B | Bug-prone patterns |
+| **isort** | I | Import ordering |
+| **pep8-naming** | N | Variable naming conventions |
+| **Comprehensions** | C4 | List/set comprehension simplifications |
+| **Type Checking** | TCH | Type hint improvements |
+| **PyUpgrade** | UP | Modern Python syntax |
+| **Pylint** | PLC, PLR, PLW | Code quality issues (errors only) |
+| **Ruff-specific** | RUF | Ruff-specific rules |
+| **Simplify** | SIM | Code simplifications |
+| **Blind Except** | BLE | Catching Exception instead of specific types |
+| **Builtins** | A | Shadowing built-in names |
+
+### What Ruff IGNORES (Manual Review Required)
+
+These violations require human judgment and won't be auto-fixed:
+
+| Rule Category | Rule Code | Reason |
+|---------------|-----------|--------|
+| **Minor style** | W191, W291, W293 | Let humans decide |
+| **Type hints** | PYI034, PYI036 | We use type: ignore if needed |
+| **Complexity** | C901, PLR0911-PLR0917 | We manage complexity manually |
+| **Mutable defaults** | RUF012 | We use dataclasses with field() |
+| **Nested if** | SIM102 | Useful in some cases |
+| **Blind except** | BLE001 | We handle specific exception types |
+| **Function imports** | PLC0415 | CLI functions need late imports |
+| **Magic values** | PLR2004 | Intentional in this code |
+| **Loop variable** | PLW2901 | Intentional pattern |
+| **Equality with True** | E712 | Used for clarity in some cases |
+| **Unused loop var** | B007 | Intentional pattern |
+| **Global statement** | PLW0603 | Used in logger initialization |
+| **Type checking imports** | TC003 | Conditional imports |
+| **Line too long** | E501 | We have 135 char limit |
+
+### Rules DISABLED Entirely
+
+These are **not** enabled in Ruff configuration:
+
+| Category | Why |
+|----------|-----|
+| **D** (pydocstyle) | We use comprehensive docstrings |
+| **ERA** (eradicate) | We don't use commented-out code |
+| **FA** (flake8-future-annotations) | We use `from __future__ import annotations` |
+| **PGH** (pygrep-hooks) | Not needed |
+| **PT** (flake8-pytest-style) | We have our own conventions |
+| **RSE** (flake8-raise) | We use logging for errors |
+| **S** (flake8-bandit) | We handle security manually |
+| **SLF** (flake8-self) | Private method access is fine |
+| **TID** (flake8-tidy-imports) | We allow relative imports |
+| **TRY** (tryceratops) | We handle exceptions intentionally |
+
+### Best Practices for Future Development
+
+1. **Never disable auto-fix**: Only ignore rules that require human judgment
+2. **Use `# type: ignore` for intentional type issues**: Don't disable TCH entirely
+3. **Document why you ignore a rule**: Add comments explaining the rationale
+4. **Prefer explicit exception handling**: Don't catch `Exception`, catch specific types
+5. **Use comprehensive docstrings**: Don't rely on pydocstyle for documentation
+6. **Keep line length at 135**: Matches PEP 8, allows for longer docstrings
+7. **Avoid magic numbers**: Use constants when possible, but some are intentional
+8. **Use late imports in CLI functions**: Import only what's needed at function level
+
+### Running Ruff Manually
+
+```bash
+# Check for violations
+ruff check src/agent_nook/
+
+# Auto-fix safe violations
+ruff check --fix src/agent_nook/
+
+# Format code
+ruff format src/agent_nook/
+
+# Check and format together
+ruff check --fix src/agent_nook/ && ruff format src/agent_nook/
+
+# Watch mode (development)
+ruff check --watch src/agent_nook/
+
+# JSON output (for CI/CD)
+ruff check src/agent_nook/ --output-format=json
+```
+
+### Adding New Rules
+
+If you want to enable a new rule, edit `.ruff.toml` or `pyproject.toml`:
+
+```toml
+[lint]
+select = [
+    "E", "W", "F", "B", "I", "N", "C4", "TCH", "UP",
+    "PLC", "PLR", "PLW", "RUF", "SIM", "BLE", "A",
+    # Add new rules here (e.g., "ANN", "ARG", "ASYNC")
+]
+```
+
+### Troubleshooting
+
+**Auto-fix changes behavior?**
+- Check the diff before committing
+- Some "safe" fixes may not be safe in all contexts
+- Review changes manually if uncertain
+
 ## File Integrity & Git Hygiene
 
 ### ⚠️ Do NOT delete untracked files

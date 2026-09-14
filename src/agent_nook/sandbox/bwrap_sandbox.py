@@ -22,11 +22,13 @@ import subprocess
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+
 if TYPE_CHECKING:
     from agent_nook.config.config import SandboxConfig
 
 try:
-    from agent_nook.runner import BwrapError, SandboxExecutionError
+    from agent_nook.runner import BwrapError
+    from agent_nook.runner import SandboxExecutionError
 except ImportError:
     BwrapError = RuntimeError
     SandboxExecutionError = RuntimeError
@@ -36,6 +38,7 @@ from pathlib import Path
 from agent_nook.config.config import SandboxConfig
 from agent_nook.sandbox.builder import BwrapBuilder
 from agent_nook.utils.logger import main_logger
+
 
 # Module-level logger — uses centralized main_logger
 _logger = main_logger(__name__)
@@ -70,8 +73,7 @@ class SandboxResult:
         """Context manager entry - returns self."""
         return self
 
-    def __exit__(self, exc_type: type | None, exc_val: BaseException | None,
-                 exc_tb: object | None) -> None:
+    def __exit__(self, exc_type: type | None, exc_val: BaseException | None, exc_tb: object | None) -> None:
         """Context manager exit - no-op for clean exit paths."""
 
 
@@ -179,8 +181,7 @@ class BwrapSandbox:
         if config is None:
             config = SandboxConfig(name="anonymous-sandbox")
 
-        _logger.debug("Running sandbox with config: name=%s, command=%s",
-                      config.name, " ".join(command))
+        _logger.debug("Running sandbox with config: name=%s, command=%s", config.name, " ".join(command))
 
         bwrap_cmd = BwrapSandbox._build_command(config, command)
 
@@ -205,14 +206,9 @@ class BwrapSandbox:
         if result.returncode != 0:
             stderr_lower = result.stderr.lower() if result.stderr else ""
             if "not permitted" in stderr_lower:
-                raise BwrapError(
-                    f"bwrap failed with permission error: "
-                    f"{result.stderr[:500]}"
-                )
+                raise BwrapError(f"bwrap failed with permission error: {result.stderr[:500]}")
             if "no such file or directory" in stderr_lower:
-                raise BwrapError(
-                    f"bwrap path error: {result.stderr[:500]}"
-                )
+                raise BwrapError(f"bwrap path error: {result.stderr[:500]}")
 
         return SandboxResult(
             success=result.returncode == 0,

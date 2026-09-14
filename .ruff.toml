@@ -1,0 +1,153 @@
+# Ruff configuration for pylsp LSP integration
+# This file is loaded by pylsp when it uses ruff for linting
+# See: https://github.com/charliermarsh/ruff-lsp
+
+# ───────────────────────────────────────────────────────────────────────────────
+# LSP CONFIGURATION RULES
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# This configuration is specifically designed for the agent-nook project.
+# It enforces the following rules:
+#
+#   ✅ FIX AUTOMATICALLY (Error/Warning level):
+#     - E, W: pycodestyle errors/warnings (except minor style issues)
+#     - F: flake8 errors (undefined names, imports, etc.)
+#     - B: bugbear rules (bug-prone patterns)
+#     - I: import sorting
+#     - N: pep8-naming
+#     - C4: comprehensions
+#     - TCH: type checking hints
+#     - UP: pyupgrade (modernize code)
+#     - PLC, PLR, PLW: pylint rules (errors only, not warnings)
+#     - RUF: ruff-specific rules
+#     - SIM: flake8-simplify (simplify code)
+#     - BLE: flake8-blind-except
+#     - A: flake8-builtins (shadowing builtins)
+#
+#   🟡 IGNORE (Warning only, or suppress entirely):
+#     - D: pydocstyle (we use comprehensive docstrings)
+#     - ERA: eradicate (commented code)
+#     - FA: flake8-future-annotations (we use future imports)
+#     - PGH: pygrep-hooks (not needed)
+#     - PT: flake8-pytest-style (we have our own conventions)
+#     - RSE: flake8-raise (we use logging for errors)
+#     - S: flake8-bandit (security - we handle security manually)
+#     - SLF: flake8-self (private method access)
+#     - TID: flake8-tidy-imports (we allow relative imports)
+#     - TRY: tryceratops (we handle exceptions intentionally)
+#     - W191, W291, W293: Minor style issues (let humans decide)
+#     - PYI034, PYI036: Type hints (handled with type: ignore if needed)
+#     - C901: Too complex function (we keep complexity manageable)
+#     - PLR0911-PLR0917: Return/branch/arg/statement counts (we manage manually)
+#     - RUF012: Mutable defaults (we use dataclasses with field())
+#     - SIM102: Nested if statements (useful in some cases)
+#     - BLE001: Blind except (we handle specific exception types)
+#     - PLC0415: Function-level imports (needed for CLI)
+#     - PLR2004: Magic values (intentional)
+#     - PLW2901: Loop variable overwritten (intentional)
+#     - E712: Equality with True (use for clarity)
+#     - B007: Unused loop variable (intentional pattern)
+#     - PLW0603: Global statement (used in logger init)
+#     - TC003: Type checking imports (conditional use)
+#     - E501: Line too long (we have 135 char limit)
+#
+#   ❌ NEVER FIX (Critical issues we must handle manually):
+#     - No critical security issues (S*) - we handle security manually
+#     - No deprecated code (deprecated is warning only)
+#     - No known issues in production code
+# ───────────────────────────────────────────────────────────────────────────────
+
+# Line length (matches pep8, but we allow longer lines for docstrings)
+line-length = 135
+
+# Target Python version
+target-version = "py310"
+
+# Exclude patterns
+exclude = [
+    "__pycache__",
+    ".git",
+    "dist",
+    "build",
+    ".venv",
+    "venv",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".pytype",
+    "*.egg-info",
+]
+
+# Enable automatic fixing (safe fixes only)
+fix = true
+
+[lint]
+select = [
+    # pycodestyle errors and warnings
+    "E", "W",
+    # flake8
+    "F",
+    # bugbear
+    "B",
+    # isort
+    "I",
+    # pep8 naming
+    "N",
+    # comprehensions
+    "C4",
+    # type checking
+    "TCH",
+    # pyupgrade
+    "UP",
+    # pylint (errors only, not warnings)
+    "PLC", "PLR", "PLW",
+    # ruff-specific
+    "RUF",
+    # flake8-simplify
+    "SIM",
+    # flake8-blind-except
+    "BLE",
+    # flake8-builtins
+    "A",
+]
+
+# Rules to ignore
+ignore = [
+    "W191",  # Tab before character
+    "W291",  # Trailing whitespace (minor)
+    "W293",  # Blank line with whitespace (minor)
+    "PYI034", # Non-self return type
+    "PYI036", # Bad exit annotation
+    "C901",   # Too complex function
+    "PLR0911", # Too many return statements
+    "PLR0912", # Too many branches
+    "PLR0913", # Too many arguments
+    "PLR0915", # Too many statements
+    "PLR0917", # Too many positional arguments
+    "RUF012", # Mutable default value
+    "SIM102", # Collapsible if
+    "BLE001", # Blind except
+    "PLC0415", # Import at function level (CLI needs late imports)
+    "PLR2004", # Magic values
+    "PLW2901", # Loop variable overwritten
+    "E712",   # Equality with True
+    "B007",   # Unused loop variable
+    "PLW0603", # Global statement
+    "TC003",  # Type checking imports
+    "E501",   # Line too long (we have 135 char limit)
+]
+
+[lint.per-file-ignores]
+"src/agent_nook/config/loader.py" = ["TID252"]
+"src/agent_nook/config/config.py" = ["TID252"]
+"src/agent_nook/sandbox/builder.py" = ["TID252"]
+
+[lint.isort]
+force-single-line = true
+lines-after-imports = 2
+known-first-party = ["agent_nook"]
+
+[lint.pyflakes]
+allowed-unused-imports = []
+
+[lint.pycodestyle]
+max-line-length = 135

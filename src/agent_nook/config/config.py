@@ -55,10 +55,12 @@ Each layer has a distinct purpose:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 from typing import Any
 
 from agent_nook.utils.logger import main_logger
+
 
 _logger = main_logger(__name__)
 
@@ -148,18 +150,13 @@ class Mount:
             "dev",
             "dir",
         ):
-            raise ValueError(
-                f"Unknown mount type: {self.type}. "
-                f"Valid types: bind, ro-bind, dev-bind, tmpfs, proc, dev, dir"
-            )
+            raise ValueError(f"Unknown mount type: {self.type}. Valid types: bind, ro-bind, dev-bind, tmpfs, proc, dev, dir")
 
         if self.type.lower().strip() in ("bind", "ro-bind", "dev-bind"):
             if self.source is None:
                 raise ValueError(f"Mount type '{self.type}' requires a non-empty source")
             if self.target is None:
-                raise ValueError(
-                    f"Mount type '{self.type}' requires a non-empty target"
-                )
+                raise ValueError(f"Mount type '{self.type}' requires a non-empty target")
 
             if self.type.lower().strip() == "ro-bind":
                 args.extend(["--ro-bind", self.source, self.target])
@@ -236,9 +233,7 @@ class Mount:
 
         # Pattern: number (with optional decimal) followed by optional unit
         # Unit can be any alphabetic characters (we validate separately)
-        match = __import__("re").compile(
-            r"^\s*(\d+(?:\.\d+)?)\s*([A-Za-z]*)\s*$"
-        ).match(size_str)
+        match = __import__("re").compile(r"^\s*(\d+(?:\.\d+)?)\s*([A-Za-z]*)\s*$").match(size_str)
         if not match:
             raise ValueError(
                 f"Invalid size format: '{size_str}'. "
@@ -253,10 +248,7 @@ class Mount:
             return int(num)
 
         if unit not in units:
-            raise ValueError(
-                f"Invalid size suffix: '{unit}'. "
-                f"Valid suffixes: B, K, KB, M, G, GB, T, TB."
-            )
+            raise ValueError(f"Invalid size suffix: '{unit}'. Valid suffixes: B, K, KB, M, G, GB, T, TB.")
 
         return int(num * units[unit])
 
@@ -317,9 +309,7 @@ class CapabilitySet:
         return args
 
     def __repr__(self) -> str:
-        return (
-            f"CapabilitySet(dropped={self._dropped!r}, kept={self._kept!r})"
-        )
+        return f"CapabilitySet(dropped={self._dropped!r}, kept={self._kept!r})"
 
 
 class NamespaceSet:
@@ -343,7 +333,9 @@ class NamespaceSet:
         network: Unshare network namespace.
     """
 
-    def __init__(self, pid: bool = False, uts: bool = False, ipc: bool = False, cgroup: bool = False, user: bool = False, network: bool = False):
+    def __init__(
+        self, pid: bool = False, uts: bool = False, ipc: bool = False, cgroup: bool = False, user: bool = False, network: bool = False
+    ):
         self.pid = pid
         self.uts = uts
         self.ipc = ipc
@@ -451,6 +443,7 @@ class SandboxConfig:
 
 class ConfigValidationError(Exception):
     """Raised when configuration validation fails."""
+
 
 __all__ = [
     "CapabilitySet",

@@ -20,6 +20,7 @@ import os
 import sys
 from pathlib import Path
 
+
 __version__ = "0.1.0"
 
 
@@ -41,20 +42,10 @@ def main() -> int:
         prog="agent-nook",
         description="A lightweight bwrap sandbox for AI agents",
     )
-    parser.add_argument(
-        "--version", action="version", version=f"%(prog)s {__version__}"
-    )
-    parser.add_argument(
-        "-v", "--verbose", action="store_true", help="Enable verbose output"
-    )
-    parser.add_argument(
-        "--quiet", action="store_true", help="Suppress non-error output"
-    )
-    parser.add_argument(
-        "--config",
-        default=None,
-        help="Override config file path (default: ~/.config/agent-nook/sandbox.yaml)"
-    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
+    parser.add_argument("--quiet", action="store_true", help="Suppress non-error output")
+    parser.add_argument("--config", default=None, help="Override config file path (default: ~/.config/agent-nook/sandbox.yaml)")
 
     subparsers = parser.add_subparsers(dest="subcommand", help="Available commands")
 
@@ -66,141 +57,78 @@ def main() -> int:
         "command",
         nargs=argparse.REMAINDER,
         metavar="CMD [ARGS...]",
-        help="Command to execute in the sandbox (e.g. 'python3 agent.py')"
+        help="Command to execute in the sandbox (e.g. 'python3 agent.py')",
     )
     run_parser.add_argument(
         "--config",
         default=None,
         help="Override config file path (default: ~/.config/agent-nook/sandbox.yaml)",
     )
-    run_parser.add_argument(
-        "--chdir",
-        metavar="DIR",
-        help="Change working directory in sandbox (overrides config)"
-    )
+    run_parser.add_argument("--chdir", metavar="DIR", help="Change working directory in sandbox (overrides config)")
     run_parser.add_argument(
         "--cap-add",
         action="append",
         default=[],
         metavar="CAP",
-        help="Add capability (e.g. 'CAP_NET_BIND_SERVICE', repeat for multiple)"
+        help="Add capability (e.g. 'CAP_NET_BIND_SERVICE', repeat for multiple)",
     )
     run_parser.add_argument(
-        "--cap-drop",
-        action="append",
-        default=[],
-        metavar="CAP",
-        help="Drop capability (e.g. 'CAP_SYS_ADMIN', repeat for multiple)"
+        "--cap-drop", action="append", default=[], metavar="CAP", help="Drop capability (e.g. 'CAP_SYS_ADMIN', repeat for multiple)"
     )
     run_parser.add_argument(
-        "--unshare",
-        action="append",
-        default=[],
-        metavar="NS",
-        help="Unshare namespace (e.g. 'pid,uts', repeat for multiple)"
+        "--unshare", action="append", default=[], metavar="NS", help="Unshare namespace (e.g. 'pid,uts', repeat for multiple)"
     )
     run_parser.add_argument(
-        "--bind",
-        action="append",
-        default=[],
-        metavar="SRC:DEST",
-        help="Bind mount host SRC to sandbox DEST (repeat for multiple)"
+        "--bind", action="append", default=[], metavar="SRC:DEST", help="Bind mount host SRC to sandbox DEST (repeat for multiple)"
     )
     run_parser.add_argument(
         "--ro-bind",
         action="append",
         default=[],
         metavar="SRC:DEST",
-        help="Read-only bind mount host SRC to sandbox DEST (repeat for multiple)"
+        help="Read-only bind mount host SRC to sandbox DEST (repeat for multiple)",
     )
     run_parser.add_argument(
         "--env",
         action="append",
         default=[],
         metavar="KEY=VALUE",
-        help="Set environment variable (e.g. 'KEY=value', repeat for multiple)"
+        help="Set environment variable (e.g. 'KEY=value', repeat for multiple)",
     )
     run_parser.add_argument(
-        "--unset-env",
-        action="append",
-        default=[],
-        metavar="KEY",
-        help="Unset environment variable (repeat for multiple)"
+        "--unset-env", action="append", default=[], metavar="KEY", help="Unset environment variable (repeat for multiple)"
+    )
+    run_parser.add_argument("--hostname", metavar="HOSTNAME", help="Set sandbox hostname")
+    run_parser.add_argument(
+        "--new-session", action="store_true", default=True, help="Create new session (prevents TIOCSTI attacks, default: on)"
     )
     run_parser.add_argument(
-        "--hostname",
-        metavar="HOSTNAME",
-        help="Set sandbox hostname"
+        "--no-new-session", action="store_false", dest="new_session", help="Don't create new session (allows TIOCSTI)"
+    )
+    run_parser.add_argument("--caps", action="append", default=[], help="Additional capabilities to add (repeat for multiple)")
+    run_parser.add_argument("--drop-caps", action="append", default=[], help="Additional capabilities to drop (repeat for multiple)")
+    run_parser.add_argument(
+        "--die-with-parent", action="store_true", default=True, help="Kill sandbox child when parent dies (default: on)"
     )
     run_parser.add_argument(
-        "--new-session",
-        action="store_true",
-        default=True,
-        help="Create new session (prevents TIOCSTI attacks, default: on)"
-    )
-    run_parser.add_argument(
-        "--no-new-session",
-        action="store_false",
-        dest="new_session",
-        help="Don't create new session (allows TIOCSTI)"
-    )
-    run_parser.add_argument(
-        "--caps",
-        action="append",
-        default=[],
-        help="Additional capabilities to add (repeat for multiple)"
-    )
-    run_parser.add_argument(
-        "--drop-caps",
-        action="append",
-        default=[],
-        help="Additional capabilities to drop (repeat for multiple)"
-    )
-    run_parser.add_argument(
-        "--die-with-parent",
-        action="store_true",
-        default=True,
-        help="Kill sandbox child when parent dies (default: on)"
-    )
-    run_parser.add_argument(
-        "--no-die-with-parent",
-        action="store_false",
-        dest="die_with_parent",
-        help="Keep sandbox alive after parent exits"
+        "--no-die-with-parent", action="store_false", dest="die_with_parent", help="Keep sandbox alive after parent exits"
     )
 
     # init command
     init_parser = subparsers.add_parser("init", help="Initialize config")
-    init_parser.add_argument(
-        "--config",
-        default=None,
-        help="Config directory"
-    )
+    init_parser.add_argument("--config", default=None, help="Config directory")
 
     # status command
     status_parser = subparsers.add_parser("status", help="Show sandbox status")
-    status_parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Show detailed information"
-    )
+    status_parser.add_argument("--verbose", "-v", action="store_true", help="Show detailed information")
 
     # logs command
     logs_parser = subparsers.add_parser("logs", help="Show recent logs")
-    logs_parser.add_argument(
-        "--tail", "-n",
-        type=int,
-        default=50,
-        help="Number of lines to show (default: 50)"
-    )
+    logs_parser.add_argument("--tail", "-n", type=int, default=50, help="Number of lines to show (default: 50)")
 
     # list command
     list_parser = subparsers.add_parser("list", help="List available sandboxes")
-    list_parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Show details"
-    )
+    list_parser.add_argument("--verbose", "-v", action="store_true", help="Show details")
 
     args = parser.parse_args()
 
@@ -246,8 +174,10 @@ def _dispatch_command(args: argparse.Namespace) -> int:
 
 def _cmd_run(args: argparse.Namespace) -> int:
     """Run a command inside a sandbox."""
-    from agent_nook.config.loader import ConfigLoader, ConfigValidationError
-    from agent_nook.sandbox import BwrapError, BwrapSandbox
+    from agent_nook.config.loader import ConfigLoader
+    from agent_nook.config.loader import ConfigValidationError
+    from agent_nook.sandbox import BwrapError
+    from agent_nook.sandbox import BwrapSandbox
 
     # Logging is already initialized by _setup_logging()
     logger = logging.getLogger("agent_nook")
@@ -348,10 +278,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
     logger.info("=" * 40)
 
     import subprocess
+
     try:
-        result = subprocess.run(
-            ["bwrap", "--version"], capture_output=True, text=True, timeout=5, check=False
-        )
+        result = subprocess.run(["bwrap", "--version"], capture_output=True, text=True, timeout=5, check=False)
         if result.returncode == 0:
             logger.info("  Bubblewrap version: %s", result.stdout.strip())
         else:
@@ -404,9 +333,9 @@ def _cmd_logs(args: argparse.Namespace) -> int:
         return 0
 
     try:
-        with open(log_file, "r") as f:
+        with open(log_file) as f:
             lines = f.readlines()
-            lines = lines[-args.tail:]
+            lines = lines[-args.tail :]
 
         for line in reversed(lines):
             logger.info(line.strip())

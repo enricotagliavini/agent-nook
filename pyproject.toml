@@ -39,3 +39,201 @@ include = ["src/agent_nook/config/*.yaml"]
 markers = [
     "integration: marks tests as integration tests",
 ]
+
+[tool.ruff]
+# Line length
+line-length = 135
+
+# Target Python version
+target-version = "py310"
+
+# Exclude patterns
+exclude = [
+    "__pycache__",
+    ".git",
+    "dist",
+    "build",
+    ".venv",
+    "venv",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".pytype",
+    "*.egg-info",
+]
+
+# Fix all violations
+fix = true
+
+# ───────────────────────────────────────────────────────────────────────────────
+# LSP / PYLSP CONFIGURATION
+# ───────────────────────────────────────────────────────────────────────────────
+
+[tool.pylsp.plugins.ruff]
+enabled = true
+
+# What errors to fix automatically (ERROR/WARNING level)
+extend-ignore = [
+    # Minor style issues - let humans decide
+    "W191",        # Tab before character
+    "W291",        # Trailing whitespace (minor)
+    "W293",        # Blank line with whitespace (minor)
+    
+    # Type hints (we handle with type: ignore if needed)
+    "PYI034",      # Non-self return type
+    "PYI036",      # Bad exit annotation
+    
+    # Complexity (we keep complexity manageable manually)
+    "C901",        # Too complex function
+    "PLR0911",     # Too many return statements
+    "PLR0912",     # Too many branches
+    "PLR0913",     # Too many arguments
+    "PLR0915",     # Too many statements
+    "PLR0917",     # Too many positional arguments
+    
+    # Mutable class defaults (we use dataclasses with field() instead)
+    "RUF012",
+    
+    # Simpler if statements (useful in some cases)
+    "SIM102",
+    
+    # Blind except (we handle specific exception types)
+    "BLE001",
+]
+
+# ───────────────────────────────────────────────────────────────────────────────
+# RUFF LINTING RULES
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# ENABLED (Fix automatically):
+#   - E, W: pycodestyle errors/warnings (except style prefs)
+#   - F: flake8 errors (undefined names, imports, etc.)
+#   - B: bugbear rules
+#   - I: import sorting
+#   - N: pep8-naming
+#   - C4: comprehensions
+#   - TCH: type checking
+#   - UP: pyupgrade (modernize code)
+#   - PLC, PLR, PLW: pylint rules (errors only)
+#   - RUF: ruff-specific
+#   - SIM: flake8-simplify
+#   - BLE: flake8-blind-except
+#   - A: flake8-builtins
+#
+# DISABLED (Suppress):
+#   - D: pydocstyle (we use comprehensive docstrings)
+#   - ERA: eradicate (commented code)
+#   - FA: flake8-future-annotations (we use future imports)
+#   - PGH: pygrep-hooks (not needed)
+#   - PT: flake8-pytest-style (we have our own conventions)
+#   - RSE: flake8-raise (we use logging for errors)
+#   - S: flake8-bandit (security - we handle security manually)
+#   - SLF: flake8-self (private method access)
+#   - TID: flake8-tidy-imports (we allow relative imports)
+#   - TRY: tryceratops (we handle exceptions intentionally)
+# ───────────────────────────────────────────────────────────────────────────────
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle errors and warnings
+    "E", "W",
+    # flake8
+    "F",
+    # bugbear
+    "B",
+    # isort
+    "I",
+    # pep8 naming
+    "N",
+    # comprehensions
+    "C4",
+    # type checking
+    "TCH",
+    # pyupgrade
+    "UP",
+    # pylint (errors only, not warnings)
+    "PLC", "PLR", "PLW",
+    # ruff-specific
+    "RUF",
+    # flake8-simplify
+    "SIM",
+    # flake8-blind-except
+    "BLE",
+    # flake8-builtins
+    "A",
+]
+
+ignore = [
+    # Allow unused imports if they're re-exported
+    # Imports at function level (needed for late imports in CLI)
+    "PLC0415",     # Import should be at top-level
+    
+    # Blind except (we handle specific exception types)
+    "BLE001",      # Do not catch blind exception
+    
+    # Complexity (we keep complexity manageable manually)
+    "PLR0911",     # Too many return statements
+    "PLR0912",     # Too many branches
+    "PLR0913",     # Too many arguments
+    "PLR0915",     # Too many statements
+    "PLR0917",     # Too many positional arguments
+    
+    # Mutable class defaults (we use dataclasses with field() instead)
+    "RUF012",
+    
+    # Simpler if statements (useful in some cases)
+    "SIM102",
+    
+    # Magic values (intentional in this code)
+    "PLR2004",     # Magic value used in comparison
+    
+    # Loop variable overwritten (intentional pattern)
+    "PLW2901",
+    
+    # Equality with True (we use == True for clarity in some cases)
+    "E712",
+    
+    # Unused variable in loop (intentional pattern)
+    "B007",
+    
+    # Global statement (used in logger initialization)
+    "PLW0603",
+    
+    # Type checking imports (we use them conditionally)
+    "TC003",
+    
+    # Line too long (we have a 135 char limit and docstrings are long)
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/agent_nook/config/loader.py" = ["TID252"]
+"src/agent_nook/config/config.py" = ["TID252"]
+"src/agent_nook/sandbox/builder.py" = ["TID252"]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+lines-after-imports = 2
+known-first-party = ["agent_nook"]
+
+# ───────────────────────────────────────────────────────────────────────────────
+# FORMATTER CONFIGURATION
+# ───────────────────────────────────────────────────────────────────────────────
+
+[tool.ruff.format]
+# Quote style
+quote-style = "double"
+
+# Indent style
+indent-style = "space"
+
+# Line ending
+line-ending = "auto"
+
+# Skip magic trailing comma
+skip-magic-trailing-comma = false
+
+# Docstring code formatting
+docstring-code-format = false
+
+# Line breaks
+preview = false

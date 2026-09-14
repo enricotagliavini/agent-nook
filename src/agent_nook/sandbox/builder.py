@@ -34,10 +34,12 @@ with a clear message pointing to the root cause.
 
 from __future__ import annotations
 
-from collections import defaultdict, deque
+from collections import defaultdict
+from collections import deque
 from dataclasses import dataclass
 
 from agent_nook.config.config import SandboxConfig
+
 
 # Re-export BwrapError from runner for CLI compatibility
 try:
@@ -109,7 +111,7 @@ def build_mounts_order(config: SandboxConfig) -> list[list[str]]:
                     children_of[parent].append(target)
 
     # Topological sort: parents before children (Kahn's algorithm)
-    in_degree: dict[str, int] = {tp: 0 for tp in mount_points}
+    in_degree: dict[str, int] = dict.fromkeys(mount_points, 0)
     for parent, children in children_of.items():
         for child in children:
             in_degree[child] += 1
@@ -175,8 +177,7 @@ class BwrapBuilder:
         """
         if not isinstance(config, SandboxConfig):
             raise ValueError(
-                f"Expected SandboxConfig dataclass, got {type(config).__name__}. "
-                "Use ConfigLoader.load() to obtain a SandboxConfig."
+                f"Expected SandboxConfig dataclass, got {type(config).__name__}. Use ConfigLoader.load() to obtain a SandboxConfig."
             )
         self._config = config
 

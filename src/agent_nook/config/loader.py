@@ -13,22 +13,19 @@ from typing import Any
 
 import yaml
 
+
 try:
-    from agent_nook.config.config import (
-        CapabilitySet,
-        ConfigValidationError,
-        Mount,
-        NamespaceSet,
-        SandboxConfig,
-    )
+    from agent_nook.config.config import CapabilitySet
+    from agent_nook.config.config import ConfigValidationError
+    from agent_nook.config.config import Mount
+    from agent_nook.config.config import NamespaceSet
+    from agent_nook.config.config import SandboxConfig
 except ImportError:
-    from ..config.config import (
-        CapabilitySet,
-        ConfigValidationError,
-        Mount,
-        NamespaceSet,
-        SandboxConfig,
-    )
+    from ..config.config import CapabilitySet
+    from ..config.config import ConfigValidationError
+    from ..config.config import Mount
+    from ..config.config import NamespaceSet
+    from ..config.config import SandboxConfig
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +87,7 @@ class ConfigLoader:
         "unenv_vars": "list[str]",
     }
 
-    _VALID_MOUNT_TYPES = frozenset(
-        {"bind", "ro-bind", "dev-bind", "tmpfs", "proc", "dev", "dir"}
-    )
+    _VALID_MOUNT_TYPES = frozenset({"bind", "ro-bind", "dev-bind", "tmpfs", "proc", "dev", "dir"})
 
     def __init__(self, config_path: str | None = None) -> None:
         """Initialize the config loader.
@@ -151,14 +146,15 @@ class ConfigLoader:
 
     def set_from_yaml(self, path: str) -> SandboxConfig:
         """Load configuration from a YAML file path."""
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         return self.set(data)
 
     def set_from_json(self, path: str) -> SandboxConfig:
         """Load configuration from a JSON file path."""
         import json
-        with open(path, "r", encoding="utf-8") as f:
+
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         return self.set(data)
 
@@ -200,20 +196,24 @@ class ConfigLoader:
         for bind in getattr(args, "bind", []):
             parts = bind.split(":")
             if len(parts) == 2:
-                result.setdefault("mounts", []).append({
-                    "source": parts[0],
-                    "target": parts[1],
-                    "type": "bind",
-                })
+                result.setdefault("mounts", []).append(
+                    {
+                        "source": parts[0],
+                        "target": parts[1],
+                        "type": "bind",
+                    }
+                )
 
         for bind in getattr(args, "ro_bind", []):
             parts = bind.split(":")
             if len(parts) == 2:
-                result.setdefault("mounts", []).append({
-                    "source": parts[0],
-                    "target": parts[1],
-                    "type": "ro-bind",
-                })
+                result.setdefault("mounts", []).append(
+                    {
+                        "source": parts[0],
+                        "target": parts[1],
+                        "type": "ro-bind",
+                    }
+                )
 
         # Override capabilities with --cap-add / --cap-drop
         for cap in getattr(args, "cap_add", []):
@@ -248,9 +248,7 @@ class ConfigLoader:
 
         return result
 
-    def load_with_overrides(
-        self, args: argparse.Namespace, path: str | None = None
-    ) -> SandboxConfig:
+    def load_with_overrides(self, args: argparse.Namespace, path: str | None = None) -> SandboxConfig:
         """Load configuration from a YAML file with CLI overrides applied.
 
         This is the unified API that handles the entire configuration loading
@@ -290,7 +288,7 @@ class ConfigLoader:
             raise FileNotFoundError(f"Config file not found: {config_path}")
 
         # Parse YAML into raw dict
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
 
         # --- Validation Layer 1: File Structure ---
@@ -384,9 +382,9 @@ class ConfigLoader:
             elif field_name == "unenv_vars":
                 value = data.get("unenv_vars", [])
             elif field_name == "hostname":
-                value = data.get("hostname", None)
+                value = data.get("hostname")
             elif field_name == "timeout":
-                value = data.get("timeout", None)
+                value = data.get("timeout")
             elif field_name == "die_with_parent":
                 value = data.get("die_with_parent", True)
             elif field_name == "new_session":
@@ -394,45 +392,25 @@ class ConfigLoader:
 
             if expected_type == "str":
                 if not isinstance(value, str):
-                    raise ConfigValidationError(
-                        f"Field '{field_name}' must be a string, got "
-                        f"{type(value).__name__}. Value: {value!r}"
-                    )
+                    raise ConfigValidationError(f"Field '{field_name}' must be a string, got {type(value).__name__}. Value: {value!r}")
             elif expected_type == "list[dict]":
                 if not isinstance(value, list):
-                    raise ConfigValidationError(
-                        f"Field '{field_name}' must be a list of dicts, got "
-                        f"{type(value).__name__}"
-                    )
+                    raise ConfigValidationError(f"Field '{field_name}' must be a list of dicts, got {type(value).__name__}")
                 for i, m in enumerate(value):
                     if not isinstance(m, dict):
-                        raise ConfigValidationError(
-                            f"mount[{i}] must be a dict, got {type(m).__name__}"
-                        )
+                        raise ConfigValidationError(f"mount[{i}] must be a dict, got {type(m).__name__}")
             elif expected_type == "dict":
                 if not isinstance(value, dict):
-                    raise ConfigValidationError(
-                        f"Field '{field_name}' must be a dict, got "
-                        f"{type(value).__name__}"
-                    )
+                    raise ConfigValidationError(f"Field '{field_name}' must be a dict, got {type(value).__name__}")
             elif expected_type == "bool":
                 if not isinstance(value, bool):
-                    raise ConfigValidationError(
-                        f"Field '{field_name}' must be a boolean, got "
-                        f"{type(value).__name__}"
-                    )
+                    raise ConfigValidationError(f"Field '{field_name}' must be a boolean, got {type(value).__name__}")
             elif expected_type == "list[str]":
                 if not isinstance(value, list):
-                    raise ConfigValidationError(
-                        f"Field '{field_name}' must be a list of strings, got "
-                        f"{type(value).__name__}"
-                    )
+                    raise ConfigValidationError(f"Field '{field_name}' must be a list of strings, got {type(value).__name__}")
                 for i, item in enumerate(value):
                     if not isinstance(item, str):
-                        raise ConfigValidationError(
-                            f"Field '{field_name}'[{i}] must be a string, "
-                            f"got {type(item).__name__}: {item!r}"
-                        )
+                        raise ConfigValidationError(f"Field '{field_name}'[{i}] must be a string, got {type(item).__name__}: {item!r}")
 
     def _parse_mounts(self, mounts: list[dict]) -> list[Mount]:
         """Parse mounts from a list of dicts into Mount dataclass instances.
@@ -474,23 +452,16 @@ class ConfigLoader:
         for mount_dict in mounts:
             mount_type = mount_dict.get("type")
             if not isinstance(mount_type, str):
-                raise ConfigValidationError(
-                    f"mount type must be a string, got {type(mount_type).__name__}: "
-                    f"{mount_type!r}"
-                )
+                raise ConfigValidationError(f"mount type must be a string, got {type(mount_type).__name__}: {mount_type!r}")
             if mount_type not in self._VALID_MOUNT_TYPES:
-                raise ConfigValidationError(
-                    f"unknown mount type '{mount_type}'"
-                )
+                raise ConfigValidationError(f"unknown mount type '{mount_type}'")
             validated_mounts.append(Mount(**mount_dict))
         return validated_mounts
         result: list[Mount] = []
 
         for i, m in enumerate(mounts):
             if not isinstance(m, dict):
-                raise ConfigValidationError(
-                    f"mount[{i}] must be a dict, got {type(m).__name__}"
-                )
+                raise ConfigValidationError(f"mount[{i}] must be a dict, got {type(m).__name__}")
 
             mount_type_str = m.get("type", "bind").lower().strip()
             if mount_type_str == "":
@@ -498,8 +469,7 @@ class ConfigLoader:
 
             if mount_type_str not in self._VALID_MOUNT_TYPES:
                 raise ValueError(
-                    f"Mount type '{mount_type_str}' is not valid. "
-                    f"Valid types: {', '.join(sorted(self._VALID_MOUNT_TYPES))}"
+                    f"Mount type '{mount_type_str}' is not valid. Valid types: {', '.join(sorted(self._VALID_MOUNT_TYPES))}"
                 )
 
             mount = Mount(source=None, target=None, type=mount_type_str)
@@ -508,13 +478,9 @@ class ConfigLoader:
                 source = m.get("source")
                 target = m.get("target")
                 if source is None:
-                    raise ConfigValidationError(
-                        f"mount[{i}] with type 'bind' must have a 'source' field"
-                    )
+                    raise ConfigValidationError(f"mount[{i}] with type 'bind' must have a 'source' field")
                 if target is None:
-                    raise ConfigValidationError(
-                        f"mount[{i}] with type 'bind' must have a 'target' field"
-                    )
+                    raise ConfigValidationError(f"mount[{i}] with type 'bind' must have a 'target' field")
                 mount.source = source
                 mount.target = target
 
@@ -522,13 +488,9 @@ class ConfigLoader:
                 source = m.get("source")
                 target = m.get("target")
                 if source is None:
-                    raise ConfigValidationError(
-                        f"mount[{i}] with type 'ro-bind' must have a 'source' field"
-                    )
+                    raise ConfigValidationError(f"mount[{i}] with type 'ro-bind' must have a 'source' field")
                 if target is None:
-                    raise ConfigValidationError(
-                        f"mount[{i}] with type 'ro-bind' must have a 'target' field"
-                    )
+                    raise ConfigValidationError(f"mount[{i}] with type 'ro-bind' must have a 'target' field")
                 mount.source = source
                 mount.target = target
 
@@ -536,13 +498,9 @@ class ConfigLoader:
                 source = m.get("source")
                 target = m.get("target")
                 if source is None:
-                    raise ConfigValidationError(
-                        f"mount[{i}] with type 'dev-bind' must have a 'source' field"
-                    )
+                    raise ConfigValidationError(f"mount[{i}] with type 'dev-bind' must have a 'source' field")
                 if target is None:
-                    raise ConfigValidationError(
-                        f"mount[{i}] with type 'dev-bind' must have a 'target' field"
-                    )
+                    raise ConfigValidationError(f"mount[{i}] with type 'dev-bind' must have a 'target' field")
                 mount.source = source
                 mount.target = target
                 device = m.get("device", False)
@@ -551,9 +509,7 @@ class ConfigLoader:
             elif mount_type_str == "tmpfs":
                 target = m.get("target")
                 if target is None:
-                    raise ConfigValidationError(
-                        f"mount[{i}] with type 'tmpfs' must have a 'target' field"
-                    )
+                    raise ConfigValidationError(f"mount[{i}] with type 'tmpfs' must have a 'target' field")
                 mount.target = target
                 mount.size = m.get("size", "")
 
@@ -574,9 +530,7 @@ class ConfigLoader:
             elif mount_type_str == "dir":
                 target = m.get("target")
                 if target is None:
-                    raise ConfigValidationError(
-                        f"mount[{i}] with type 'dir' must have a 'target' field"
-                    )
+                    raise ConfigValidationError(f"mount[{i}] with type 'dir' must have a 'target' field")
                 mount.target = target
 
             result.append(mount)
@@ -630,29 +584,21 @@ class ConfigLoader:
         if "drop" in caps:
             if not isinstance(caps["drop"], list):
                 raise ConfigValidationError(
-                    f"capabilities.drop must be a list, got "
-                    f"{type(caps['drop']).__name__}. Use: drop: ['ALL'] or drop: []"
+                    f"capabilities.drop must be a list, got {type(caps['drop']).__name__}. Use: drop: ['ALL'] or drop: []"
                 )
             for i, item in enumerate(caps["drop"]):
                 if not isinstance(item, str):
-                    raise ConfigValidationError(
-                        f"capabilities.drop[{i}] must be a string, "
-                        f"got {type(item).__name__}: {item!r}"
-                    )
+                    raise ConfigValidationError(f"capabilities.drop[{i}] must be a string, got {type(item).__name__}: {item!r}")
             dropped = list(caps["drop"])
 
         if "keep" in caps:
             if not isinstance(caps["keep"], list):
                 raise ConfigValidationError(
-                    f"capabilities.keep must be a list, got "
-                    f"{type(caps['keep']).__name__}. Use: keep: ['CAP_CHOWN']"
+                    f"capabilities.keep must be a list, got {type(caps['keep']).__name__}. Use: keep: ['CAP_CHOWN']"
                 )
             for i, item in enumerate(caps["keep"]):
                 if not isinstance(item, str):
-                    raise ConfigValidationError(
-                        f"capabilities.keep[{i}] must be a string, "
-                        f"got {type(item).__name__}: {item!r}"
-                    )
+                    raise ConfigValidationError(f"capabilities.keep[{i}] must be a string, got {type(item).__name__}: {item!r}")
             kept = list(caps["keep"])
 
         return CapabilitySet(dropped=dropped, kept=kept)
@@ -711,21 +657,14 @@ class ConfigLoader:
 
         if not isinstance(unshare, dict):
             raise ConfigValidationError(
-                "unshare must be a dict mapping namespace names to booleans. "
-                f"Got {type(unshare).__name__}: {unshare!r}"
+                f"unshare must be a dict mapping namespace names to booleans. Got {type(unshare).__name__}: {unshare!r}"
             )
 
         for key, value in unshare.items():
             if key not in {"pid", "uts", "ipc", "cgroup", "user", "network"}:
-                raise ConfigValidationError(
-                    f"unshare key '{key}' is not valid. "
-                    f"Valid keys: pid, uts, ipc, cgroup, user, network"
-                )
+                raise ConfigValidationError(f"unshare key '{key}' is not valid. Valid keys: pid, uts, ipc, cgroup, user, network")
             if not isinstance(value, bool):
-                raise ConfigValidationError(
-                    f"unshare.{key} must be a boolean (true/false), "
-                    f"got {type(value).__name__}: {value!r}"
-                )
+                raise ConfigValidationError(f"unshare.{key} must be a boolean (true/false), got {type(value).__name__}: {value!r}")
             namespace_dict[key] = bool(value)
 
         return NamespaceSet(**namespace_dict)
@@ -783,7 +722,7 @@ class ConfigLoader:
             raise FileNotFoundError(f"Config file not found: {path}")
 
         # Parse YAML into raw dict
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
 
         # Validate structure (single gate — no legacy normalization)
