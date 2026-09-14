@@ -262,7 +262,7 @@ Edit `~/.config/agent-nook/sandbox.yaml` to customize:
 - **`die_with_parent`**: Kill sandbox children when parent exits (default: `true`)
 - **`new_session`**: Create a new session (prevents TIOCSTI attacks, default: `true`)
 - **`env_vars`**: Environment variables to set (YAML map: `KEY: value`)
-- **`unenv_vars`**: Environment variables to unset (YAML array: `["PATH", "HOME"]`)
+- **`unset_vars`**: Environment variables to unset (YAML array: `["PATH", "HOME"]`)
 - **`timeout`**: Maximum execution time in seconds (`null` = no timeout)
 
 ### Example: Running an agent with specific capabilities

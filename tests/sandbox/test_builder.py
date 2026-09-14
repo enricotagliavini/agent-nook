@@ -120,7 +120,7 @@ def test_builder_with_unset_env_vars():
         name="test",
         chdir="/tmp",
         mounts=[Mount(type="dir", target="/workspace")],
-        unenv_vars=["PATH", "HOME"],
+        unset_vars=["PATH", "HOME"],
     )
     builder = BwrapBuilder(config)
     cmd = builder.build(["echo", "hello"])
@@ -130,13 +130,13 @@ def test_builder_with_unset_env_vars():
     assert "HOME" in cmd
 
 
-def test_builder_with_all_unenv_vars():
+def test_builder_with_all_unset_vars():
     """Test builder with all environment variables unset."""
     config = SandboxConfig(
         name="test",
         chdir="/tmp",
         mounts=[Mount(type="dir", target="/workspace")],
-        unenv_vars=["ALL"],
+        unset_vars=["ALL"],
     )
     builder = BwrapBuilder(config)
     cmd = builder.build(["echo", "hello"])

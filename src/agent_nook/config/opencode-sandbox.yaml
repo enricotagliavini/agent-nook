@@ -174,13 +174,13 @@ hostname: "agent-sandbox"
 
 # === Environment ===
 # clear the Environment by default
-# unenv_vars:
-#   - ALL
-# env_vars:
-#   - HOME: ${HOME}
-#   - PATH: ${PATH}
-#   - TERM: ${TERM}
-#   - EDITOR: ${EDITOR}
+unset_vars:
+  - ALL
+env_vars:
+  - HOME: ${HOME}
+  - PATH: ${PATH}
+  - TERM: ${TERM}
+  - EDITOR: ${EDITOR:-}
 
 # === Timeout ===
 # Set a timeout in seconds for command execution.

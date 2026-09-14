@@ -165,13 +165,13 @@ def test_sandbox_config_hostname():
     assert "myhost" in cmd
 
 
-def test_sandbox_config_unenv_vars():
-    """Test unenv_vars adds --unsetenv."""
+def test_sandbox_config_unset_vars():
+    """Test unset_vars adds --unsetenv."""
     config = SandboxConfig(
         name="test",
         chdir="/tmp",
         mounts=[Mount(type="proc")],
-        unenv_vars=["PATH", "HOME"],
+        unset_vars=["PATH", "HOME"],
     )
     builder = BwrapBuilder(config)
     cmd = builder.build(["echo", "hello"])

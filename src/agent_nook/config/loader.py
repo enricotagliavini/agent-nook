@@ -85,7 +85,7 @@ class ConfigLoader:
         "hostname": "str | None",
         "timeout": "int | None",
         "env_vars": "dict[str, str]",
-        "unenv_vars": "list[str]",
+        "unset_vars": "list[str]",
     }
 
     _VALID_MOUNT_TYPES = frozenset({"bind", "ro-bind", "dev-bind", "tmpfs", "proc", "dev", "dir"})
@@ -245,7 +245,7 @@ class ConfigLoader:
 
         # Override unset-env
         for var in getattr(args, "unset_env", []):
-            result.setdefault("unenv_vars", []).append(var)
+            result.setdefault("unset_vars", []).append(var)
 
         return result
 
@@ -326,7 +326,7 @@ class ConfigLoader:
         capabilities = self._parse_capabilities(data.get("capabilities", {}))
         unshare = self._parse_unshare(data.get("unshare", {}))
         env_vars = data.get("env_vars", {})
-        unenv_vars = data.get("unenv_vars", [])
+        unset_vars = data.get("unset_vars", [])
         hostname = data.get("hostname")
         timeout = data.get("timeout")
 
@@ -341,7 +341,7 @@ class ConfigLoader:
             hostname=hostname,
             timeout=timeout,
             env_vars=env_vars,
-            unenv_vars=unenv_vars,
+            unset_vars=unset_vars,
         )
 
     def _validate_structure(self, data: dict[str, Any]) -> None:
@@ -389,8 +389,8 @@ class ConfigLoader:
                 value = data.get("unshare", {})
             elif field_name == "env_vars":
                 value = data.get("env_vars", {})
-            elif field_name == "unenv_vars":
-                value = data.get("unenv_vars", [])
+            elif field_name == "unset_vars":
+                value = data.get("unset_vars", [])
             elif field_name == "hostname":
                 value = data.get("hostname")
             elif field_name == "timeout":
@@ -780,7 +780,7 @@ class ConfigLoader:
             hostname=expanded_override.get("hostname", config.hostname),
             timeout=expanded_override.get("timeout", config.timeout),
             env_vars=expanded_override.get("env_vars", config.env_vars),
-            unenv_vars=expanded_override.get("unenv_vars", config.unenv_vars),
+            unset_vars=expanded_override.get("unset_vars", config.unset_vars),
             _raw_config=config._raw_config,
         )
 

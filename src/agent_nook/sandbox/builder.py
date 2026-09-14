@@ -237,7 +237,7 @@ class BwrapBuilder:
         # Environment variables
         for key, value in self._config.env_vars.items():
             args.extend(["--setenv", key, str(value)])
-        for var in self._config.unenv_vars:
+        for var in self._config.unset_vars:
             if var == "ALL":
                 args.append("--clearenv")
             else:

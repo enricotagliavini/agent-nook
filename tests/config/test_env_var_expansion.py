@@ -127,21 +127,21 @@ class TestEnvVarExpansion:
 
         assert config.env_vars["HOME"] == "/custom/home"
 
-    def test_unenv_vars_expansion(self):
-        """Test environment variable expansion in unenv_vars list."""
+    def test_unset_vars_expansion(self):
+        """Test environment variable expansion in unset_vars list."""
         os.environ["VAR1"] = "value1"
         os.environ["VAR2"] = ""
 
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
-                "unenv_vars": ["${VAR1}", "literal", "${VAR2:-default2}"],
+                "unset_vars": ["${VAR1}", "literal", "${VAR2:-default2}"],
             }
         )
 
-        assert config.unenv_vars[0] == "value1"
-        assert config.unenv_vars[1] == "literal"
-        assert config.unenv_vars[2] == "default2"
+        assert config.unset_vars[0] == "value1"
+        assert config.unset_vars[1] == "literal"
+        assert config.unset_vars[2] == "default2"
 
     def test_chdir_expansion(self):
         """Test environment variable expansion in chdir."""

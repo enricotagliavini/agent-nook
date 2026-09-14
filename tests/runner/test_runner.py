@@ -115,13 +115,13 @@ def test_build_command_env_vars():
 
 
 def test_build_command_unset_env_vars():
-    """Test that unenv_vars are added as --unsetenv arguments."""
+    """Test that unset_vars are added as --unsetenv arguments."""
     config = ConfigLoader().set(
         {
             "name": "test",
             "chdir": "/tmp",
             "mounts": [{"source": "/", "target": "/", "type": "bind"}],
-            "unenv_vars": ["VAR1", "VAR2"],
+            "unset_vars": ["VAR1", "VAR2"],
         }
     )
     cmd = BwrapSandbox.build_command(config)
