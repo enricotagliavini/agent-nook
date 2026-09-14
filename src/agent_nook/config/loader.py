@@ -733,11 +733,12 @@ class ConfigLoader:
         # Groups: 1=full match, 2=var name, 3=default value (optional)
         pattern = re.compile(r"\$\{([^:}]+)(?::-([^}]*))?\}")
 
+        # Use finditer with match tracking to handle consecutive variables
+        last_end = 0
         for match in pattern.finditer(value):
-            # Append text before the match
-            start = match.start()
-            if start > 0:
-                result.append(value[start : match.start()])
+            # Append text between last match and this match
+            if match.start() > last_end:
+                result.append(value[last_end : match.start()])
 
             var_name = match.group(1)
             default_value = match.group(2)
@@ -755,8 +756,10 @@ class ConfigLoader:
                 # No default provided, keep literal
                 result.append(match.group(0))
 
+            # Update last_end to current match end
+            last_end = match.end()
+
         # Append any remaining text after the last match
-        last_end = pattern.search(value).end() if pattern.search(value) else 0
         if last_end < len(value):
             result.append(value[last_end:])
 

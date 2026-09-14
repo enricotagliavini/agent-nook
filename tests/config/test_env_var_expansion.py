@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import os
 
-import pytest
-
 from agent_nook.config.loader import ConfigLoader
 
 
@@ -270,5 +268,120 @@ mounts:
         assert config.mounts[0].source == "$LITERAL"
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+class TestCustomExpandEnvVarsRegex:
+    """Direct tests for the _custom_expand_env_vars regex method.
+
+    These tests stress-test the regex pattern at its weakest points
+    to ensure robustness and maintain the quality of the implementation.
+    """
+
+    def setup_method(self):
+        """Reset environment variables before each test."""
+        self.original_vars = {}
+        for var in ["REGEX_VAR1", "REGEX_VAR2", "REGEX_VAR3", "EMPTY_DEFAULT"]:
+            self.original_vars[var] = os.environ.get(var)
+            if var in os.environ:
+                del os.environ[var]
+
+    def teardown_method(self):
+        """Restore original environment variables."""
+        for var, value in self.original_vars.items():
+            if value is not None:
+                os.environ[var] = value
+            elif var in os.environ:
+                del os.environ[var]
+
+    def test_multiple_variables_in_single_string(self):
+        """Test expansion when multiple variables appear in one string."""
+        os.environ["REGEX_VAR1"] = "value1"
+        os.environ["REGEX_VAR2"] = "value2"
+
+        result = ConfigLoader()._custom_expand_env_vars("/home/${REGEX_VAR1}/path/${REGEX_VAR2}/end")
+        assert result == "/home/value1/path/value2/end"
+
+    def test_variable_at_string_boundaries(self):
+        """Test variables at start, middle, and end of string."""
+        os.environ["START"] = "s"
+        os.environ["END"] = "e"
+
+        result = ConfigLoader()._custom_expand_env_vars("${START}middle${END}")
+        assert result == "smiddlee"
+
+    def test_multiple_colons_in_default(self):
+        """Test that colons in default values are preserved."""
+        # Use an undefined variable to test the default value
+        result = ConfigLoader()._custom_expand_env_vars("${UNDEFINED:-/usr/bin:/bin:/usr/local/bin}")
+        # The default should be preserved with all its colons
+        assert "/usr/bin" in result
+        assert "/usr/local/bin" in result
+        assert ":/" in result  # Colons preserved in default
+
+    def test_very_long_default_value(self):
+        """Test expansion with very long default values."""
+        long_default = "/very/long/path/with/many/components/" * 100
+        result = ConfigLoader()._custom_expand_env_vars("${VAR:-" + long_default + "}")
+        assert result == long_default
+        assert len(result) == len(long_default)
+
+    def test_braces_in_default_value(self):
+        """Test that closing braces in defaults are handled correctly."""
+        # The regex stops at the first }, so "default" is the default value
+        # and "with}brace}" is literal text that gets added
+        result = ConfigLoader()._custom_expand_env_vars("${VAR:-default}with}brace}")
+        # Should have the default value followed by literal "with}brace}"
+        assert result == "defaultwith}brace}"
+
+    def test_empty_variable_name_unchanged(self):
+        """Test that malformed empty variable names remain literal."""
+        result = ConfigLoader()._custom_expand_env_vars("${}value")
+        assert result == "${}value"
+
+    def test_empty_default_value_uses_empty(self):
+        """Test ${VAR:-} uses empty string as explicit default."""
+        os.environ["EMPTY_DEFAULT"] = ""
+        result = ConfigLoader()._custom_expand_env_vars("${EMPTY_DEFAULT:-}suffix")
+        assert result == "suffix"
+
+    def test_no_variable_expands_literal(self):
+        """Test that non-matching patterns remain unchanged."""
+        result = ConfigLoader()._custom_expand_env_vars("no variable here ${UNSET} or ${MISSING:-/fallback}")
+        assert "${UNSET}" in result
+        # The fallback default IS expanded since MISSING is unset
+        assert "/fallback" in result
+        assert "or " in result
+
+    def test_unicode_characters_in_values(self):
+        """Test expansion with unicode in variable values."""
+        os.environ["UNICODE_VAR"] = "/path/àáâ/中文/emoji🎉"
+        result = ConfigLoader()._custom_expand_env_vars("${UNICODE_VAR}")
+        assert result == "/path/àáâ/中文/emoji🎉"
+
+    def test_closing_brace_in_default_not_misinterpreted(self):
+        """Ensure ${ in default doesn't cause regex issues."""
+        # The regex stops at the first }, so "a${b" is captured as default
+        # Since VAR1 is set, we use its value "ignored"
+        # The remaining text after the match is "c}"
+        os.environ["VAR1"] = "ignored"
+        result = ConfigLoader()._custom_expand_env_vars("${VAR1:-a${b}c}")
+        # Result is env value "ignored" + remaining text "c}"
+        assert result == "ignoredc}"
+
+    def test_variable_name_with_underscore_and_dash(self):
+        """Test variable names with underscores and dashes."""
+        os.environ["REGEX_VAR_NAME"] = "value"
+        os.environ["REGEX-VAR-NAME"] = "value2"
+        result = ConfigLoader()._custom_expand_env_vars("${REGEX_VAR_NAME} ${REGEX-VAR-NAME}")
+        assert result == "value value2"
+
+    def test_whitespace_around_pattern(self):
+        """Test that whitespace is preserved correctly."""
+        result = ConfigLoader()._custom_expand_env_vars(" before ${VAR} after ${UNSET:-fallback} end")
+        assert " before " in result
+        assert " after " in result
+        assert "end" in result
+
+    def test_special_regex_characters_in_values(self):
+        """Test that special regex chars in values don't break matching."""
+        os.environ["SPECIAL"] = "/path/[glob]/pattern(*)/file(1)"
+        result = ConfigLoader()._custom_expand_env_vars("${SPECIAL}")
+        assert result == "/path/[glob]/pattern(*)/file(1)"
