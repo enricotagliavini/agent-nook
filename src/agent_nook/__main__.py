@@ -15,11 +15,24 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 from pathlib import Path
 
 __version__ = "0.1.0"
+
+
+def _setup_logging(verbose: bool) -> None:
+    """Initialize logging at startup.
+
+    This must be called early in the application lifecycle,
+    before importing modules that use the logger.
+    """
+    from agent_nook.utils.logger import main_logger
+
+    logger = main_logger("agent_nook", level="DEBUG" if verbose else "INFO")
+    logger.debug("Logger initialized")
 
 
 def main() -> int:
@@ -198,6 +211,9 @@ def main() -> int:
     if args.verbose:
         os.environ["PYTHONVERBOSE"] = "1"
 
+    # Initialize logging early, before any modules are imported
+    _setup_logging(args.verbose)
+
     try:
         return _dispatch_command(args)
     except KeyboardInterrupt:
@@ -232,10 +248,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
     """Run a command inside a sandbox."""
     from agent_nook.config.loader import ConfigLoader, ConfigValidationError
     from agent_nook.sandbox import BwrapError, BwrapSandbox
-    from agent_nook.utils.logger import setup_logger
 
-    # Setup logging
-    logger = setup_logger("agent_nook", level="INFO" if not args.verbose else "DEBUG")
+    # Logging is already initialized by _setup_logging()
+    logger = logging.getLogger("agent_nook")
     logger.info("Agent Nook v%s — Running command", __version__)
 
     # Unified config loading: handles file resolution, validation, overrides, and construction
@@ -292,10 +307,10 @@ def _cmd_init(args: argparse.Namespace) -> int:
     from agent_nook.config import get_config_path
     from agent_nook.config.loader import ConfigLoader
     from agent_nook.utils.directories import ensure_directories
-    from agent_nook.utils.logger import get_state_dir, setup_logger
+    from agent_nook.utils.logger import get_state_dir
 
-    logger = setup_logger("agent_nook", level="DEBUG")
-    logger.info("Initializing Agent Nook config...")
+    logger = logging.getLogger("agent_nook")
+    logger.debug("Initializing Agent Nook config...")
 
     config_path = get_config_path()
     config_dir = Path(config_path).parent
@@ -327,9 +342,8 @@ def _cmd_init(args: argparse.Namespace) -> int:
 def _cmd_status(args: argparse.Namespace) -> int:
     """Display agent-nook status."""
     from agent_nook.config import get_config_path
-    from agent_nook.utils.logger import setup_logger
 
-    logger = setup_logger("agent_nook", level="INFO")
+    logger = logging.getLogger("agent_nook")
     logger.info("Agent Nook Status")
     logger.info("=" * 40)
 
@@ -377,9 +391,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 def _cmd_logs(args: argparse.Namespace) -> int:
     """Show recent logs."""
-    from agent_nook.utils.logger import get_log_directory, setup_logger
+    from agent_nook.utils.logger import get_log_directory
 
-    logger = setup_logger("agent_nook", level="INFO")
+    logger = logging.getLogger("agent_nook")
     logger.info("Showing last %d lines of logs...", args.tail)
 
     log_dir = get_log_directory()
@@ -405,9 +419,7 @@ def _cmd_logs(args: argparse.Namespace) -> int:
 
 def _cmd_list(args: argparse.Namespace) -> int:
     """List available sandboxes (placeholder)."""
-    from agent_nook.utils.logger import setup_logger
-
-    logger = setup_logger("agent_nook", level="INFO")
+    logger = logging.getLogger("agent_nook")
     logger.info("Agent Nook — Available Sandboxes")
     logger.info("=" * 40)
     logger.info("No custom sandboxes configured.")

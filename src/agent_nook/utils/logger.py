@@ -8,11 +8,15 @@ Environment variables respected:
 - XDG_CONFIG_HOME -> ~/.config/agent-nook/logging.yaml
 
 Usage:
-    from agent_nook.utils import logger
+    from agent_nook.utils.logger import main_logger
 
-    log = logger.setup_logger("my_module", level="DEBUG")
+    # Initialize logging (call once at application startup)
+    logger = main_logger()
+    logger.info("This is an info message")
+
+    # Get child loggers (automatically configured)
+    log = logger.getChild("my_module")
     log.debug("This is a debug message")
-    log.info("This is an info message")
 """
 
 from __future__ import annotations
@@ -22,6 +26,13 @@ import logging.handlers
 import os
 import sys
 from pathlib import Path
+
+
+# Module-level initialization flag
+_initialized: bool = False
+
+# Cached logger instance
+_logger: logging.Logger | None = None
 
 
 def get_state_dir() -> str:
@@ -59,13 +70,15 @@ def get_log_file_path() -> str:
     return os.path.join(get_state_dir(), "logs", "agent-nook.log")
 
 
-def setup_logger(
+def _setup_logger(
     name: str = "agent_nook",
     level: str = "INFO",
     use_file: bool = True,
     use_console: bool = True,
 ) -> logging.Logger:
-    """Configure and return a logger for Agent Nook.
+    """Internal function to configure and return a logger for Agent Nook.
+
+    This function is private and should only be called by main_logger().
 
     Args:
         name: The logger name.
@@ -87,11 +100,11 @@ def setup_logger(
     logger = logging.getLogger(name)
     logger.setLevel(log_level)
 
-    # Avoid duplicate handlers if logger already has handlers
+    # Check if already configured (has handlers)
     if logger.handlers:
         return logger
 
-    # Format
+    # Create formatter (used by file and console handlers below)
     formatter = logging.Formatter(
         fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
@@ -128,6 +141,10 @@ def setup_logger(
             )
 
             try:
+                formatter = logging.Formatter(
+                    fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                    datefmt="%Y-%m-%d %H:%M:%S",
+                )
                 handler = logging.handlers.RotatingFileHandler(
                     log_file,
                     maxBytes=10 * 1024 * 1024,
@@ -157,66 +174,50 @@ def setup_logger(
     return logger
 
 
-# --- Convenience ---
-
-def get_logger(name: str | None = None) -> logging.Logger:
-    """Get or create a logger with default configuration.
-
-    Args:
-        name: Optional logger name. Defaults to "agent_nook".
-
-    Returns:
-        A configured logging.Logger.
-    """
-    default_name = name or "agent_nook"
-    logger = logging.getLogger(default_name)
-
-    if not logger.handlers:
-        setup_logger(name=default_name, level="INFO")
-
-    return logger
-
-
 def main_logger(name: str = "agent_nook", level: str = "INFO") -> logging.Logger:
     """Set up logging and return the logger.
 
     This is the main entry point for setting up logging.
     It configures the logger with INFO level by default.
 
+    Usage:
+        from agent_nook.utils.logger import main_logger
+        logger = main_logger()
+        logger.info("Application started")
+
     Args:
-        name: Logger name.
-        level: Log level.
+        name: Logger name. Defaults to "agent_nook".
+        level: Log level. Defaults to "INFO".
 
     Returns:
-        Configured logger.
+        Configured logger instance.
+
+    Note:
+        This function ensures logging is initialized exactly once.
+        Subsequent calls return the appropriate logger for the given module name.
+        All loggers will inherit the root "agent_nook" logger's handlers and formatters.
     """
+    global _initialized, _logger
+
+    # Ensure the root "agent_nook" logger is initialized first
+    # This must be done before returning any logger, to ensure all loggers
+    # share the same handlers and formatters.
+    if not _initialized:
+        root_logger = logging.getLogger("agent_nook")
+        root_logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+
+        # Use the internal _setup_logger() to configure the root logger
+        _setup_logger(
+            name="agent_nook",
+            level=level,
+            use_file=True,
+            use_console=True,
+        )
+
+        _initialized = True
+        _logger = root_logger
+
+    # Return the logger for the requested name (will inherit root handlers)
     logger = logging.getLogger(name)
-    logger.setLevel(getattr(logging, level.upper(), logging.INFO))
-
-    formatter = logging.Formatter(
-        fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    # File handler
-    log_dir = get_log_directory()
-    os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, "agent-nook.log")
-
-    fh = logging.handlers.RotatingFileHandler(
-        log_file,
-        maxBytes=10 * 1024 * 1024,
-        backupCount=10,
-        encoding="utf-8",
-    )
-    fh.setLevel(logging.DEBUG)
-    fh.setFormatter(formatter)
-    logger.addHandler(fh)
-
-    # Console handler
-    ch = logging.StreamHandler(sys.stdout)
-    ch.setLevel(logging.INFO)
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
-
+    logger.propagate = True  # Ensure messages propagate to root logger
     return logger
