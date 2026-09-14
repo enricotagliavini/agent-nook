@@ -11,16 +11,9 @@ from __future__ import annotations
 
 import os
 
+
 from agent_nook.config.loader import ConfigLoader, ConfigValidationError
-
-# Lazy import to avoid circular dependency
-_get_state_dir: annotations.Callable[[], str]
-
-
-def _get_state_dir() -> str:
-    """Get the state directory path from XDG_STATE_HOME."""
-    xdg_state = os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state"))
-    return os.path.join(xdg_state, "agent-nook")
+from agent_nook.utils.logger import get_log_directory, get_log_file_path
 
 
 def get_config_path() -> str:
@@ -40,29 +33,10 @@ def get_config_path() -> str:
     return os.path.join(xdg_config, "agent-nook", "sandbox.yaml")
 
 
-def get_state_dir() -> str:
-    """Resolve the state directory path using XDG_STATE_HOME.
-
-    Reads XDG_STATE_HOME from the environment, falls back to
-    ~/.local/state if not set.
-
-    Returns:
-        The full path to the state directory.
-
-    Example:
-        >>> get_state_dir()
-        '/home/username/.local/state/agent-nook'
-    """
-    xdg_state = os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state"))
-    return os.path.join(xdg_state, "agent-nook")
-
-
 __all__ = [
     "get_config_path",
-    "get_state_dir",
+    "get_log_directory",
+    "get_log_file_path",
     "ConfigLoader",
     "ConfigValidationError",
-    "nook_config",
-    "set_config",
-    "reset_config",
 ]

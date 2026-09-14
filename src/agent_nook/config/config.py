@@ -55,11 +55,12 @@ Each layer has a distinct purpose:
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 from dataclasses import dataclass, field
 
-logger = logging.getLogger(__name__)
+from agent_nook.utils.logger import main_logger
+
+_logger = main_logger(__name__)
 
 
 @dataclass
@@ -441,9 +442,7 @@ class SandboxConfig:
         performs runtime checks that cannot be expressed in the canonical schema:
           - unshare.network implies unshare.uts and unshare.ipc
         """
-        # Validate unshare namespaces
         if self.unshare.network:
-            # --unshare-net implies --unshare-uts and --unshare-ipc
             if not self.unshare.uts:
                 self.unshare.uts = True
             if not self.unshare.ipc:

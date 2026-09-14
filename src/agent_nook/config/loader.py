@@ -7,6 +7,7 @@ The canonical format is enforced at load time with zero tolerance for deviations
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import yaml
@@ -606,16 +607,15 @@ class ConfigLoader:
     def _copy_to_user_config_dir(self, data: dict[str, Any]) -> str:
         """Copy the bundled default config to the user config directory."""
         import shutil
-        from pathlib import Path
 
         source = self.find_default_config_path()
-        dest = str(Path("~/.config/agent-nook/sandbox.yaml").expanduser())
+        dest = os.path.join(os.path.expanduser("~/.config"), "agent-nook", "sandbox.yaml")
 
-        Path(dest).parent.mkdir(parents=True, exist_ok=True)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
         shutil.copy2(source, dest)
 
         logger.info("Default sandbox config copied to %s", dest)
-        return str(Path(dest).resolve())
+        return dest
 
     def load(self, path: str | None = None) -> SandboxConfig:
         """Load and validate configuration from a YAML file.

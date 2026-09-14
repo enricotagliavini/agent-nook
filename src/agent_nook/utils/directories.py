@@ -8,10 +8,11 @@ loading/validation, not filesystem operations.
 from __future__ import annotations
 
 import os
-import logging
 from typing import Sequence
 
-logger = logging.getLogger(__name__)
+from agent_nook.utils.logger import main_logger
+
+_logger = main_logger(__name__)
 
 
 def ensure_directories(paths: Sequence[str]) -> None:
@@ -24,6 +25,7 @@ def ensure_directories(paths: Sequence[str]) -> None:
         >>> ensure_directories(["/tmp/foo", "/tmp/bar"])
     """
     for path in paths:
+        _logger.debug("Creating directory: %s", path)
         os.makedirs(path, exist_ok=True)
 
 

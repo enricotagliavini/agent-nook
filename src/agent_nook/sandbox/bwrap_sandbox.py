@@ -18,7 +18,6 @@ Usage:
         print(result.stdout)
 """
 
-import logging
 import subprocess
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -29,15 +28,16 @@ if TYPE_CHECKING:
 try:
     from agent_nook.runner import BwrapError, SandboxExecutionError
 except ImportError:
-    BwrapError = RuntimeError  # Fallback: runner module removed
-    SandboxExecutionError = RuntimeError  # Fallback: runner module removed
+    BwrapError = RuntimeError
+    SandboxExecutionError = RuntimeError
 
 from agent_nook.config.config import SandboxConfig
 from agent_nook.sandbox.builder import BwrapBuilder
+from agent_nook.utils.logger import main_logger
 from pathlib import Path
 
-# Module-level logger
-_logger = logging.getLogger("agent_nook.sandbox")
+# Module-level logger — uses centralized main_logger
+_logger = main_logger(__name__)
 
 __all__ = ["BwrapError", "BwrapSandbox", "SandboxExecutionError", "SandboxResult", "SandboxConfig"]
 

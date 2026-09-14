@@ -230,11 +230,11 @@ def _dispatch_command(args: argparse.Namespace) -> int:
 
 def _cmd_run(args: argparse.Namespace) -> int:
     """Run a command inside a sandbox."""
-    from agent_nook.config import get_config_path, get_state_dir
+    from agent_nook.config import get_config_path
     from agent_nook.config.loader import ConfigLoader, ConfigValidationError
     from agent_nook.sandbox import BwrapError, BwrapSandbox, SandboxConfig
     from agent_nook.utils.directories import ensure_directories
-    from agent_nook.utils.logger import setup_logger
+    from agent_nook.utils.logger import get_state_dir, setup_logger
 
     # Setup logging
     logger = setup_logger("agent_nook", level="INFO" if not args.verbose else "DEBUG")
@@ -320,9 +320,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 def _cmd_init(args: argparse.Namespace) -> int:
     """Initialize the agent-nook config file."""
-    from agent_nook.config import get_config_path, get_state_dir
+    from agent_nook.config import get_config_path
     from agent_nook.config.loader import ConfigLoader
-    from agent_nook.utils.logger import setup_logger
+    from agent_nook.utils.logger import get_state_dir, setup_logger
     from agent_nook.utils.directories import ensure_directories
 
     logger = setup_logger("agent_nook", level="DEBUG")

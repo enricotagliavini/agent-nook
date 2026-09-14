@@ -22,19 +22,42 @@ import sys
 import logging
 import logging.handlers
 from typing import Optional
+from pathlib import Path
 
-from agent_nook.config import get_state_dir
+
+def get_state_dir() -> str:
+    """Resolve the state directory path using XDG_STATE_HOME.
+
+    Reads XDG_STATE_HOME from the environment, falls back to
+    ~/.local/state if not set.
+
+    Returns:
+        The absolute path to the state directory.
+    """
+    state_dir = os.environ.get("XDG_STATE_HOME")
+    if not state_dir:
+        state_dir = os.path.expanduser("~/.local/state")
+    return Path(state_dir).expanduser()
 
 
 def get_log_directory() -> str:
-    """Get the log directory path."""
-    state_dir = get_state_dir()
-    return os.path.join(state_dir, "logs")
+    """Get the log directory path.
+
+    Returns:
+        The absolute path to the log directory
+        (e.g., ~/.local/state/agent-nook/logs).
+    """
+    return os.path.join(get_state_dir(), "logs")
 
 
 def get_log_file_path() -> str:
-    """Get the path to the main log file."""
-    return os.path.join(get_log_directory(), "agent-nook.log")
+    """Get the path to the main log file.
+
+    Returns:
+        The absolute path to the log file
+        (e.g., ~/.local/state/agent-nook/logs/agent-nook.log).
+    """
+    return os.path.join(get_state_dir(), "logs", "agent-nook.log")
 
 
 def setup_logger(
