@@ -203,19 +203,16 @@ def main_logger(name: str = "agent_nook", level: str = "INFO") -> logging.Logger
     # This must be done before returning any logger, to ensure all loggers
     # share the same handlers and formatters.
     if not _initialized:
-        root_logger = logging.getLogger("agent_nook")
-        root_logger.setLevel(getattr(logging, level.upper(), logging.INFO))
-
-        # Use the internal _setup_logger() to configure the root logger
-        _setup_logger(
+        # Call _setup_logger() which will return the configured logger
+        # We must use the returned logger to ensure all references point
+        # to the same configured instance
+        _logger = _setup_logger(
             name="agent_nook",
             level=level,
             use_file=True,
             use_console=True,
         )
-
         _initialized = True
-        _logger = root_logger
 
     # Return the logger for the requested name (will inherit root handlers)
     logger = logging.getLogger(name)
