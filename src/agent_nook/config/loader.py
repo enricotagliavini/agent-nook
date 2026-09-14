@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 from typing import Any
 
 import yaml
@@ -304,10 +305,19 @@ class ConfigLoader:
     def _parse_config(self, data: dict[str, Any]) -> SandboxConfig:
         """Parse raw config data into a SandboxConfig.
 
+        The parsing pipeline:
+          1. Expand environment variables (${VAR}, ${VAR:-default})
+          2. Validate structure against canonical schema
+          3. Parse mounts, capabilities, unshare settings into dataclasses
+          4. Return fully-validated SandboxConfig
+
         Raises:
             ConfigValidationError: If the data does not match the canonical schema.
             ValueError: If mount types are invalid.
         """
+        # Expand environment variables (supports ${VAR} and ${VAR:-default} syntax)
+        data = self._expand_env_vars(data)
+
         # Validate field presence and types (strict, no coercion)
         self._validate_structure(data)
 
@@ -669,20 +679,105 @@ class ConfigLoader:
 
         return NamespaceSet(**namespace_dict)
 
+    def _expand_env_vars(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Expand environment variables in string values.
+
+        Supports:
+          - ${VAR} - Expand to value of VAR
+          - ${VAR:-default} - Expand to default if VAR is unset or empty
+          - ${VAR:-${OTHER}} - Nested defaults (single level only)
+
+        This is called during config parsing, before validation, so that
+        environment variables in mount sources, targets, and other string
+        fields are expanded automatically.
+
+        Undefined variables are left as-is (literal ${VAR} remains).
+
+        Args:
+            data: Raw configuration dictionary.
+
+        Returns:
+            New dictionary with environment variables expanded.
+        """
+
+        def _expand_value(value: Any) -> Any:
+            """Recursively expand environment variables in a value."""
+            if isinstance(value, str):
+                # Custom expansion that supports both ${VAR} and ${VAR:-default}
+                return self._custom_expand_env_vars(value)
+            elif isinstance(value, dict):
+                return {k: _expand_value(v) for k, v in value.items()}
+            elif isinstance(value, list):
+                return [_expand_value(item) for item in value]
+            return value
+
+        return {k: _expand_value(v) for k, v in data.items()}
+
+    def _custom_expand_env_vars(self, value: str) -> str:
+        """Custom environment variable expansion supporting :- default syntax.
+
+        Expands ${VAR} and ${VAR:-default} patterns in a string.
+        Returns the expanded value or the original string if no matches.
+
+        Args:
+            value: Input string to expand.
+
+        Returns:
+            String with environment variables expanded.
+        """
+        if not value or not isinstance(value, str):
+            return value
+
+        result: list[str] = []
+        # Pattern to match ${VAR} or ${VAR:-default}
+        # Groups: 1=full match, 2=var name, 3=default value (optional)
+        pattern = re.compile(r"\$\{([^:}]+)(?::-([^}]*))?\}")
+
+        for match in pattern.finditer(value):
+            # Append text before the match
+            start = match.start()
+            if start > 0:
+                result.append(value[start : match.start()])
+
+            var_name = match.group(1)
+            default_value = match.group(2)
+
+            # Get environment variable or use default
+            env_value = os.environ.get(var_name)
+
+            if env_value is not None and env_value != "":
+                # Variable is set and non-empty, use its value
+                result.append(env_value)
+            # Variable is unset or empty, use default or literal ${var}
+            elif default_value is not None:
+                result.append(default_value)
+            else:
+                # No default provided, keep literal
+                result.append(match.group(0))
+
+        # Append any remaining text after the last match
+        last_end = pattern.search(value).end() if pattern.search(value) else 0
+        if last_end < len(value):
+            result.append(value[last_end:])
+
+        return "".join(result)
+
     def _merge(self, config: SandboxConfig, override: dict[str, Any]) -> SandboxConfig:
         """Merge override values into a config."""
+        # Expand environment variables in overrides before merging
+        expanded_override = self._expand_env_vars(override)
         return SandboxConfig(
             name=config.name,
             chdir=config.chdir,
             mounts=config.mounts,
             capabilities=config.capabilities,
             unshare=config.unshare,
-            die_with_parent=override.get("die_with_parent", config.die_with_parent),
-            new_session=override.get("new_session", config.new_session),
-            hostname=override.get("hostname", config.hostname),
-            timeout=override.get("timeout", config.timeout),
-            env_vars=override.get("env_vars", config.env_vars),
-            unenv_vars=override.get("unenv_vars", config.unenv_vars),
+            die_with_parent=expanded_override.get("die_with_parent", config.die_with_parent),
+            new_session=expanded_override.get("new_session", config.new_session),
+            hostname=expanded_override.get("hostname", config.hostname),
+            timeout=expanded_override.get("timeout", config.timeout),
+            env_vars=expanded_override.get("env_vars", config.env_vars),
+            unenv_vars=expanded_override.get("unenv_vars", config.unenv_vars),
             _raw_config=config._raw_config,
         )
 
