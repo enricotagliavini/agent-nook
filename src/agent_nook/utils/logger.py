@@ -17,11 +17,10 @@ Usage:
 
 from __future__ import annotations
 
-import os
-import sys
 import logging
 import logging.handlers
-from typing import Optional
+import os
+import sys
 from pathlib import Path
 
 
@@ -160,7 +159,7 @@ def setup_logger(
 
 # --- Convenience ---
 
-def get_logger(name: Optional[str] = None) -> logging.Logger:
+def get_logger(name: str | None = None) -> logging.Logger:
     """Get or create a logger with default configuration.
 
     Args:

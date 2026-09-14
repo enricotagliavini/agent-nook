@@ -31,15 +31,16 @@ except ImportError:
     BwrapError = RuntimeError
     SandboxExecutionError = RuntimeError
 
+from pathlib import Path
+
 from agent_nook.config.config import SandboxConfig
 from agent_nook.sandbox.builder import BwrapBuilder
 from agent_nook.utils.logger import main_logger
-from pathlib import Path
 
 # Module-level logger — uses centralized main_logger
 _logger = main_logger(__name__)
 
-__all__ = ["BwrapError", "BwrapSandbox", "SandboxExecutionError", "SandboxResult", "SandboxConfig"]
+__all__ = ["BwrapError", "BwrapSandbox", "SandboxConfig", "SandboxExecutionError", "SandboxResult"]
 
 
 @dataclass
@@ -72,7 +73,6 @@ class SandboxResult:
     def __exit__(self, exc_type: type | None, exc_val: BaseException | None,
                  exc_tb: object | None) -> None:
         """Context manager exit - no-op for clean exit paths."""
-        pass
 
 
 class BwrapSandbox:
@@ -192,11 +192,13 @@ class BwrapSandbox:
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                check=False,
             )
         else:
             result = subprocess.run(
                 bwrap_cmd,
                 timeout=timeout,
+                check=False,
             )
 
         # Check for bwrap-specific errors
@@ -253,7 +255,7 @@ class BwrapSandbox:
         cls,
         path: str | Path,
         command: list[str] | None = None,
-    ) -> BwrapSandbox:
+    ) -> "BwrapSandbox":
         """Load config from a file and create a BwrapSandbox.
 
         Args:
@@ -270,4 +272,4 @@ class BwrapSandbox:
         return cls(config=config, command=command)
 
 
-__all__ = ["BwrapError", "BwrapSandbox", "SandboxExecutionError", "SandboxResult", "SandboxConfig"]
+__all__ = ["BwrapError", "BwrapSandbox", "SandboxConfig", "SandboxExecutionError", "SandboxResult"]

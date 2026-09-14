@@ -40,7 +40,7 @@ def main() -> int:
     parser.add_argument(
         "--config",
         default=None,
-        help="Override config file path (default: ~/.config/agent-nook/sandbox.yaml)" 
+        help="Override config file path (default: ~/.config/agent-nook/sandbox.yaml)"
     )
 
     subparsers = parser.add_subparsers(dest="subcommand", help="Available commands")
@@ -230,57 +230,26 @@ def _dispatch_command(args: argparse.Namespace) -> int:
 
 def _cmd_run(args: argparse.Namespace) -> int:
     """Run a command inside a sandbox."""
-    from agent_nook.config import get_config_path
     from agent_nook.config.loader import ConfigLoader, ConfigValidationError
-    from agent_nook.sandbox import BwrapError, BwrapSandbox, SandboxConfig
-    from agent_nook.utils.directories import ensure_directories
-    from agent_nook.utils.logger import get_state_dir, setup_logger
+    from agent_nook.sandbox import BwrapError, BwrapSandbox
+    from agent_nook.utils.logger import setup_logger
 
     # Setup logging
     logger = setup_logger("agent_nook", level="INFO" if not args.verbose else "DEBUG")
     logger.info("Agent Nook v%s — Running command", __version__)
 
-    # Resolve config file path and state directory using XDG paths
-    config_path = get_config_path()
-    state_dir = get_state_dir()
-
-    config_dir = Path(config_path).parent
-    ensure_directories([config_dir, state_dir, os.path.join(state_dir, "logs")])
-
-    # Setup config
-    config_loader = ConfigLoader(config_path)
-
-    # Load configuration
+    # Unified config loading: handles file resolution, validation, overrides, and construction
     try:
-        if hasattr(args, "config") and args.config:
-            # Override config path with CLI argument
-            config_dict = config_loader.load(args.config)
-        else:
-            # Find and load the bundled default config
-            config_path = config_loader.find_default_config_path()
-            config_dict = config_loader.load(config_path)
-
+        config_loader = ConfigLoader(None)  # Let load_with_overrides resolve the path
+        config = config_loader.load_with_overrides(args)
     except FileNotFoundError as e:
         logger.error("Config file not found: %s", e)
         return 1
     except ConfigValidationError as e:
         logger.error("Configuration validation failed: %s", e)
         return 1
-    except Exception as e:
+    except RuntimeError as e:
         logger.error("Failed to load config: %s", e)
-        return 1
-
-    # Apply CLI overrides to config
-    config_dict = _apply_cli_overrides(dict(config_dict.__dict__), args)
-
-    # Build SandboxConfig from the normalized dict
-    try:
-        config = SandboxConfig(**config_dict)
-    except TypeError as e:
-        logger.error("Configuration error: %s", e)
-        return 1
-    except ConfigValidationError as e:
-        logger.error("Configuration validation failed: %s", e)
         return 1
 
     # Build the command from positional args
@@ -313,8 +282,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
     except BwrapError as e:
         logger.error("Bubblewrap error: %s", e)
         return 1
-    except Exception as e:
-        logger.exception("Unexpected error: %s", e)
+    except Exception:
+        logger.exception("Unexpected error")
         return 1
 
 
@@ -322,8 +291,8 @@ def _cmd_init(args: argparse.Namespace) -> int:
     """Initialize the agent-nook config file."""
     from agent_nook.config import get_config_path
     from agent_nook.config.loader import ConfigLoader
-    from agent_nook.utils.logger import get_state_dir, setup_logger
     from agent_nook.utils.directories import ensure_directories
+    from agent_nook.utils.logger import get_state_dir, setup_logger
 
     logger = setup_logger("agent_nook", level="DEBUG")
     logger.info("Initializing Agent Nook config...")
@@ -356,14 +325,19 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
+    """Display agent-nook status."""
+    from agent_nook.config import get_config_path
+    from agent_nook.utils.logger import setup_logger
 
-    logger = setup_logger("agent_nook", level="INFO" if args.verbose else "INFO")
+    logger = setup_logger("agent_nook", level="INFO")
     logger.info("Agent Nook Status")
     logger.info("=" * 40)
 
     import subprocess
     try:
-        result = subprocess.run(["bwrap", "--version"], capture_output=True, text=True, timeout=5)
+        result = subprocess.run(
+            ["bwrap", "--version"], capture_output=True, text=True, timeout=5, check=False
+        )
         if result.returncode == 0:
             logger.info("  Bubblewrap version: %s", result.stdout.strip())
         else:
@@ -422,7 +396,7 @@ def _cmd_logs(args: argparse.Namespace) -> int:
 
         for line in reversed(lines):
             logger.info(line.strip())
-    except Exception as e:
+    except OSError as e:
         logger.error("Failed to read logs: %s", e)
         return 1
 
@@ -442,88 +416,6 @@ def _cmd_list(args: argparse.Namespace) -> int:
     logger.info("or by adding entries to the --mounts option.")
 
     return 0
-
-
-def _apply_cli_overrides(config_dict: dict, args: argparse.Namespace) -> dict[str, Any]:
-    """Apply command-line argument overrides to the config.
-
-    Args:
-        config_dict: The configuration dictionary (already a SandboxConfig.__dict__).
-        args: Parsed CLI arguments.
-
-    Returns:
-        A new SandboxConfig with CLI overrides applied.
-    """
-    # Convert to dict, mutate, then rebuild SandboxConfig
-    result = config_dict.copy()
-
-    # Override chdir
-    if hasattr(args, "chdir") and args.chdir:
-        result["chdir"] = args.chdir
-
-    # Override die_with_parent
-    if hasattr(args, "die_with_parent") and args.die_with_parent is not True:
-        result["die_with_parent"] = args.die_with_parent
-
-    # Override new_session
-    if hasattr(args, "new_session") and args.new_session is not True:
-        result["new_session"] = args.new_session
-
-    # Override hostname
-    if hasattr(args, "hostname") and args.hostname:
-        result["hostname"] = args.hostname
-
-    # Override mounts from --bind / --ro-bind
-    for bind in getattr(args, "bind", []):
-        parts = bind.split(":")
-        if len(parts) == 2:
-            result.setdefault("mounts", []).append({
-                "source": parts[0],
-                "target": parts[1],
-                "readonly": False,
-            })
-
-    for bind in getattr(args, "ro_bind", []):
-        parts = bind.split(":")
-        if len(parts) == 2:
-            result.setdefault("mounts", []).append({
-                "source": parts[0],
-                "target": parts[1],
-                "readonly": True,
-            })
-
-    # Override capabilities with --cap-add / --cap-drop
-    for cap in getattr(args, "cap_add", []):
-        if "kept" not in result.get("capabilities", {}):
-            result.setdefault("capabilities", {})["kept"] = []
-        result["capabilities"]["kept"].append(cap)
-
-    for cap in getattr(args, "cap_drop", []):
-        if "dropped" not in result.get("capabilities", {}):
-            result.setdefault("capabilities", {})["dropped"] = []
-        result["capabilities"]["dropped"].append(cap)
-
-    # Override unshare with --unshare (comma-separated list)
-    for ns_str in getattr(args, "unshare", []):
-        ns_str = ns_str.strip()
-        namespaces = [ns.strip().lower() for ns in ns_str.split(",")]
-        for ns in namespaces:
-            if ns and "unshare" not in result:
-                result["unshare"] = []
-            if ns not in result["unshare"]:
-                result["unshare"].append(ns)
-
-    # Override env with --env
-    for env in getattr(args, "env", []):
-        if "=" in env:
-            key, value = env.split("=", 1)
-            result.setdefault("env_vars", {})[key] = value
-
-    # Override unset-env
-    for var in getattr(args, "unset_env", []):
-        result.setdefault("unenv_vars", []).append(var)
-
-    return dict(result)
 
 
 if __name__ == "__main__":

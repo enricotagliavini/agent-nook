@@ -6,6 +6,7 @@ The canonical format is enforced at load time with zero tolerance for deviations
 
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 from typing import Any
@@ -14,19 +15,19 @@ import yaml
 
 try:
     from agent_nook.config.config import (
-        SandboxConfig,
-        Mount,
         CapabilitySet,
-        NamespaceSet,
         ConfigValidationError,
+        Mount,
+        NamespaceSet,
+        SandboxConfig,
     )
 except ImportError:
     from ..config.config import (
-        SandboxConfig,
-        Mount,
         CapabilitySet,
-        NamespaceSet,
         ConfigValidationError,
+        Mount,
+        NamespaceSet,
+        SandboxConfig,
     )
 
 logger = logging.getLogger(__name__)
@@ -111,8 +112,9 @@ class ConfigLoader:
         Raises:
             FileNotFoundError: If the default config is not found.
         """
-        import agent_nook
         from pathlib import Path
+
+        import agent_nook
 
         package_dir = Path(agent_nook.__file__).parent
         default_config_path = package_dir / "config" / "sandbox.yaml"
@@ -159,6 +161,147 @@ class ConfigLoader:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return self.set(data)
+
+    @staticmethod
+    def _merge_cli_overrides(raw_dict: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+        """Apply command-line argument overrides to a raw configuration dictionary.
+
+        This method performs the same logic as the previous `_apply_cli_overrides`
+        function in __main__.py, but operates on a raw dictionary rather than a
+        SandboxConfig.__dict__. This allows the merged result to be passed directly
+        to ConfigLoader.set() for unified parsing and validation.
+
+        Args:
+            raw_dict: The raw configuration dictionary from the YAML file.
+            args: Parsed CLI arguments namespace.
+
+        Returns:
+            A new dictionary with CLI overrides applied.
+        """
+        result: dict[str, Any] = raw_dict.copy()
+
+        # Override chdir
+        if hasattr(args, "chdir") and args.chdir:
+            result["chdir"] = args.chdir
+
+        # Override die_with_parent
+        if hasattr(args, "die_with_parent") and args.die_with_parent is not True:
+            result["die_with_parent"] = args.die_with_parent
+
+        # Override new_session
+        if hasattr(args, "new_session") and args.new_session is not True:
+            result["new_session"] = args.new_session
+
+        # Override hostname
+        if hasattr(args, "hostname") and args.hostname:
+            result["hostname"] = args.hostname
+
+        # Override mounts from --bind / --ro-bind
+        for bind in getattr(args, "bind", []):
+            parts = bind.split(":")
+            if len(parts) == 2:
+                result.setdefault("mounts", []).append({
+                    "source": parts[0],
+                    "target": parts[1],
+                    "type": "bind",
+                })
+
+        for bind in getattr(args, "ro_bind", []):
+            parts = bind.split(":")
+            if len(parts) == 2:
+                result.setdefault("mounts", []).append({
+                    "source": parts[0],
+                    "target": parts[1],
+                    "type": "ro-bind",
+                })
+
+        # Override capabilities with --cap-add / --cap-drop
+        for cap in getattr(args, "cap_add", []):
+            if "kept" not in result.get("capabilities", {}):
+                result.setdefault("capabilities", {})["kept"] = []
+            result["capabilities"]["kept"].append(cap)
+
+        for cap in getattr(args, "cap_drop", []):
+            if "dropped" not in result.get("capabilities", {}):
+                result.setdefault("capabilities", {})["dropped"] = []
+            result["capabilities"]["dropped"].append(cap)
+
+        # Override unshare with --unshare (comma-separated list)
+        for ns_str in getattr(args, "unshare", []):
+            ns_str = ns_str.strip()
+            namespaces = [ns.strip().lower() for ns in ns_str.split(",")]
+            for ns in namespaces:
+                if ns and "unshare" not in result:
+                    result["unshare"] = []
+                if ns not in result["unshare"]:
+                    result["unshare"].append(ns)
+
+        # Override env with --env
+        for env in getattr(args, "env", []):
+            if "=" in env:
+                key, value = env.split("=", 1)
+                result.setdefault("env_vars", {})[key] = value
+
+        # Override unset-env
+        for var in getattr(args, "unset_env", []):
+            result.setdefault("unenv_vars", []).append(var)
+
+        return result
+
+    def load_with_overrides(
+        self, args: argparse.Namespace, path: str | None = None
+    ) -> SandboxConfig:
+        """Load configuration from a YAML file with CLI overrides applied.
+
+        This is the unified API that handles the entire configuration loading
+        pipeline: file discovery, file validation, CLI override parsing, merging,
+        and final validation — all in one step.
+
+        The validation pipeline ensures correctness at multiple layers:
+
+            1. File structure validation — checks that the YAML file is well-formed
+               and matches the canonical schema.
+            2. CLI override parsing — safely parses CLI arguments into override dict.
+            3. Merged config validation — the merged configuration is parsed and
+               validated through the same pipeline as a pure config file.
+
+        Args:
+            args: Parsed CLI arguments namespace. The method will use
+                   `args.config` if provided, otherwise the default bundled config.
+            path: Optional explicit config path. If provided, overrides both
+                   `args.config` and any stored path.
+
+        Returns:
+            A fully validated SandboxConfig ready for use.
+
+        Raises:
+            FileNotFoundError: If the config file does not exist.
+            ConfigValidationError: If the config structure or merged result is invalid.
+        """
+        # Resolve the config file path: CLI arg > explicit path > default
+        if hasattr(args, "config") and args.config:
+            config_path = args.config
+        elif path is not None:
+            config_path = path
+        else:
+            config_path = self.find_default_config_path()
+
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+
+        # Parse YAML into raw dict
+        with open(config_path, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+
+        # --- Validation Layer 1: File Structure ---
+        self._validate_structure(raw)
+
+        # --- Override Parsing ---
+        overrides = self._merge_cli_overrides(raw, args)
+
+        # --- Validation Layer 2: Merged Config ---
+        # The set() call performs _validate_structure + _parse_config + full validation
+        return self.set(overrides)
 
     def _parse_config(self, data: dict[str, Any]) -> SandboxConfig:
         """Parse raw config data into a SandboxConfig.

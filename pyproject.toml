@@ -33,6 +33,7 @@ agent-nook = "agent_nook.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_nook"]
+include = ["src/agent_nook/config/*.yaml"]
 
 [tool.pytest.ini_options]
 markers = [

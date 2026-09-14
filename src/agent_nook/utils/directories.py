@@ -8,7 +8,7 @@ loading/validation, not filesystem operations.
 from __future__ import annotations
 
 import os
-from typing import Sequence
+from collections.abc import Sequence
 
 from agent_nook.utils.logger import main_logger
 

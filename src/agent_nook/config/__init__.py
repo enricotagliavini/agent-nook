@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 
-
 from agent_nook.config.loader import ConfigLoader, ConfigValidationError
 from agent_nook.utils.logger import get_log_directory, get_log_file_path
 
@@ -34,9 +33,9 @@ def get_config_path() -> str:
 
 
 __all__ = [
+    "ConfigLoader",
+    "ConfigValidationError",
     "get_config_path",
     "get_log_directory",
     "get_log_file_path",
-    "ConfigLoader",
-    "ConfigValidationError",
 ]
