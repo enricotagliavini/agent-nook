@@ -112,7 +112,7 @@ def build_mounts_order(config: SandboxConfig) -> list[list[str]]:
 
     # Topological sort: parents before children (Kahn's algorithm)
     in_degree: dict[str, int] = dict.fromkeys(mount_points, 0)
-    for parent, children in children_of.items():
+    for _parent, children in children_of.items():
         for child in children:
             in_degree[child] += 1
 

@@ -141,22 +141,10 @@ class ConfigLoader:
             data = {**data, **override}
         return self._parse_config(data)
 
-    def set_config(self, data: dict[str, Any], override: dict | None = None) -> SandboxConfig:
-        """Alias for set()."""
-        return self.set(data, override)
-
     def set_from_yaml(self, path: str) -> SandboxConfig:
         """Load configuration from a YAML file path."""
         with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
-        return self.set(data)
-
-    def set_from_json(self, path: str) -> SandboxConfig:
-        """Load configuration from a JSON file path."""
-        import json
-
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
         return self.set(data)
 
     @staticmethod
@@ -467,85 +455,6 @@ class ConfigLoader:
                 raise ConfigValidationError(f"unknown mount type '{mount_type}'")
             validated_mounts.append(Mount(**mount_dict))
         return validated_mounts
-        result: list[Mount] = []
-
-        for i, m in enumerate(mounts):
-            if not isinstance(m, dict):
-                raise ConfigValidationError(f"mount[{i}] must be a dict, got {type(m).__name__}")
-
-            mount_type_str = m.get("type", "bind").lower().strip()
-            if mount_type_str == "":
-                mount_type_str = "bind"
-
-            if mount_type_str not in self._VALID_MOUNT_TYPES:
-                raise ValueError(
-                    f"Mount type '{mount_type_str}' is not valid. Valid types: {', '.join(sorted(self._VALID_MOUNT_TYPES))}"
-                )
-
-            mount = Mount(source=None, target=None, type=mount_type_str)
-
-            if mount_type_str == "bind":
-                source = m.get("source")
-                target = m.get("target")
-                if source is None:
-                    raise ConfigValidationError(f"mount[{i}] with type 'bind' must have a 'source' field")
-                if target is None:
-                    raise ConfigValidationError(f"mount[{i}] with type 'bind' must have a 'target' field")
-                mount.source = source
-                mount.target = target
-
-            elif mount_type_str == "ro-bind":
-                source = m.get("source")
-                target = m.get("target")
-                if source is None:
-                    raise ConfigValidationError(f"mount[{i}] with type 'ro-bind' must have a 'source' field")
-                if target is None:
-                    raise ConfigValidationError(f"mount[{i}] with type 'ro-bind' must have a 'target' field")
-                mount.source = source
-                mount.target = target
-
-            elif mount_type_str == "dev-bind":
-                source = m.get("source")
-                target = m.get("target")
-                if source is None:
-                    raise ConfigValidationError(f"mount[{i}] with type 'dev-bind' must have a 'source' field")
-                if target is None:
-                    raise ConfigValidationError(f"mount[{i}] with type 'dev-bind' must have a 'target' field")
-                mount.source = source
-                mount.target = target
-                device = m.get("device", False)
-                mount.device = device == True
-
-            elif mount_type_str == "tmpfs":
-                target = m.get("target")
-                if target is None:
-                    raise ConfigValidationError(f"mount[{i}] with type 'tmpfs' must have a 'target' field")
-                mount.target = target
-                mount.size = m.get("size", "")
-
-            elif mount_type_str == "proc":
-                target = m.get("target")
-                if target is None:
-                    mount.target = "/proc"
-                else:
-                    mount.target = target
-
-            elif mount_type_str == "dev":
-                target = m.get("target")
-                if target is None:
-                    mount.target = "/dev"
-                else:
-                    mount.target = target
-
-            elif mount_type_str == "dir":
-                target = m.get("target")
-                if target is None:
-                    raise ConfigValidationError(f"mount[{i}] with type 'dir' must have a 'target' field")
-                mount.target = target
-
-            result.append(mount)
-
-        return result
 
     def _parse_capabilities(self, caps: dict[str, Any]) -> CapabilitySet:
         """Parse capabilities from a dict into a CapabilitySet dataclass.
@@ -764,38 +673,6 @@ class ConfigLoader:
             result.append(value[last_end:])
 
         return "".join(result)
-
-    def _merge(self, config: SandboxConfig, override: dict[str, Any]) -> SandboxConfig:
-        """Merge override values into a config."""
-        # Expand environment variables in overrides before merging
-        expanded_override = self._expand_env_vars(override)
-        return SandboxConfig(
-            name=config.name,
-            chdir=config.chdir,
-            mounts=config.mounts,
-            capabilities=config.capabilities,
-            unshare=config.unshare,
-            die_with_parent=expanded_override.get("die_with_parent", config.die_with_parent),
-            new_session=expanded_override.get("new_session", config.new_session),
-            hostname=expanded_override.get("hostname", config.hostname),
-            timeout=expanded_override.get("timeout", config.timeout),
-            env_vars=expanded_override.get("env_vars", config.env_vars),
-            unset_vars=expanded_override.get("unset_vars", config.unset_vars),
-            _raw_config=config._raw_config,
-        )
-
-    def _copy_to_user_config_dir(self, data: dict[str, Any]) -> str:
-        """Copy the bundled default config to the user config directory."""
-        import shutil
-
-        source = self.find_default_config_path()
-        dest = os.path.join(os.path.expanduser("~/.config"), "agent-nook", "sandbox.yaml")
-
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        shutil.copy2(source, dest)
-
-        logger.info("Default sandbox config copied to %s", dest)
-        return dest
 
     def load(self, path: str | None = None) -> SandboxConfig:
         """Load and validate configuration from a YAML file.
