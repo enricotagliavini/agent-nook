@@ -18,6 +18,27 @@
 - **Logging**: Python standard `logging` module with XDG-compliant output.
 - **Unprivileged**: Designed to run without root or sudo.
 
+## Code Duplication & Abstraction Rules
+
+### 1. Identify Existing Utilities Before Writing New Code
+- **Search First:** Before implementing helpers, array manipulations, data transformations, or API wrappers, check the codebase for pre-existing implementations.
+- **Re-use & Extend:** Prefer reusing or slightly extending existing helper functions / classes over writing single-use duplicates.
+
+### 2. Consolidate Structural Duplication (Generalization Rule)
+- **Rule of Two:** If you write or modify code and notice the exact same control flow, validation pattern, or data processing logic occurring in 2 or more places, do not duplicate it.
+- **Parametrize or Abstract:** Extract the shared logic into a single, generic helper function or class method, using parameters or higher-order functions to handle variations.
+- **Avoid Over-Engineering:** Keep abstract functions minimal and single-purpose. Do not create complex "do-everything" utility functions with multiple boolean flag parameters.
+
+### 3. Maintain Single Source of Truth for Domain Rules
+- Business logic (e.g., validation schemas, calculation formulas, permission checks) must exist in exactly ONE authoritative location. Never copy-paste business logic between files.
+
+### 4. Permitted Duplication (Where NOT to DRY)
+- **Unit & Integration Tests:** Prioritize test readability and isolation (DAMP) over DRY. Do not create complex test helper abstractions unless setup code exceeds ~20 lines across multiple files.
+- **Decoupled System Boundaries:** DTOs, API requests/responses, or schemas across distinct service boundaries may duplicate structural shapes if they represent different domain concepts.
+
+### Refactoring Protocol
+- **Propose Before Refactoring:** If eliminating duplication requires introducing a new shared module, modifying a public signature, or refactoring existing callers, propose the refactoring plan first and wait for approval before generating the code implementation.
+
 ## Directory Layout (XDG Compliant)
 
 ```
