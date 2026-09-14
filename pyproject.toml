@@ -33,3 +33,8 @@ agent-nook = "agent_nook.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_nook"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests",
+]
