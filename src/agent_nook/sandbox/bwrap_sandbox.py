@@ -39,7 +39,7 @@ from pathlib import Path
 # Module-level logger
 _logger = logging.getLogger("agent_nook.sandbox")
 
-__all__ = ["BwrapError", "BwrapSandbox", "SandboxExecutionError", "SandboxResult", "SandboxConfig", "logger"]
+__all__ = ["BwrapError", "BwrapSandbox", "SandboxExecutionError", "SandboxResult", "SandboxConfig"]
 
 
 @dataclass
@@ -270,4 +270,4 @@ class BwrapSandbox:
         return cls(config=config, command=command)
 
 
-__all__ = ["BwrapError", "BwrapSandbox", "SandboxExecutionError", "SandboxResult", "SandboxConfig", "logger"]
+__all__ = ["BwrapError", "BwrapSandbox", "SandboxExecutionError", "SandboxResult", "SandboxConfig"]

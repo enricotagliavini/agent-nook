@@ -152,8 +152,8 @@ def test_load_yaml_unknown_mount_type_errors():
         loader.load_from_dict(data)
 
 
-def test_set_config():
-    """Test that set_config returns a SandboxConfig."""
+def test_load_from_dict():
+    """Test that load_from_dict returns a SandboxConfig."""
     loader = ConfigLoader()
     data = {
         "name": "test",

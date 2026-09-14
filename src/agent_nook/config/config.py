@@ -453,51 +453,10 @@ class SandboxConfig:
 class ConfigValidationError(Exception):
     """Raised when configuration validation fails."""
 
-    pass
-
-
-def set_config(config: SandboxConfig) -> None:
-    """Set the current sandbox configuration.
-
-    Args:
-        config: The SandboxConfig to set.
-    """
-    global _CONFIG
-    _CONFIG = config
-
-
-def nook_config() -> SandboxConfig:
-    """Get the current sandbox configuration.
-
-    Returns:
-        The current SandboxConfig instance.
-    """
-    global _CONFIG
-    if _CONFIG is None:
-        raise RuntimeError(
-            "No sandbox configuration has been set. "
-            "Use set_config() to configure the sandbox."
-        )
-    return _CONFIG
-
-
-def reset_config() -> None:
-    """Reset the current sandbox configuration to None."""
-    global _CONFIG
-    _CONFIG = None
-
-
-# Module-level config
-_CONFIG: SandboxConfig | None = None
-
-
 __all__ = [
     "SandboxConfig",
     "Mount",
     "CapabilitySet",
     "NamespaceSet",
     "ConfigValidationError",
-    "set_config",
-    "nook_config",
-    "reset_config",
 ]

@@ -132,11 +132,6 @@ def main() -> int:
         help="Don't create new session (allows TIOCSTI)"
     )
     run_parser.add_argument(
-        "--exit-on-fail",
-        action="store_true",
-        help="Exit immediately on failure (don't show logs)"
-    )
-    run_parser.add_argument(
         "--caps",
         action="append",
         default=[],
@@ -265,9 +260,6 @@ def _cmd_run(args: argparse.Namespace) -> int:
             config_path = config_loader.find_default_config_path()
             config_dict = config_loader.load(config_path)
 
-        # Set as global config (accessible via `from config import nook_config`)
-        from agent_nook.config import set_config
-        set_config(config_dict)
     except FileNotFoundError as e:
         logger.error("Config file not found: %s", e)
         return 1

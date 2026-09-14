@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 
-from agent_nook.config.config import set_config, nook_config, reset_config
 from agent_nook.config.loader import ConfigLoader, ConfigValidationError
 
 # Lazy import to avoid circular dependency
