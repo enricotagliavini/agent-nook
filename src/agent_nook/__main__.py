@@ -210,19 +210,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
         result = BwrapSandbox.run(
             command,
             config=config,
-            timeout=config.timeout,
         )
         if result.success:
             logger.info("✓ Sandbox executed successfully")
-            if result.stdout:
-                print(result.stdout, end="")
-            if result.stderr:
-                print(result.stderr, end="")
             return 0
         else:
-            logger.error("✗ Sandbox execution failed")
-            if result.stderr:
-                logger.error("  stderr: %s", result.stderr[:2000])
+            logger.error("✗ Sandbox execution failed with return code %d", result.return_code)
             return result.return_code or 1
     except BwrapError as e:
         logger.error("Bubblewrap error: %s", e)

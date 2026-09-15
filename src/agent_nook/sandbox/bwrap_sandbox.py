@@ -7,7 +7,6 @@ Usage:
     result = BwrapSandbox.run(
         command=["python3", "agent.py"],
         config=config,
-        timeout=60,
     )
 
     # Manual builder
@@ -15,7 +14,8 @@ Usage:
 
     # Context manager
     with BwrapSandbox(config).run(command=["echo", "hello"]) as result:
-        print(result.stdout)
+        if result.success:
+            _logger.info("Command executed successfully")
 """
 
 import subprocess
@@ -53,21 +53,14 @@ class SandboxResult:
     Attributes:
         success: Whether the command exited with code 0.
         return_code: The exit code of the command.
-        stdout: Standard output from the command (if captured).
-        stderr: Standard error from the command (if captured).
     """
 
     success: bool
     return_code: int
-    stdout: str | None = None
-    stderr: str | None = None
 
     def __post_init__(self) -> None:
         """Validate the result."""
-        if self.stdout is not None and not isinstance(self.stdout, str):
-            raise TypeError("stdout must be str or None")
-        if self.stderr is not None and not isinstance(self.stderr, str):
-            raise TypeError("stderr must be str or None")
+        pass
 
     def __enter__(self) -> "SandboxResult":
         """Context manager entry - returns self."""
@@ -90,12 +83,12 @@ class BwrapSandbox:
         # With config
         result = BwrapSandbox(config).run(
             command=["python3", "agent.py"],
-            timeout=30,
         )
 
         # Context manager
         with BwrapSandbox(config).run(command=["echo", "hello"]) as result:
-            print(result.stdout)
+            if result.success:
+                _logger.info("Command executed successfully")
 
         # Manual builder (for advanced use)
         builder = BwrapSandbox(config).builder
@@ -158,8 +151,6 @@ class BwrapSandbox:
     def run(
         command: list[str],
         config: SandboxConfig | None = None,
-        timeout: int | None = None,
-        capture_output: bool = True,
     ) -> SandboxResult:
         """Run a command inside a sandbox using the given config.
 
@@ -167,16 +158,14 @@ class BwrapSandbox:
             command: The command and arguments to execute.
             config: The sandbox configuration. If not provided, an
                 empty SandboxConfig is used.
-            timeout: Optional timeout in seconds.
-            capture_output: Whether to capture stdout/stderr.
 
         Returns:
             SandboxResult with execution details.
 
         Example:
-            result = BwrapSandbox.run(["/bin/echo", "hello"], timeout=30)
+            result = BwrapSandbox.run(["/bin/echo", "hello"])
             if result.success:
-                print(result.stdout)
+                _logger.info("Command executed successfully")
         """
         if config is None:
             config = SandboxConfig(name="anonymous-sandbox")
@@ -187,34 +176,16 @@ class BwrapSandbox:
 
         _logger.info("Full bwrap command: %s", " ".join(bwrap_cmd), extra={"command_only": True})
 
-        if capture_output:
-            result = subprocess.run(
-                bwrap_cmd,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-            )
-        else:
-            result = subprocess.run(
-                bwrap_cmd,
-                timeout=timeout,
-                check=False,
-            )
-
-        # Check for bwrap-specific errors
-        if result.returncode != 0:
-            stderr_lower = result.stderr.lower() if result.stderr else ""
-            if "not permitted" in stderr_lower:
-                raise BwrapError(f"bwrap failed with permission error: {result.stderr[:500]}")
-            if "no such file or directory" in stderr_lower:
-                raise BwrapError(f"bwrap path error: {result.stderr[:500]}")
+        # Run without capturing output - stdout/stderr go directly to console
+        result = subprocess.run(
+            bwrap_cmd,
+            timeout=config.timeout,
+            check=False,
+        )
 
         return SandboxResult(
             success=result.returncode == 0,
             return_code=result.returncode,
-            stdout=result.stdout,
-            stderr=result.stderr,
         )
 
     @staticmethod

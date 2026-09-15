@@ -226,10 +226,6 @@ class BwrapBuilder:
         if self._config.unshare.network:
             args.extend(["--unshare-net"])
 
-        # Timeout
-        if self._config.timeout is not None:
-            args.extend(["--timeout", str(self._config.timeout)])
-
         # Hostname
         if self._config.hostname:
             args.extend(["--unshare-uts", "--hostname", self._config.hostname])
