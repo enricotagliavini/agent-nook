@@ -278,7 +278,6 @@ def _cmd_status(args: argparse.Namespace) -> int:
             logger.info("  Bubblewrap version: %s", result.stdout.strip())
         else:
             logger.warning("  Bubblewrap not found on PATH")
-            logger.info("  Install it with: sudo apt install bubblewrap")
     except FileNotFoundError:
         logger.warning("  Bubblewrap not found")
 
