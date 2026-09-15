@@ -28,6 +28,14 @@ import sys
 from pathlib import Path
 
 
+__all__ = [
+    "get_log_directory",
+    "get_log_file_path",
+    "get_state_dir",
+    "main_logger",
+]
+
+
 # Module-level initialization flag
 _initialized: bool = False
 

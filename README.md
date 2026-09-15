@@ -170,7 +170,6 @@ agent-nook run --command "echo hello"
 | Command | Description |
 |---------|-------------|
 | `run` | Run a command in a sandbox |
-| `init` | Initialize configuration |
 | `status` | Show agent-nook status |
 | `logs` | Show recent logs |
 | `list` | List available sandboxes |
@@ -251,7 +250,6 @@ Configuration follows [XDG Base Directory Specification](https://specifications.
 - `~/.config/agent-nook/sandbox.yaml` — Main sandbox configuration
 - `~/.config/agent-nook/logging.yaml` — Logger configuration
 - `~/.local/state/agent-nook/logs/` — Log files
-- `~/.local/state/agent-nook/cache/` — Cache (bwrap cache, artifacts)
 
 ### Setting up config
 
@@ -326,6 +324,8 @@ mounts:
 # Temporary filesystem (in memory)
   - target: /tmp
     type: tmpfs
+
+# with optional size
   - target: /sandbox/cache
     type: tmpfs
     size: "100M"
@@ -341,6 +341,7 @@ mounts:
 # Directory without content check
   - target: /sandbox/workspace
     type: dir
+
 ```
 
 CLI equivalents:

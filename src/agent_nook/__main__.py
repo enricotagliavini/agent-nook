@@ -7,7 +7,6 @@ Usage:
     agent-nook run --chdir /app echo hello
     agent-nook run -- /bin/ls /tmp
     agent-nook run -- /usr/bin/python3 -c "print(42)"
-    agent-nook init              # Creates sandbox directory structure
     agent-nook status            # Shows status of running sandboxes
     agent-nook logs              # Shows recent log output
 """
@@ -22,6 +21,38 @@ from pathlib import Path
 
 
 __version__ = "0.1.0"
+
+
+def _auto_init() -> None:
+    """Automatically initialize configuration and directories on first run.
+
+    This ensures that the required directories exist before any command is run:
+    - ~/.config/agent-nook/ (config)
+    - ~/.local/state/agent-nook/logs/ (logs)
+
+    It also copies the bundled default config file if it doesn't exist.
+    """
+    from agent_nook.config import copy_bundled_config
+    from agent_nook.config import get_config_path
+    from agent_nook.utils.directories import ensure_directories
+    from agent_nook.utils.logger import get_log_directory
+
+    logger = logging.getLogger("agent_nook")
+
+    # Ensure directories exist using XDG-compliant paths
+    # This respects XDG_CONFIG_HOME and XDG_STATE_HOME environment variables
+    config_dir = Path(get_config_path()).parent
+    xdg_state_logs = Path(get_log_directory())
+
+    ensure_directories([config_dir, xdg_state_logs])
+    logger.debug("Ensured directories exist")
+
+    # Copy bundled config if user config doesn't exist
+    bundled_config_path = Path(__file__).parent / "config" / "sandbox.yaml"
+    if bundled_config_path.exists():
+        if not Path(get_config_path()).exists():
+            copy_bundled_config(bundled_config_path)
+            logger.debug("Copied bundled config to user config dir")
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -114,10 +145,6 @@ def main() -> int:
         "--no-die-with-parent", action="store_false", dest="die_with_parent", help="Keep sandbox alive after parent exits"
     )
 
-    # init command
-    init_parser = subparsers.add_parser("init", help="Initialize config")
-    init_parser.add_argument("--config", default=None, help="Config directory")
-
     # status command
     status_parser = subparsers.add_parser("status", help="Show sandbox status")
     status_parser.add_argument("--verbose", "-v", action="store_true", help="Show detailed information")
@@ -142,6 +169,9 @@ def main() -> int:
     # Initialize logging early, before any modules are imported
     _setup_logging(args.verbose)
 
+    # Auto-initialize configuration and directories
+    _auto_init()
+
     try:
         return _dispatch_command(args)
     except KeyboardInterrupt:
@@ -159,8 +189,6 @@ def _dispatch_command(args: argparse.Namespace) -> int:
     subcommand = args.subcommand if hasattr(args, "subcommand") else args.command
     if subcommand == "run":
         return _cmd_run(args)
-    elif subcommand == "init":
-        return _cmd_init(args)
     elif subcommand == "status":
         return _cmd_status(args)
     elif subcommand == "logs":
@@ -225,43 +253,6 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 1
 
 
-def _cmd_init(args: argparse.Namespace) -> int:
-    """Initialize the agent-nook config file."""
-    from agent_nook.config import get_config_path
-    from agent_nook.config.loader import ConfigLoader
-    from agent_nook.utils.directories import ensure_directories
-    from agent_nook.utils.logger import get_state_dir
-
-    logger = logging.getLogger("agent_nook")
-    logger.debug("Initializing Agent Nook config...")
-
-    config_path = get_config_path()
-    config_dir = Path(config_path).parent
-    state_dir = get_state_dir()
-
-    ensure_directories([config_dir, state_dir, os.path.join(state_dir, "logs")])
-
-    config_loader = ConfigLoader(config_path)
-
-    try:
-        config_path = config_loader.find_default_config_path()
-    except FileNotFoundError:
-        logger.error("Cannot find default config. Install agent-nook first.")
-        return 1
-
-    logger.info("✓ Config path: %s", config_path)
-    logger.info("✓ State directory: %s", state_dir)
-    logger.info("✓ Logs directory: %s", os.path.join(state_dir, "logs"))
-    logger.info("✓ Default config path: %s", config_path)
-    logger.info("")
-    logger.info("Edit %s to customize your sandbox.", config_path)
-    logger.info("")
-    logger.info("Example:")
-    logger.info("  agent-nook run python3 -c 'print(\\\"hello\\\")'")
-
-    return 0
-
-
 def _cmd_status(args: argparse.Namespace) -> int:
     """Display agent-nook status."""
     from agent_nook.config import get_config_path
@@ -303,7 +294,6 @@ def _cmd_status(args: argparse.Namespace) -> int:
     logger.info("")
     logger.info("Commands:")
     logger.info("  agent-nook run python3 agent.py")
-    logger.info("  agent-nook init")
     logger.info("  agent-nook logs")
     logger.info("  agent-nook list")
 
