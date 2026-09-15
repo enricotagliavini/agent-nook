@@ -66,6 +66,9 @@
 - [ ] Is logging XDG-compliant?
 - [ ] Does it work unprivileged (no root/sudo required)?
 - [ ] Error handling is explicit and handles edge cases gracefully.
+- [ ] Run full test suite: `python -m pytest tests/ -v`
+- [ ] Lint check passes: `ruff check src/`
+- [ ] Format check passes: `ruff format src/`
 
 ## Error Handling
 
@@ -82,6 +85,21 @@ All tests must be updated as part of every change:
 - Fix tests if intended behavior changed
 - Write new tests for new features / code paths
 - Tests are the contract — do not let tests accumulate debt
+
+### Verification Commands
+
+After every code change, run the following verification commands:
+
+```bash
+# Full test suite (required)
+python -m pytest tests/ -v
+
+# Lint check (required)
+ruff check src/
+
+# Format check (required)
+ruff format src/ --check
+```
 
 ## Docs are Part of the Contract
 
