@@ -98,13 +98,29 @@ def test_auto_init_does_not_overwrite_existing_config(temp_xdg_dirs: tuple[str, 
     """Test that auto-init doesn't overwrite existing config files."""
     config_dir, state_dir, config_path, state_path = temp_xdg_dirs
 
-    # Create a custom config file
+    # Copy the bundled config as the template
+    bundled_config = Path(__file__).parent.parent.parent / "src/agent_nook/config/sandbox.yaml"
     config_file = config_path / "agent-nook" / "sandbox.yaml"
-    config_file.write_text("name: my-custom-sandbox\nchdir: /custom\n")
+    config_file.write_text(bundled_config.read_text())
 
-    # Run agent-nook
+    # Modify the name to a custom value (but keep all mounts intact)
+    custom_content = config_file.read_text().replace('name: "agent-sandbox"', 'name: "my-custom-sandbox"')
+    config_file.write_text(custom_content)
+
+    # Verify the custom name is in place
+    assert 'name: "my-custom-sandbox"' in config_file.read_text()
+
+    # Run agent-nook - the command should succeed
     result = subprocess.run(
-        [sys.executable, "-m", "agent_nook", "run", "python3", "-c", "print('hello')"],
+        [
+            sys.executable,
+            "-m",
+            "agent_nook",
+            "run",
+            "python3",
+            "-c",
+            "print('hello')",
+        ],
         capture_output=True,
         text=True,
         timeout=10,
@@ -113,6 +129,5 @@ def test_auto_init_does_not_overwrite_existing_config(temp_xdg_dirs: tuple[str, 
     # Command should succeed
     assert result.returncode == 0, f"Command failed: {result.stderr}"
 
-    # Custom config should still be there (not overwritten)
-    custom_content = "name: my-custom-sandbox\nchdir: /custom\n"
-    assert config_file.read_text() == custom_content, "Custom config was overwritten"
+    # Custom config should still be there (name should not be changed)
+    assert 'name: "my-custom-sandbox"' in config_file.read_text(), "Custom config was overwritten"

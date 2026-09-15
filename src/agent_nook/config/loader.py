@@ -30,6 +30,24 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+
+def get_config_path() -> str:
+    """Resolve the config path using XDG_CONFIG_HOME.
+
+    Reads XDG_CONFIG_HOME from the environment, falls back to
+    ~/.config if not set.
+
+    Returns:
+        The full path to the config file (agent-nook/sandbox.yaml).
+
+    Example:
+        >>> get_config_path()
+        '/home/username/.config/agent-nook/sandbox.yaml'
+    """
+    xdg_config = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+    return os.path.join(xdg_config, "agent-nook", "sandbox.yaml")
+
+
 # ───────────────────────────────────────────────────────────────────────────────
 # VALIDATION PIPELINE
 # ───────────────────────────────────────────────────────────────────────────────
@@ -95,41 +113,9 @@ class ConfigLoader:
 
         Args:
             config_path: Optional path to the config file. If None,
-                the default path is used (from XDG_CONFIG_HOME/agent-nook/sandbox.yaml).
+                uses the default path from  _get_config_path() (XDG-compliant).
         """
         self._config_path: str | None = config_path
-
-    def find_default_config_path(self) -> str:
-        """Find the bundled default configuration file path.
-
-        Returns:
-            The path to the default sandbox.yaml file.
-
-        Raises:
-            FileNotFoundError: If the default config is not found.
-        """
-        from pathlib import Path
-
-        import agent_nook
-
-        package_dir = Path(agent_nook.__file__).parent
-        default_config_path = package_dir / "config" / "sandbox.yaml"
-
-        if default_config_path.exists():
-            return str(default_config_path)
-
-        loader_path = Path(__file__).resolve()
-        repo_root = loader_path.parent.parent.parent.parent
-        default_config_path = repo_root / "config" / "sandbox.yaml"
-
-        if default_config_path.exists():
-            return str(default_config_path)
-
-        raise FileNotFoundError(
-            f"Default sandbox.yaml not found at {default_config_path}. "
-            f"Make sure agent-nook is properly installed or "
-            f"the config directory exists with a sandbox.yaml file."
-        )
 
     def set(
         self,
@@ -265,13 +251,13 @@ class ConfigLoader:
             FileNotFoundError: If the config file does not exist.
             ConfigValidationError: If the config structure or merged result is invalid.
         """
-        # Resolve the config file path: CLI arg > explicit path > default
+        # Resolve the config file path: CLI arg > explicit path > default (XDG-compliant)
         if hasattr(args, "config") and args.config:
             config_path = args.config
         elif path is not None:
             config_path = path
         else:
-            config_path = self.find_default_config_path()
+            config_path = get_config_path()
 
         if not os.path.exists(config_path):
             raise FileNotFoundError(f"Config file not found: {config_path}")
@@ -689,9 +675,6 @@ class ConfigLoader:
             ConfigValidationError: If the config structure is invalid.
         """
         from os import path as os_path
-
-        if path is None:
-            path = self.find_default_config_path()
 
         if not os_path.exists(path):
             raise FileNotFoundError(f"Config file not found: {path}")

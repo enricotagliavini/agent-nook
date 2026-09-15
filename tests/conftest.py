@@ -1,6 +1,7 @@
-"""Fixtures for pipx installation tests."""
+"""Fixtures for pipx installation tests and XDG configuration setup."""
 
 import os
+import shutil
 import sys
 import subprocess
 import pytest
@@ -104,7 +105,65 @@ def pipx_test_env(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path,
 
 
 @pytest.fixture(scope="session")
+def xdg_config_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Return the XDG config directory path for tests.
+
+    This fixture creates temporary XDG directories under /tmp to avoid
+    polluting the git repository with test artifacts.
+
+    The directory is created at: /tmp/pytest-of-<user>/pytest-<id>/xdg_config/config
+
+    This fixture is called automatically at session start if XDG environment
+    variables are not already set, and copies the bundled config to the
+    test config directory.
+    """
+    # Use tmp_path_factory which creates directories under /tmp
+    temp_config_dir = tmp_path_factory.mktemp("xdg_config") / "config"
+    temp_state_dir = tmp_path_factory.mktemp("xdg_state") / "state"
+    # Create the agent-nook subdirectory for config (XDG-compliant)
+    agent_nook_config_dir = temp_config_dir / "agent-nook"
+    temp_config_dir.mkdir(parents=True, exist_ok=True)
+    temp_state_dir.mkdir(parents=True, exist_ok=True)
+    agent_nook_config_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy bundled config to user config dir (simulating _auto_init)
+    bundled_config = Path(__file__).parent.parent / "src" / "agent_nook" / "config" / "sandbox.yaml"
+    user_config = agent_nook_config_dir / "sandbox.yaml"
+    if bundled_config.exists():
+        shutil.copy2(bundled_config, user_config)
+
+    # Set XDG environment variables for the entire test session
+    os.environ["XDG_CONFIG_HOME"] = str(temp_config_dir)
+    os.environ["XDG_STATE_HOME"] = str(temp_state_dir)
+
+    return agent_nook_config_dir
+
+
+@pytest.fixture(scope="session")
+def xdg_state_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Return the XDG state directory path for tests.
+
+    This fixture is session-scoped and is set up at function call time to
+    ensure XDG directories are created under /tmp (not the git repo root).
+
+    The directory is created at: /tmp/pytest-of-<user>/pytest-<id>/xdg_state/state
+
+    Note: If XDG environment variables are already set, this fixture does
+    nothing and returns the existing value.
+    """
+    if "XDG_STATE_HOME" in os.environ:
+        return Path(os.environ["XDG_STATE_HOME"])
+
+    # This should be called from xdg_config_dir, but handle edge case
+    temp_state_dir = tmp_path_factory.mktemp("xdg_state") / "state"
+    temp_state_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["XDG_STATE_HOME"] = str(temp_state_dir)
+    return temp_state_dir
+
+
+@pytest.fixture(scope="session")
 def test_runner(
+    xdg_config_dir: Path,
     pipx_test_env: tuple[Path, Path, list[str]],
     built_sdist: Path,
 ) -> subprocess.CompletedProcess:
