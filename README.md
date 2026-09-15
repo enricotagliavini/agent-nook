@@ -59,34 +59,6 @@ pip install -e .
 agent-nook run --command "echo hello from sandbox"
 ```
 
-## Project Structure
-
-```
-agent-nook/
-├── AGENTS.md                 # Agent rules & engineering guidelines
-├── README.md                 # This file
-├── pyproject.toml           # Build & package configuration
-├── src/
-│   ├── agent_nook/
-│   │   ├── __init__.py
-│   │   ├── __main__.py      # CLI entry point
-│   │   ├── config/
-│   │   │   ├── loader.py    # Config loader (XDG-compliant)
-│   │   │   └── sandbox.yaml # Default config (bundled with package)
-│   │   ├── sandbox/
-│   │   │   └── builder.py   # bwrap command builder
-│   │   ├── runner/
-│   │   │   └── _core.py     # Sandbox execution orchestration
-│   │   └── utils/
-│   │       └── logger.py    # Logging utilities
-│   └── config/
-│       └── sandbox.yaml     # Development override (copied to package)
-├── config/
-│   └── sandbox.yaml         # Development config (template)
-├── LICENSE
-└── AGENTS.md
-```
-
 ## Design Decisions
 
 | Concern | Choice | Why |
@@ -104,14 +76,74 @@ agent-nook/
 Agent → bwrap sandbox → isolated filesystem + capabilities → agent runs safely
 ```
 
-Bubblewrap applies filesystem isolation, network controls, and capability restrictions in userspace — no kernel namespaces or privileged containers needed.
+Bubblewrap applies filesystem isolation, network isolation, and capability restrictions in userspace — no kernel namespaces or privileged containers needed.
+
+### What bubblewrap does
+
+Bubblewrap creates a **userspace sandbox** by:
+1. **Filesystem isolation**: Mounts a temporary root filesystem and selectively overlays host directories via bind mounts
+2. **Namespace isolation**: Separates processes into isolated PID, UTS, IPC, cgroup, user, and network namespaces
+3. **Capability restrictions**: Drops dangerous Linux capabilities by default
+4. **Session isolation**: Creates a new session (`--new-session`) to prevent TIOCSTI attacks
+5. **Parent binding**: Ensures sandbox dies with parent (`--die-with-parent`)
+
+### Mount types
+
+Seven mount types are supported:
+
+| Type | Syntax | Description |
+|------|--------|-------------|
+| `bind` | `--bind SRC DEST` | Read-write bind mount |
+| `ro-bind` | `--ro-bind SRC DEST` | Read-only bind mount |
+| `dev-bind` | `--dev-bind SRC DEST` | Device bind mount |
+| `tmpfs` | `--tmpfs TARGET [SIZE]` | Temporary filesystem in memory |
+| `proc` | `--proc TARGET` | Proc filesystem |
+| `dev` | `--dev TARGET` | Dev filesystem |
+| `dir` | `--dir TARGET` | Directory without content check |
+
+### Namespace isolation
+
+Six namespace types can be unshared (isolated):
+
+| Namespace | Flag | Description |
+|-----------|------|-------------|
+| PID | `--unshare-pid` | Isolate process tree |
+| UTS | `--unshare-uts` | Isolate hostname/domainname |
+| IPC | `--unshare-ipc` | Isolate inter-process communication |
+| cgroup | `--unshare-cgroup` | Isolate cgroup hierarchy |
+| user | `--unshare-user` | Isolate user IDs |
+| network | `--unshare-net` | Isolate network stack (also implies UTS and IPC) |
+
+**Note:** Specifying `--unshare-net` automatically enables `--unshare-uts` and `--unshare-ipc`.
 
 ### Example bwrap command
 
 ```bash
-bwrap --bind /host/path /sandbox --ro-bind /host/path /sandbox/host-path \
-      --capabilities drop=all -- cap-add=CHOWN -- python3 agent.py
+bwrap \
+  --die-with-parent \
+  --new-session \
+  --bind /host/data /sandbox/data \
+  --ro-bind /host/config /sandbox/config \
+  --cap-drop ALL --cap-add CAP_CHOWN CAP_DAC_OVERRIDE \
+  --unshare-pid --unshare-uts --unshare-ipc --unshare-cgroup --unshare-user --unshare-net \
+  --chdir /sandbox \
+  python3 agent.py
 ```
+
+### Mount ordering
+
+Mounts are applied in **topological order** (parents before children). For example:
+
+```yaml
+mounts:
+  - target: /home
+    type: tmpfs
+  - source: /home/user/project
+    target: /home/project
+    type: bind
+```
+
+The sandbox will correctly mount `/home` first, then `/home/project` as a subdirectory, **irrespective of the order** in which they are specified in the configuration file.
 
 ## Installation
 
@@ -133,13 +165,23 @@ agent-nook run --command "echo hello"
 
 ## CLI Usage
 
+### Available subcommands
+
+| Command | Description |
+|---------|-------------|
+| `run` | Run a command in a sandbox |
+| `init` | Initialize configuration |
+| `status` | Show agent-nook status |
+| `logs` | Show recent logs |
+| `list` | List available sandboxes |
+
 ### Running a command in a sandbox
 
 ```bash
 # Basic usage
-agent-nook run --chdir /home/enrico python3 my_script.py
+agent-nook run python3 my_script.py
 
-# With a Python script
+# With a Python inline script
 agent-nook run python3 -c "print('hello')"
 
 # With bind mounts
@@ -154,8 +196,11 @@ agent-nook run --config /path/to/config.yaml python3 script.py
 # Override capabilities
 agent-nook run --cap-add NET_BIND_SERVICE --cap-add SYS_PTRACE python3 net_script.py
 
-# Unshare namespaces (comma-separated)
-agent-nook run --unshare pid,uts,ipc python3 script.py
+# Drop capabilities
+agent-nook run --cap-drop SYS_ADMIN --cap-drop SYS_PTRACE python3 safe_script.py
+
+# Unshare namespaces (space-separated)
+agent-nook run --unshare pid uts ipc python3 script.py
 
 # Environment variables
 agent-nook run --env PATH=/usr/bin --env HOME=/root python3 script.py
@@ -166,20 +211,14 @@ agent-nook run --unset-env PATH --unset-env HOME python3 script.py
 # Custom hostname
 agent-nook run --hostname my-agent python3 script.py
 
-# No new session (allows TIOCSTI)
-agent-nook run --no-new-session python3 script.py
+# Work in specific directory
+agent-nook run --chdir /home/enrico python3 my_script.py
 
-# Exit immediately on failure (no output)
-agent-nook run --exit-on-fail python3 script.py
+# Work directory from config
+agent-nook run python3 my_script.py
 
-# Additional capabilities
-agent-nook run --caps CHOWN,DAC_READ_SEARCH python3 script.py
-
-# Drop specific capabilities
-agent-nook run --drop-caps SYS_ADMIN,SYS_PTRACE python3 script.py
-
-# Don't die with parent
-agent-nook run --no-die-with-parent python3 script.py
+# Quiet mode (suppress non-error output)
+agent-nook run --quiet python3 my_script.py
 ```
 
 ### CLI Reference
@@ -191,18 +230,16 @@ agent-nook run --no-die-with-parent python3 script.py
 | `--chdir DIR` | Change working directory in sandbox (overrides config) |
 | `--cap-add CAP` | Add capability (e.g. `CAP_NET_BIND_SERVICE`, repeat for multiple) |
 | `--cap-drop CAP` | Drop capability (e.g. `CAP_SYS_ADMIN`, repeat for multiple) |
-| `--unshare NS` | Unshare namespace (e.g. `pid,uts,ipc`, repeat for multiple) |
+| `--unshare NS` | Unshare namespace (e.g. `pid uts ipc`, repeat for multiple) |
 | `--bind SRC:DEST` | Bind mount host SRC to sandbox DEST (repeat for multiple) |
 | `--ro-bind SRC:DEST` | Read-only bind mount host SRC to sandbox DEST (repeat for multiple) |
 | `--env KEY=VALUE` | Set environment variable (repeat for multiple) |
 | `--unset-env KEY` | Unset environment variable (repeat for multiple) |
 | `--hostname HOSTNAME` | Set sandbox hostname |
-| `--new-session` | Create new session (prevents TIOCSTI attacks, default: on) |
+| `--new-session` | Create new session (prevents TIOCSTI attacks, **default: on**) |
 | `--no-new-session` | Don't create new session (allows TIOCSTI) |
-| `--exit-on-fail` | Exit immediately on failure (don't show logs) |
-| `--caps CAPS` | Additional capabilities to add (repeat for multiple) |
-| `--drop-caps DROP_CAPS` | Additional capabilities to drop (repeat for multiple) |
-| `--die-with-parent` | Kill sandbox child when parent dies (default: on) |
+| `--quiet` | Suppress non-error output |
+| `--die-with-parent` | Kill sandbox child when parent dies (**default: on**) |
 | `--no-die-with-parent` | Keep sandbox alive after parent exits |
 
 ## Configuration
@@ -255,15 +292,87 @@ Edit `~/.config/agent-nook/sandbox.yaml` to customize:
 
 - **`name`**: Sandbox identifier (used in logs)
 - **`chdir`**: Working directory inside the sandbox
-- **`mounts`**: Bind mounts from host to sandbox. Use `type: "bind"` for read-write, or `type: "ro-bind"` for read-only (CLI flags: `--bind SRC:DEST`, `--ro-bind SRC:DEST`)
+- **`mounts`**: Bind mounts from host to sandbox. See below for supported types.
 - **`capabilities`**: Linux capabilities to drop (`drop: ["ALL"]`) or keep (`keep: ["CAP_CHOWN"]`)
 - **`unshare`**: Which namespaces to unshare (isolate) — `pid`, `uts`, `ipc`, `cgroup`, `user`, `network`
 - **`hostname`**: Sandbox hostname (implies UTS namespace unshare)
 - **`die_with_parent`**: Kill sandbox children when parent exits (default: `true`)
 - **`new_session`**: Create a new session (prevents TIOCSTI attacks, default: `true`)
+- **`timeout`**: Maximum execution time in seconds (`null` = no timeout)
 - **`env_vars`**: Environment variables to set (YAML map: `KEY: value`)
 - **`unset_vars`**: Environment variables to unset (YAML array: `["PATH", "HOME"]`)
-- **`timeout`**: Maximum execution time in seconds (`null` = no timeout)
+
+### Supported mount types
+
+Seven mount types are supported:
+
+```yaml
+# Read-write bind mount
+mounts:
+  - source: /host/path
+    target: /sandbox/path
+    type: bind
+
+# Read-only bind mount
+  - source: /host/config
+    target: /sandbox/config
+    type: ro-bind
+
+# Device bind mount
+  - source: /dev/sda
+    target: /sandbox/dev
+    type: dev-bind
+
+# Temporary filesystem (in memory)
+  - target: /tmp
+    type: tmpfs
+  - target: /sandbox/cache
+    type: tmpfs
+    size: "100M"
+
+# Proc filesystem
+  - target: /sandbox/proc
+    type: proc
+
+# Dev filesystem
+  - target: /sandbox/dev
+    type: dev
+
+# Directory without content check
+  - target: /sandbox/workspace
+    type: dir
+```
+
+CLI equivalents:
+- `--bind SRC:DEST` → `type: bind`
+- `--ro-bind SRC:DEST` → `type: ro-bind`
+- `--dev-bind SRC:DEST` → `type: dev-bind`
+- `--tmpfs TARGET [SIZE]` → `type: tmpfs` with optional `size`
+- `--proc TARGET` → `type: proc`
+- `--dev TARGET` → `type: dev`
+- `--dir TARGET` → `type: dir`
+
+### Supported namespace types
+
+Six namespaces can be unshared (isolated):
+
+```yaml
+unshare:
+  pid: true      # Isolate process tree
+  uts: true      # Isolate hostname/domainname
+  ipc: true      # Isolate inter-process communication
+  cgroup: true   # Isolate cgroup hierarchy
+  user: true     # Isolate user IDs
+  network: true  # Isolate network stack (implies UTS and IPC)
+```
+
+CLI equivalents:
+- `--unshare-pid`
+- `--unshare-uts`
+- `--unshare-ipc`
+- `--unshare-cgroup`
+- `--unshare-user`
+- `--unshare-net` (also enables `--unshare-uts` and `--unshare-ipc`)
 
 ### Example: Running an agent with specific capabilities
 
@@ -301,8 +410,8 @@ agent-nook run \
 
 - **Filesystem isolation**: Agent's view of the filesystem is restricted to a subset of host paths via bind mounts.
 - **Capability restrictions**: Drops unnecessary Linux capabilities (e.g., `SYS_ADMIN`, `SYS_PTRACE`).
-- **Network controls**: Can restrict outbound connections by namespace.
-- **No root needed**: Works entirely in userspace using `--unshare=cgroup` and `--die-with-parent`.
+- **Network isolation**: Isolates the network namespace to prevent access to host network resources. Note: bubblewrap does NOT filter network traffic; it only isolates the network stack.
+- **No root needed**: Works entirely in userspace using `--unshare-pid`, `--unshare-uts`, `--unshare-ipc`, `--unshare-cgroup`, `--unshare-user`, `--unshare-net` and `--die-with-parent`.
 
 ### Why bubblewrap?
 
@@ -331,20 +440,11 @@ pip install -e ".[dev]"
 
 # Run tests
 pytest
-
-# Check types
-mypy src/
+pytest -v --cov=agent_nook
 
 # Format code
 ruff check src/
 ruff format src/
-```
-
-### Running tests
-
-```bash
-pytest
-pytest -v --cov=agent_nook
 ```
 
 ## License
