@@ -619,6 +619,7 @@ class ConfigLoader:
 
         Returns:
             String with environment variables expanded.
+
         """
         if not value or not isinstance(value, str):
             return value
@@ -712,6 +713,3 @@ class ConfigLoader:
         config.validate()
 
         return config
-
-
-__all__ = ["ConfigLoader", "ConfigValidationError"]

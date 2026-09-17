@@ -68,14 +68,16 @@ def get_log_directory() -> str:
     return os.path.join(get_state_dir(), "logs")
 
 
-def get_log_file_path() -> str:
+def get_log_file_path(sandbox_name: str | None = None) -> str:
     """Get the path to the main log file.
 
     Returns:
-        The absolute path to the log file
-        (e.g., ~/.local/state/agent-nook/logs/agent-nook.log).
+        The absolute path to the log file.
+        If sandbox_name is provided, returns nook-{sandbox_name}.log.
+        Otherwise, returns agent-nook.log.
     """
-    return os.path.join(get_state_dir(), "logs", "agent-nook.log")
+    filename = f"nook-{sandbox_name}.log" if sandbox_name else "agent-nook.log"
+    return os.path.join(get_log_directory(), filename)
 
 
 def _setup_logger(
@@ -83,6 +85,7 @@ def _setup_logger(
     level: str = "INFO",
     use_file: bool = True,
     use_console: bool = True,
+    log_file: str | None = None,
 ) -> logging.Logger:
     """Internal function to configure and return a logger for Agent Nook.
 
@@ -93,6 +96,7 @@ def _setup_logger(
         level: Log level as string (DEBUG, INFO, WARNING, ERROR, CRITICAL).
         use_file: Whether to enable file logging (requires write permissions).
         use_console: Whether to enable console logging.
+        log_file: Optional absolute path to the log file.
 
     Returns:
         Configured logging.Logger instance.
@@ -123,7 +127,7 @@ def _setup_logger(
         try:
             log_dir = get_log_directory()
             os.makedirs(log_dir, exist_ok=True)
-            log_file = os.path.join(log_dir, "agent-nook.log")
+            log_file = log_file or get_log_file_path()
 
             handler = logging.handlers.RotatingFileHandler(
                 log_file,
@@ -176,6 +180,56 @@ def _setup_logger(
         logger.addHandler(console_handler)
 
     return logger
+
+
+def reconfigure_logger(sandbox_name: str) -> None:
+    """Reconfigure the main logger to use a sandbox-specific log file.
+
+    This should be called after the configuration has been loaded and the
+    sandbox name is known. It closes the existing file handler and opens
+    a new one for nook-{sandbox_name}.log.
+
+    Args:
+        sandbox_name: The name of the sandbox from the config file.
+    """
+    global _logger
+    if _logger is None:
+        return
+
+    new_log_file = get_log_file_path(sandbox_name)
+
+    # Find the RotatingFileHandler
+    handler_to_replace = None
+    for h in _logger.handlers[:]:
+        if isinstance(h, logging.handlers.RotatingFileHandler):
+            handler_to_replace = h
+            break
+
+    if handler_to_replace:
+        handler_to_replace.close()
+        _logger.removeHandler(handler_to_replace)
+
+    # Add new handler
+    try:
+        handler = logging.handlers.RotatingFileHandler(
+            new_log_file,
+            maxBytes=10 * 1024 * 1024,
+            backupCount=10,
+            encoding="utf-8",
+        )
+        handler.setLevel(logging.DEBUG)
+        handler.setFormatter(logging.Formatter(
+            fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ))
+        handler.addFilter(lambda record: record.levelno >= logging.DEBUG)
+        _logger.addHandler(handler)
+    except (PermissionError, OSError) as e:
+        # Fallback logic if needed
+        # If we can't write to the new log file, we'll log an error to stderr
+        # as we can't easily add another handler here without potentially
+        # causing recursion or double logging.
+        sys.stderr.write(f"Error reconfiguring logger to {new_log_file}: {e}\n")
 
 
 def main_logger(name: str = "agent_nook", level: str = "INFO") -> logging.Logger:
