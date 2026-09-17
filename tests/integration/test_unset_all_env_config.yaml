@@ -1,0 +1,13 @@
+# Test config for --unset-env ALL with --env overrides (via config file)
+# This tests that environment variables set in the config file are correctly
+# expanded even when ALL env vars are unset.
+name: test-unset-all-env
+mounts:
+  - type: ro-bind
+    source: /
+    target: /
+unset_vars:
+  - ALL
+env_vars:
+  PATH: "${PATH:/usr/bin:/bin}"
+  TERM: "${TERM:xterm}"
