@@ -230,14 +230,16 @@ class BwrapBuilder:
         if self._config.hostname:
             args.extend(["--unshare-uts", "--hostname", self._config.hostname])
 
-        # Environment variables
-        for key, value in self._config.env_vars.items():
-            args.extend(["--setenv", key, str(value)])
+        # Unset environment variables
         for var in self._config.unset_vars:
             if var == "ALL":
                 args.append("--clearenv")
             else:
                 args.extend(["--unsetenv", var])
+
+        # Set environment variables
+        for key, value in self._config.env_vars.items():
+            args.extend(["--setenv", key, str(value)])
 
         # Chdir
         if self._config.chdir:

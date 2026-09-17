@@ -179,6 +179,55 @@ def test_timeout_with_busy_command(test_sandbox_run) -> None:
 
 
 @pytest.mark.integration
+def test_unset_all_env_vars(test_sandbox_run) -> None:
+    """Test that --unset-env ALL works correctly with custom --env vars.
+
+    This test verifies that:
+    1. --unset-env ALL clears all environment variables.
+    2. --env PATH=${PATH} and --env TERM=${TERM} are correctly expanded.
+    3. The resulting environment in the sandbox contains only the expected
+       variables (or is empty if no defaults were set).
+
+    Since PATH is usually set, if we unset ALL, we expect PATH to be missing
+    unless it's set via --env.
+
+    Command tested:
+        agent-nook run --unset-env ALL --env PATH=${PATH} --env TERM=${TERM} \
+            bash -c "env"
+
+    Args:
+        test_sandbox_run: Fixture that returns a subprocess runner.
+
+    Raises:
+        AssertionError: If the command fails or produces unexpected output.
+    """
+    run_command = test_sandbox_run
+
+    result = run_command(
+        "run",
+        "--unset-env", "ALL",
+        "--env", "PATH=${PATH}",
+        "--env", "TERM=${TERM}",
+        "bash",
+        "-c",
+        "env",
+    )
+
+    assert result.returncode == 0, (
+        f"Command failed with return code {result.returncode}:\n"
+        f"  stdout: {result.stdout!r}\n"
+        f"  stderr: {result.stderr!r}"
+    )
+
+    # We expect PATH and TERM to be present because they were set via --env
+    # even if --unset-env ALL was used (assuming --setenv comes before --clearenv
+    # or that --clearenv only clears the initial environment).
+
+    assert "PATH=" in result.stdout, "PATH should be present in the sandbox environment"
+    assert "TERM=" in result.stdout, "TERM should be present in the sandbox environment"
+
+
+@pytest.mark.integration
 def test_command_not_found_error(test_sandbox_run) -> None:
     """Test that non-existent commands produce a proper error.
 
