@@ -4,4 +4,4 @@
 # test suite and might also remind the AI how to do it
 
 export PYTHONPATH=$PYTHONPATH:$(pwd)/src
-python3 -m pytest tests/ -v --tb=short
+python3 -m pytest tests/ -v

@@ -66,7 +66,7 @@
 - [ ] Is logging XDG-compliant?
 - [ ] Does it work unprivileged (no root/sudo required)?
 - [ ] Error handling is explicit and handles edge cases gracefully.
-- [ ] Run full test suite: `python -m pytest tests/ -v`
+- [ ] Run full test suite: `./run_tests.sh`
 - [ ] Lint check passes: `ruff check src/`
 - [ ] Format check passes: `ruff format src/`
 
