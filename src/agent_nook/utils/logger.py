@@ -218,10 +218,12 @@ def reconfigure_logger(sandbox_name: str) -> None:
             encoding="utf-8",
         )
         handler.setLevel(logging.DEBUG)
-        handler.setFormatter(logging.Formatter(
-            fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        ))
+        handler.setFormatter(
+            logging.Formatter(
+                fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
         handler.addFilter(lambda record: record.levelno >= logging.DEBUG)
         _logger.addHandler(handler)
     except (PermissionError, OSError) as e:

@@ -423,7 +423,7 @@ class SandboxConfig:
     hostname: str | None = None
     timeout: int | None = None
     env_vars: dict[str, str] = field(default_factory=dict)
-    unset_vars: list[str] = field(default_factory=list)
+    unset_vars: str = ""  # Comma-separated list of variable names to unset
     _raw_config: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def validate(self) -> None:

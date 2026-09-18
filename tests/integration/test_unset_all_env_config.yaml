@@ -6,8 +6,9 @@ mounts:
   - type: ro-bind
     source: /
     target: /
+# unset_vars now uses dict format for consistency with env_vars
 unset_vars:
-  - ALL
+  ALL: "1"  # Clears all environment variables
 env_vars:
   PATH: "${PATH:/usr/bin:/bin}"
   TERM: "${TERM:xterm}"

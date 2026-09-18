@@ -231,11 +231,16 @@ class BwrapBuilder:
             args.extend(["--unshare-uts", "--hostname", self._config.hostname])
 
         # Unset environment variables
-        for var in self._config.unset_vars:
-            if var == "ALL":
-                args.append("--clearenv")
-            else:
-                args.extend(["--unsetenv", var])
+        # unset_vars is a whitespace-separated string: "VAR1 VAR2" or "ALL"
+        unset_vars_str = self._config.unset_vars
+        if unset_vars_str:
+            # Split on any whitespace (handles newlines, spaces, tabs)
+            var_names = [v for v in unset_vars_str.split() if v]
+            for var_name in var_names:
+                if var_name.upper() == "ALL":
+                    args.append("--clearenv")
+                else:
+                    args.extend(["--unsetenv", var_name])
 
         # Set environment variables
         for key, value in self._config.env_vars.items():

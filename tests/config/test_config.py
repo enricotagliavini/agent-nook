@@ -1,17 +1,17 @@
 """Tests for SandboxConfig and Mount dataclasses."""
 
-import pytest
-import sys
 import os
+import sys
+
+import pytest
+
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from agent_nook.config.config import (
-    SandboxConfig,
-    Mount,
-    CapabilitySet,
-    NamespaceSet,
-)
+from agent_nook.config.config import CapabilitySet
+from agent_nook.config.config import Mount
+from agent_nook.config.config import NamespaceSet
+from agent_nook.config.config import SandboxConfig
 from agent_nook.sandbox.builder import BwrapBuilder
 
 
@@ -171,13 +171,43 @@ def test_sandbox_config_unset_vars():
         name="test",
         chdir="/tmp",
         mounts=[Mount(type="proc")],
-        unset_vars=["PATH", "HOME"],
+        unset_vars="PATH HOME",  # whitespace-separated string
     )
     builder = BwrapBuilder(config)
     cmd = builder.build(["echo", "hello"])
     assert "--unsetenv" in cmd
     assert "PATH" in cmd
     assert "HOME" in cmd
+
+
+def test_sandbox_config_unset_vars_all():
+    """Test unset_vars with ALL triggers --clearenv."""
+    config = SandboxConfig(
+        name="test",
+        chdir="/tmp",
+        mounts=[Mount(type="proc")],
+        unset_vars="ALL",
+    )
+    builder = BwrapBuilder(config)
+    cmd = builder.build(["echo", "hello"])
+    assert "--clearenv" in cmd
+    assert "--unsetenv" not in cmd
+
+
+def test_sandbox_config_unset_vars_mixed():
+    """Test unset_vars with ALL and specific vars (whitespace-separated)."""
+    config = SandboxConfig(
+        name="test",
+        chdir="/tmp",
+        mounts=[Mount(type="proc")],
+        unset_vars="ALL PATH HOME",  # whitespace-separated string
+    )
+    builder = BwrapBuilder(config)
+    cmd = builder.build(["echo", "hello"])
+    # ALL comes first (triggers --clearenv)
+    idx = cmd.index("--clearenv")
+    assert "--unsetenv" not in cmd[idx:idx+1]
+    # No --unsetenv should follow since ALL clears everything
 
 
 def test_sandbox_config_env_vars():

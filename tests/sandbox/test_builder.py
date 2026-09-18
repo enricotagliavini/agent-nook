@@ -1,12 +1,14 @@
 """Tests for the bwrap sandbox builder."""
 
-import pytest
 import sys
-import subprocess
+
 
 sys.path.insert(0, "src")
 
-from agent_nook.config.config import SandboxConfig, Mount, CapabilitySet, NamespaceSet
+from agent_nook.config.config import CapabilitySet
+from agent_nook.config.config import Mount
+from agent_nook.config.config import NamespaceSet
+from agent_nook.config.config import SandboxConfig
 from agent_nook.sandbox.builder import BwrapBuilder
 
 
@@ -115,12 +117,12 @@ def test_builder_with_env_vars():
 
 
 def test_builder_with_unset_env_vars():
-    """Test builder with unset environment variables."""
+    """Test builder with unset environment variables (whitespace-separated string)."""
     config = SandboxConfig(
         name="test",
         chdir="/tmp",
         mounts=[Mount(type="dir", target="/workspace")],
-        unset_vars=["PATH", "HOME"],
+        unset_vars="PATH HOME",
     )
     builder = BwrapBuilder(config)
     cmd = builder.build(["echo", "hello"])
@@ -131,12 +133,12 @@ def test_builder_with_unset_env_vars():
 
 
 def test_builder_with_all_unset_vars():
-    """Test builder with all environment variables unset."""
+    """Test builder with all environment variables unset (ALL keyword)."""
     config = SandboxConfig(
         name="test",
         chdir="/tmp",
         mounts=[Mount(type="dir", target="/workspace")],
-        unset_vars=["ALL"],
+        unset_vars="ALL",
     )
     builder = BwrapBuilder(config)
     cmd = builder.build(["echo", "hello"])
@@ -227,9 +229,6 @@ def test_builder_mount_order_parent_before_child_same_type():
     builder = BwrapBuilder(config)
     cmd = builder.build(["echo", "hello"])
 
-    # Debug output for debugging
-    print(f"[DEBUG test_builder_mount_order_parent_before_child_same_type] cmd = {cmd}", flush=True)
-    
     # Find all --dir arguments and their following argument
     dir_indices = []
     for i, arg in enumerate(cmd):
@@ -296,3 +295,117 @@ def test_builder_mount_order_cross_type_conflict():
     # Both mounts should be present (order is determined by topological sort)
     assert "--tmpfs" in cmd
     assert "--ro-bind" in cmd
+
+
+def test_builder_unset_vars_newline_separated():
+    """Test builder with newline-separated unset_vars.
+
+    Validates multi-line YAML format works end-to-end with bwrap.
+    """
+    config = SandboxConfig(
+        name="test-newline",
+        chdir="/tmp",
+        mounts=[Mount(type="dir", target="/workspace")],
+        unset_vars="PATH\nHOME\nTERM",
+    )
+    builder = BwrapBuilder(config)
+    cmd = builder.build(["echo", "hello"])
+
+    assert "--unsetenv" in cmd
+    # Verify all three variables appear as separate --unsetenv args
+    unset_indices = [i for i, arg in enumerate(cmd) if arg == "--unsetenv"]
+    assert len(unset_indices) == 3, f"Expected 3 --unsetenv args, got {len(unset_indices)}"
+    assert "PATH" in cmd[unset_indices[0] + 1]
+    assert "HOME" in cmd[unset_indices[1] + 1]
+    assert "TERM" in cmd[unset_indices[2] + 1]
+
+
+def test_builder_unset_vars_space_separated():
+    """Test builder with space-separated unset_vars on one line."""
+    config = SandboxConfig(
+        name="test-space",
+        chdir="/tmp",
+        mounts=[Mount(type="dir", target="/workspace")],
+        unset_vars="PATH HOME TERM",
+    )
+    builder = BwrapBuilder(config)
+    cmd = builder.build(["echo", "hello"])
+
+    assert "--unsetenv" in cmd
+    unset_indices = [i for i, arg in enumerate(cmd) if arg == "--unsetenv"]
+    assert len(unset_indices) == 3
+
+
+def test_builder_unset_vars_mixed_whitespace():
+    """Test builder with mixed whitespace (tabs, spaces, newlines)."""
+    config = SandboxConfig(
+        name="test-mixed",
+        chdir="/tmp",
+        mounts=[Mount(type="dir", target="/workspace")],
+        unset_vars="PATH\tHOME\nTERM",  # Tab + newline
+    )
+    builder = BwrapBuilder(config)
+    cmd = builder.build(["echo", "hello"])
+
+    assert "--unsetenv" in cmd
+    unset_indices = [i for i, arg in enumerate(cmd) if arg == "--unsetenv"]
+    assert len(unset_indices) == 3
+
+
+def test_builder_unset_vars_multiple_spaces():
+    """Test builder with multiple consecutive spaces."""
+    config = SandboxConfig(
+        name="test-multi-space",
+        chdir="/tmp",
+        mounts=[Mount(type="dir", target="/workspace")],
+        unset_vars="PATH  HOME  TERM",  # Double spaces
+    )
+    builder = BwrapBuilder(config)
+    cmd = builder.build(["echo", "hello"])
+
+    assert "--unsetenv" in cmd
+    unset_indices = [i for i, arg in enumerate(cmd) if arg == "--unsetenv"]
+    assert len(unset_indices) == 3
+
+
+def test_builder_unset_vars_ALL_with_whitespace():
+    """Test builder with ALL keyword and surrounding whitespace."""
+    config = SandboxConfig(
+        name="test-all-whitespace",
+        chdir="/tmp",
+        mounts=[Mount(type="dir", target="/workspace")],
+        unset_vars="  ALL  ",  # Leading/trailing spaces
+    )
+    builder = BwrapBuilder(config)
+    cmd = builder.build(["echo", "hello"])
+
+    assert "--clearenv" in cmd
+    # Make sure --clearenv is the only env-related flag
+    clearenv_idx = cmd.index("--clearenv")
+    assert "--unsetenv" not in cmd
+
+
+def test_builder_unset_vars_ENV_VAR_EXPANSION():
+    """Test builder with env var expansion in unset_vars."""
+    import os
+    from agent_nook.config.loader import ConfigLoader
+    os.environ["TEST_VAR"] = "testvalue"
+    os.environ["HOME"] = "/custom/home"
+
+    # Use ConfigLoader to expand env vars before passing to builder
+    config = ConfigLoader().load_from_dict(
+        {
+            "name": "test-expand",
+            "chdir": "/tmp",
+            "mounts": [{"source": "/source", "target": "/workspace", "type": "dir"}],
+            "unset_vars": "${TEST_VAR} ${HOME}",
+        }
+    )
+    builder = BwrapBuilder(config)
+    cmd = builder.build(["echo", "hello"])
+
+    assert "--unsetenv" in cmd
+    unset_indices = [i for i, arg in enumerate(cmd) if arg == "--unsetenv"]
+    assert len(unset_indices) == 2
+    assert "testvalue" in cmd[unset_indices[0] + 1]
+    assert "/custom/home" in cmd[unset_indices[1] + 1]

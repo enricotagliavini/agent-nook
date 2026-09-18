@@ -12,10 +12,11 @@ import tempfile
 
 import pytest
 
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from agent_nook.config.loader import ConfigLoader
-from agent_nook.sandbox import BwrapSandbox, BwrapError
+from agent_nook.sandbox import BwrapSandbox
 
 
 def test_build_command_valid():
@@ -115,13 +116,13 @@ def test_build_command_env_vars():
 
 
 def test_build_command_unset_env_vars():
-    """Test that unset_vars are added as --unsetenv arguments."""
+    """Test that unset_vars are added as --unsetenv arguments (whitespace-separated)."""
     config = ConfigLoader().set(
         {
             "name": "test",
             "chdir": "/tmp",
             "mounts": [{"source": "/", "target": "/", "type": "bind"}],
-            "unset_vars": ["VAR1", "VAR2"],
+            "unset_vars": "VAR1 VAR2",
         }
     )
     cmd = BwrapSandbox.build_command(config)

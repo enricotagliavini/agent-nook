@@ -216,6 +216,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         config_loader = ConfigLoader(None)  # Let load_with_overrides resolve the path
         config = config_loader.load_with_overrides(args)
         from agent_nook.utils.logger import reconfigure_logger
+
         reconfigure_logger(config.name)
     except FileNotFoundError as e:
         logger.error("Config file not found: %s", e)

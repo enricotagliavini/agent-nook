@@ -137,10 +137,51 @@ new_session: true
 hostname: "agent-sandbox"
 
 # === Environment ===
-# Example custom env vars:
-# env_vars:
-#   HOME: "/home/agent"
-#   PATH: "/usr/local/bin:/usr/bin:/bin"
+# env_vars: environment variables to set (key-value pairs, as a dict)
+#
+# Example:
+#   env_vars:
+#     HOME: "${HOME}"
+#     PATH: "${PATH:-/usr/bin:/bin}"
+#
+# Note: Environment variables are expanded during config loading, supporting:
+#   - ${VAR} - Expand to value of VAR
+#   - ${VAR:-default} - Expand to default if VAR is unset or empty
+#
+# === Unset Environment Variables ===
+# unset_vars: comma-separated list of variable names to unset
+#
+# Examples:
+#   unset_vars: ALL           # Clears all environment variables (--clearenv)
+#   unset_vars: PATH, TERM    # Unsets PATH and TERM (--unsetenv PATH, --unsetenv TERM)
+#   unset_vars:               # Or specify one variable per line
+#                FOO
+#                BAR
+#
+# The special value "ALL" is recognized and triggers bwrap's --clearenv flag,
+# which clears all environment variables. Any other variable name triggers
+# --unsetenv <variable>.
+#
+# Example usage with config file:
+#   name: my-sandbox
+#   mounts:
+#     - source: /
+#       target: /
+#       type: ro-bind
+#   unset_vars: ALL  # Clear all env vars
+#   env_vars:
+#     PATH: "${PATH:-/usr/bin:/bin}"  # Re-set PATH with fallback
+#
+# Example usage from command line:
+#   agent-nook run --unset-env ALL --env PATH=${PATH:-/usr/bin:/bin} \
+#     bash -c "env"
+#
+# Note: env_vars uses dict format (key-value pairs), while unset_vars uses
+# comma-separated string format for clarity and simplicity.
+#
+# Uncomment and adjust as needed:
+# env_vars: {}
+# unset_vars: ""
 
 # === Timeout ===
 # Set a timeout in seconds for command execution.

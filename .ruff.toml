@@ -132,6 +132,7 @@ ignore = [
     "E712",   # Equality with True
     "B007",   # Unused loop variable
     "PLW0603", # Global statement
+    "PLW0602", # Global statement with no assignment (logger.py)
     "TC003",  # Type checking imports
     "E501",   # Line too long (we have 135 char limit)
 ]

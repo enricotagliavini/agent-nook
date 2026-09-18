@@ -1,0 +1,14 @@
+# Test config for --unset-env ALL with --env overrides (no fallback)
+# This tests that env_vars with ${VAR} (no default) work when ALL is unset,
+# because env var expansion happens during config loading.
+name: test-unset-all-env-no-fallback
+mounts:
+  - type: ro-bind
+    source: /
+    target: /
+# unset_vars now uses dict format for consistency with env_vars
+unset_vars:
+  ALL: "1"  # Clears all environment variables
+env_vars:
+  PATH: "${PATH}"  # No fallback - expands to current PATH during config loading
+  TERM: "${TERM}"  # No fallback - expands to current TERM during config loading

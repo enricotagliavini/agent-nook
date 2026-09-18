@@ -103,7 +103,7 @@ class ConfigLoader:
         "hostname": "str | None",
         "timeout": "int | None",
         "env_vars": "dict[str, str]",
-        "unset_vars": "list[str]",
+        "unset_vars": "str | None",
     }
 
     _VALID_MOUNT_TYPES = frozenset({"bind", "ro-bind", "dev-bind", "tmpfs", "proc", "dev", "dir"})
@@ -217,9 +217,10 @@ class ConfigLoader:
                 key, value = env.split("=", 1)
                 result.setdefault("env_vars", {})[key] = value
 
-        # Override unset-env
+        # Override unset-env with --unset-env (comma-separated list of variable names)
         for var in getattr(args, "unset_env", []):
-            result.setdefault("unset_vars", []).append(var)
+            result.setdefault("unset_vars", "")
+            result["unset_vars"] += f", {var}"
 
         return result
 
@@ -300,7 +301,7 @@ class ConfigLoader:
         capabilities = self._parse_capabilities(data.get("capabilities", {}))
         unshare = self._parse_unshare(data.get("unshare", {}))
         env_vars = data.get("env_vars", {})
-        unset_vars = data.get("unset_vars", [])
+        unset_vars = self._parse_unset_vars(data.get("unset_vars"))
         hostname = data.get("hostname")
         timeout = data.get("timeout")
 
@@ -354,17 +355,20 @@ class ConfigLoader:
                 raise ConfigValidationError(f"unknown key '{key}'")
 
         for field_name, expected_type in self._FIELDS.items():
-            value = data.get(field_name)
-            if field_name == "mounts" and value is None:
-                value = []
-            elif field_name == "capabilities":
-                value = data.get("capabilities", {})
-            elif field_name == "unshare":
-                value = data.get("unshare", {})
-            elif field_name == "env_vars":
-                value = data.get("env_vars", {})
+            # Get the value for this field
+            if field_name in ("env_vars",):
+                # env_vars is always a dict (even if empty)
+                value = data.get(field_name)
+                if value is None:
+                    value = {}
+            elif field_name in ("capabilities", "unshare"):
+                # These fields use nested dicts
+                value = data.get(field_name, {})
             elif field_name == "unset_vars":
-                value = data.get("unset_vars", [])
+                # unset_vars is an optional string (can be empty or None)
+                value = data.get(field_name)
+            elif field_name == "mounts" and value is None:
+                value = []
             elif field_name == "hostname":
                 value = data.get("hostname")
             elif field_name == "timeout":
@@ -373,6 +377,13 @@ class ConfigLoader:
                 value = data.get("die_with_parent", True)
             elif field_name == "new_session":
                 value = data.get("new_session", True)
+            else:
+                value = data.get(field_name)
+
+            # Handle optional fields that are None
+            if value is None and expected_type in ("str | None", "int | None"):
+                # Optional fields are allowed to be None
+                continue
 
             if expected_type == "str":
                 if not isinstance(value, str):
@@ -389,12 +400,26 @@ class ConfigLoader:
             elif expected_type == "bool":
                 if not isinstance(value, bool):
                     raise ConfigValidationError(f"Field '{field_name}' must be a boolean, got {type(value).__name__}")
+            elif expected_type == "int":
+                if not isinstance(value, int):
+                    raise ConfigValidationError(f"Field '{field_name}' must be an integer, got {type(value).__name__}")
+            elif expected_type in {"str | None", "int | None"}:
+                # Optional fields - already handled above with continue
+                pass
+            elif expected_type == "dict[str, str]":
+                # Explicit check for dict[str, str] type (e.g., env_vars, unset_vars)
+                if not isinstance(value, dict):
+                    raise ConfigValidationError(f"Field '{field_name}' must be a dict, got {type(value).__name__}")
             elif expected_type == "list[str]":
+                # For backward compatibility, keep this case
                 if not isinstance(value, list):
                     raise ConfigValidationError(f"Field '{field_name}' must be a list of strings, got {type(value).__name__}")
                 for i, item in enumerate(value):
                     if not isinstance(item, str):
                         raise ConfigValidationError(f"Field '{field_name}'[{i}] must be a string, got {type(item).__name__}: {item!r}")
+            else:
+                # Unknown expected_type - this should not happen
+                raise ConfigValidationError(f"Unknown expected type '{expected_type}' for field '{field_name}'")
 
     def _parse_mounts(self, mounts: list[dict]) -> list[Mount]:
         """Parse mounts from a list of dicts into Mount dataclass instances.
@@ -660,6 +685,40 @@ class ConfigLoader:
             result.append(value[last_end:])
 
         return "".join(result)
+
+    def _parse_unset_vars(self, unset_vars: str | None) -> str:
+        """Parse unset_vars string into a normalized string.
+
+        The unset_vars field can be specified as:
+          - A whitespace-separated list: "VAR1 VAR2 VAR3" (newlines, spaces, tabs)
+          - The special keyword "ALL" to clear all environment variables
+
+        This method normalizes the input to a clean string with space-separated values.
+
+        Args:
+            unset_vars: Optional string of variable names (whitespace-separated) or "ALL".
+
+        Returns:
+            Normalized string with space-separated variable names, or empty string.
+        """
+        if unset_vars is None:
+            return ""
+
+        if not isinstance(unset_vars, str):
+            raise ConfigValidationError(f"unset_vars must be a string, got {type(unset_vars).__name__}")
+
+        # Split on any whitespace (newlines, spaces, tabs) - handles:
+        # "VAR1\nVAR2" or "VAR1 VAR2" or "VAR1\tVAR2"
+        vars_list = [v.strip() for v in unset_vars.split()]
+        # Remove empty strings (from consecutive whitespace)
+        vars_list = [v for v in vars_list if v]
+
+        # Check for "ALL" keyword (case-sensitive, exact match)
+        if vars_list == ["ALL"]:
+            return "ALL"
+
+        # Join with space (single space, no trailing/leading whitespace)
+        return " ".join(vars_list) if vars_list else ""
 
     def load(self, path: str | None = None) -> SandboxConfig:
         """Load and validate configuration from a YAML file.

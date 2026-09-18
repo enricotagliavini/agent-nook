@@ -1,14 +1,16 @@
 """Tests for ConfigLoader."""
 
 import os
+import sys
+
 import pytest
 
-import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from agent_nook.config.loader import ConfigLoader, ConfigValidationError
 from agent_nook.config.config import SandboxConfig
+from agent_nook.config.loader import ConfigLoader
+from agent_nook.config.loader import ConfigValidationError
 
 
 def test_load_yaml_basic():
@@ -80,17 +82,17 @@ def test_load_yaml_list_of_mounts():
 
 
 def test_load_yaml_unset_vars():
-    """Test loading config with unset_vars."""
+    """Test loading config with unset_vars as comma-separated string."""
     loader = ConfigLoader()
     data = {
         "name": "test",
         "chdir": "/tmp",
         "mounts": [{"target": "/proc", "type": "proc"}],
-        "unset_vars": ["PATH", "HOME"],
+        "unset_vars": "PATH HOME",
     }
     config = loader.load_from_dict(data)
 
-    assert config.unset_vars == ["PATH", "HOME"]
+    assert config.unset_vars == "PATH HOME"
 
 
 def test_load_yaml_hostname():

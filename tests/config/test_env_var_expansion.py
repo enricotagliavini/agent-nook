@@ -128,20 +128,20 @@ class TestEnvVarExpansion:
         assert config.env_vars["HOME"] == "/custom/home"
 
     def test_unset_vars_expansion(self):
-        """Test environment variable expansion in unset_vars list."""
+        """Test environment variable expansion in unset_vars string."""
         os.environ["VAR1"] = "value1"
         os.environ["VAR2"] = ""
 
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
-                "unset_vars": ["${VAR1}", "literal", "${VAR2:-default2}"],
+                "unset_vars": "${VAR1} ${literal} ${VAR2:-default2}",
             }
         )
 
-        assert config.unset_vars[0] == "value1"
-        assert config.unset_vars[1] == "literal"
-        assert config.unset_vars[2] == "default2"
+        # ${literal} is a literal string (not an env var), so it remains unchanged
+        # VAR1 expands to "value1", VAR2 has default "default2"
+        assert config.unset_vars == "value1 ${literal} default2"
 
     def test_chdir_expansion(self):
         """Test environment variable expansion in chdir."""
@@ -149,6 +149,7 @@ class TestEnvVarExpansion:
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
+                "mounts": [],
                 "chdir": "${WORKDIR}",
             }
         )
@@ -266,6 +267,155 @@ mounts:
         )
 
         assert config.mounts[0].source == "$LITERAL"
+
+    def test_unset_vars_newline_separated(self):
+        """Test unset_vars with newline-separated variables (multi-line YAML).
+
+        Validates that the whitespace-separated format works correctly:
+        unset_vars:
+          VAR1
+          VAR2
+          VAR3
+        """
+        config = ConfigLoader().load_from_dict(
+            {
+                "name": "test",
+                "unset_vars": "VAR1\nVAR2\nVAR3",
+            }
+        )
+        # Should be normalized to space-separated string
+        assert config.unset_vars == "VAR1 VAR2 VAR3"
+
+    def test_unset_vars_space_separated(self):
+        """Test unset_vars with space-separated variables on one line."""
+        config = ConfigLoader().load_from_dict(
+            {
+                "name": "test",
+                "unset_vars": "VAR1 VAR2 VAR3",
+            }
+        )
+        assert config.unset_vars == "VAR1 VAR2 VAR3"
+
+    def test_unset_vars_mixed_whitespace(self):
+        """Test unset_vars with mixed whitespace (tabs, spaces, newlines).
+
+        Validates that split() handles all whitespace types correctly.
+        """
+        config = ConfigLoader().load_from_dict(
+            {
+                "name": "test",
+                "unset_vars": "VAR1\tVAR2\nVAR3",  # Tab + newline
+            }
+        )
+        assert config.unset_vars == "VAR1 VAR2 VAR3"
+
+    def test_unset_vars_multiple_spaces(self):
+        """Test unset_vars with multiple consecutive spaces.
+
+        Validates that consecutive whitespace is treated as a single separator.
+        """
+        config = ConfigLoader().load_from_dict(
+            {
+                "name": "test",
+                "unset_vars": "VAR1  VAR2  VAR3",  # Double spaces
+            }
+        )
+        assert config.unset_vars == "VAR1 VAR2 VAR3"
+
+    def test_unset_vars_leading_trailing_whitespace(self):
+        """Test unset_vars with leading and trailing whitespace.
+
+        Validates that whitespace at boundaries is stripped correctly.
+        """
+        config = ConfigLoader().load_from_dict(
+            {
+                "name": "test",
+                "unset_vars": "  VAR1  VAR2  VAR3  ",
+            }
+        )
+        assert config.unset_vars == "VAR1 VAR2 VAR3"
+
+    def test_unset_vars_ALL_keyword(self):
+        """Test unset_vars with the special ALL keyword."""
+        config = ConfigLoader().load_from_dict(
+            {
+                "name": "test",
+                "unset_vars": "ALL",
+            }
+        )
+        # ALL keyword should be preserved exactly
+        assert config.unset_vars == "ALL"
+
+    def test_unset_vars_ENV_VAR_EXPANSION(self):
+        """Test env var expansion in unset_vars with whitespace separation."""
+        os.environ["VAR1"] = "value1"
+        os.environ["VAR2"] = "value2"
+
+        config = ConfigLoader().load_from_dict(
+            {
+                "name": "test",
+                "unset_vars": "${VAR1} ${VAR2}",
+            }
+        )
+        # Should expand and normalize to space-separated
+        assert config.unset_vars == "value1 value2"
+
+    def test_unset_vars_DEFAULT_VALUE(self):
+        """Test ${VAR:-default} syntax in unset_vars with whitespace."""
+        # UNSET_VAR1 and UNSET_VAR2 are guaranteed to be unset by setup_method
+        config = ConfigLoader().load_from_dict(
+            {
+                "name": "test",
+                "unset_vars": "${UNSET_VAR1:-first} ${UNSET_VAR2:-second}",
+            }
+        )
+        # Should use fallback defaults and normalize
+        assert config.unset_vars == "first second"
+
+    def test_unset_vars_EMPTY_STRING(self):
+        """Test unset_vars with empty string input."""
+        config = ConfigLoader().load_from_dict(
+            {
+                "name": "test",
+                "unset_vars": "",
+            }
+        )
+        assert config.unset_vars == ""
+
+    def test_unset_vars_ONLY_WHITESPACE(self):
+        """Test unset_vars with only whitespace (spaces, tabs, newlines)."""
+        config = ConfigLoader().load_from_dict(
+            {
+                "name": "test",
+                "unset_vars": "   \t\n   ",  # Only whitespace
+            }
+        )
+        # Should normalize to empty string
+        assert config.unset_vars == ""
+
+    def test_unset_vars_SINGLE_VAR(self):
+        """Test unset_vars with single variable."""
+        config = ConfigLoader().load_from_dict(
+            {
+                "name": "test",
+                "unset_vars": "SINGLE",
+            }
+        )
+        assert config.unset_vars == "SINGLE"
+
+    def test_unset_vars_ENV_VAR_ALL_KEYWORD(self):
+        """Test env var expansion before ALL keyword check."""
+        # Test that env vars are expanded BEFORE the ALL keyword is checked
+        os.environ["MYALL"] = "expanded"
+
+        config = ConfigLoader().load_from_dict(
+            {
+                "name": "test",
+                "unset_vars": "${MYALL}",
+            }
+        )
+        # Should expand to "expanded", not treat as ALL
+        assert config.unset_vars == "expanded"
 
 
 class TestCustomExpandEnvVarsRegex:

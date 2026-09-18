@@ -9,9 +9,9 @@ The key test verifies that the basic command:
 executes successfully and produces the expected output.
 """
 
-import os
-import pytest
 import subprocess
+
+import pytest
 
 
 @pytest.fixture(scope="function")
@@ -25,8 +25,7 @@ mounts:
   - type: ro-bind
     source: /
     target: /
-unset_vars:
-  - ALL
+unset_vars: ALL
 env_vars:
   PATH: "${PATH:/usr/bin:/bin}"
   TERM: "${TERM:xterm}"
@@ -46,8 +45,7 @@ mounts:
   - type: ro-bind
     source: /
     target: /
-unset_vars:
-  - ALL
+unset_vars: ALL
 env_vars:
   PATH: "${PATH}"
   TERM: "${TERM}"
@@ -275,7 +273,7 @@ def test_unset_all_env_vars_from_config(test_sandbox_run, test_unset_all_env_con
     """Test that env_vars in config file work correctly with --unset-env ALL.
 
     This test verifies that:
-    1. unset_vars: [ALL] clears all environment variables.
+    1. unset_vars: ALL clears all environment variables (uses string format).
     2. env_vars with ${VAR:default} syntax are correctly expanded from the
        parent environment, even when ALL is unset.
     3. The resulting environment in the sandbox contains the expanded PATH
@@ -330,6 +328,8 @@ def test_unset_all_env_vars_from_config_no_fallback(test_sandbox_run, test_unset
     This test verifies that env_vars with ${VAR} (without :-default) work
     correctly when ALL env vars are unset, because the environment variable
     expansion happens DURING config loading (before unset_vars are applied).
+
+    unset_vars now uses string format: ALL (not a dict).
 
     When the config is loaded:
     1. ${PATH} is expanded to the current PATH value from the parent environment
@@ -403,3 +403,219 @@ def test_command_not_found_error(test_sandbox_run) -> None:
     ), (
         f"Expected error message about missing command, got: {result.stdout!r}"
     )
+
+
+@pytest.fixture(scope="function")
+def test_malformed_env_vars_as_list_config(xdg_config_dir) -> Path:
+    """Create a malformed config file with env_vars as a list instead of dict."""
+    config_path = xdg_config_dir / "test_malformed_env_vars.yaml"
+    config_path.write_text(
+        """# Malformed config: env_vars is a list instead of dict
+name: test-malformed-env-vars
+mounts:
+  - type: ro-bind
+    source: /
+    target: /
+# This should fail with a type error
+env_vars:
+  - "HOME: ${HOME}"
+  - "PATH: ${PATH}"
+"""
+    )
+    return config_path
+
+
+@pytest.fixture(scope="function")
+def test_malformed_unset_vars_as_list_config(xdg_config_dir) -> Path:
+    """Create a malformed config file with unset_vars as a list instead of string."""
+    config_path = xdg_config_dir / "test_malformed_unset_vars.yaml"
+    config_path.write_text(
+        """# Malformed config: unset_vars is a list instead of string
+name: test-malformed-unset-vars
+mounts:
+  - type: ro-bind
+    source: /
+    target: /
+# This should fail with a type error
+unset_vars:
+  - ALL
+"""
+    )
+    return config_path
+
+
+@pytest.mark.integration
+def test_malformed_env_vars_as_list(test_sandbox_run, test_malformed_env_vars_as_list_config) -> None:
+    """Test that malformed env_vars (as list) is rejected with a friendly error.
+
+    This test verifies that the type checking correctly rejects env_vars when
+    it is specified as a list instead of a dict, providing a clear error message.
+
+    Before this fix, the type check would silently accept the malformed config
+    because _validate_structure() had a bug where it used .get() with defaults
+    that forced the wrong type to pass validation.
+
+    Args:
+        test_sandbox_run: Fixture that returns a subprocess runner.
+        test_malformed_env_vars_as_list_config: Fixture that creates the malformed config.
+
+    Raises:
+        subprocess.CalledProcessError: Expected — the config validation should fail.
+    """
+    run_command = test_sandbox_run
+    config_path = test_malformed_env_vars_as_list_config
+
+    result = run_command(
+        "run",
+        "--config",
+        str(config_path),
+        "bash",
+        "-c",
+        "echo 'hello'",
+    )
+
+    # The command should fail because the config is malformed
+    assert result.returncode != 0, (
+        f"Config validation should have failed for malformed env_vars:\n"
+        f"  stdout: {result.stdout!r}\n"
+        f"  stderr: {result.stderr!r}"
+    )
+
+    # Check that the error message mentions the type error
+    assert "env_vars" in result.stdout.lower() or "env_vars" in result.stderr.lower() or (
+        "must be a dict" in result.stdout or "must be a dict" in result.stderr
+    ), (
+        f"Expected error message about env_vars being a dict, got:\n"
+        f"  stdout: {result.stdout!r}\n"
+        f"  stderr: {result.stderr!r}"
+    )
+
+
+@pytest.mark.integration
+def test_malformed_unset_vars_as_list(test_sandbox_run, test_malformed_unset_vars_as_list_config) -> None:
+    """Test that malformed unset_vars (as list) is rejected with a friendly error.
+
+    This test verifies that the type checking correctly rejects unset_vars when
+    it is specified as a list instead of a string, providing a clear error message.
+
+    unset_vars now uses string format (comma-separated variable names), so list
+    format should be rejected.
+
+    Args:
+        test_sandbox_run: Fixture that returns a subprocess runner.
+        test_malformed_unset_vars_as_list_config: Fixture that creates the malformed config.
+
+    Raises:
+        subprocess.CalledProcessError: Expected — the config validation should fail.
+    """
+    run_command = test_sandbox_run
+    config_path = test_malformed_unset_vars_as_list_config
+
+    result = run_command(
+        "run",
+        "--config",
+        str(config_path),
+        "bash",
+        "-c",
+        "echo 'hello'",
+    )
+
+    # The command should fail because the config is malformed
+    assert result.returncode != 0, (
+        f"Config validation should have failed for malformed unset_vars:\n"
+        f"  stdout: {result.stdout!r}\n"
+        f"  stderr: {result.stderr!r}"
+    )
+
+    # Check that the error message mentions unset_vars
+    assert "unset_vars" in result.stdout.lower() or "unset_vars" in result.stderr.lower() or (
+        "must be a dict" in result.stdout or "must be a dict" in result.stderr
+    ), (
+        f"Expected error message about unset_vars being a dict, got:\n"
+        f"  stdout: {result.stdout!r}\n"
+        f"  stderr: {result.stderr!r}"
+    )
+
+
+@pytest.fixture(scope="function")
+def test_unset_vars_multiline_config(xdg_config_dir) -> Path:
+    """Create a temporary config file with whitespace-separated unset_vars (multi-line)."""
+    config_path = xdg_config_dir / "test_unset_vars_multiline.yaml"
+    config_path.write_text(
+        """# Test config for whitespace-separated unset_vars (multi-line YAML format)
+name: test-unset-vars-multiline
+mounts:
+  - type: ro-bind
+    source: /
+    target: /
+# Variables separated by newlines (whitespace-separated format)
+unset_vars:
+  MY_VAR1
+  MY_VAR2
+  MY_VAR3
+env_vars:
+  MY_VAR: "Hello from sandbox"
+  TEST_VAR: "test_value"
+"""
+    )
+    return config_path
+
+
+@pytest.mark.integration
+def test_unset_vars_multiline_format(test_sandbox_run, test_unset_vars_multiline_config) -> None:
+    """Test that multiline whitespace-separated unset_vars works correctly.
+
+    This test verifies that the format:
+        unset_vars:
+          VAR1
+          VAR2
+          VAR3
+    works end-to-end with actual sandbox execution.
+
+    Command tested:
+        agent_nook run --config <multiline_unset_vars_config> bash -c "env"
+
+    Args:
+        test_sandbox_run: Fixture that returns a subprocess runner.
+        test_unset_vars_multiline_config: Fixture for the multiline config.
+
+    Raises:
+        AssertionError: If the command fails or produces unexpected output.
+    """
+    run_command = test_sandbox_run
+    config_path = test_unset_vars_multiline_config
+
+    result = run_command(
+        "run",
+        "--config",
+        str(config_path),
+        "bash",
+        "-c",
+        "env",
+    )
+
+    # The command should succeed - unset_vars are properly parsed
+    assert result.returncode == 0, (
+        f"Command should succeed with multiline unset_vars:\n"
+        f"  stdout: {result.stdout!r}\n"
+        f"  stderr: {result.stderr!r}"
+    )
+
+    # Filter out log lines (they contain timestamps and/or the word "bwrap")
+    # The actual env output from the sandbox starts after the log entries
+    lines = result.stdout.split("\n")
+    sandbox_output_lines = [
+        line for line in lines
+        if not (line.startswith("2026-09-18") or "bwrap" in line)
+    ]
+    sandbox_output = " ".join(sandbox_output_lines)
+
+    # Verify MY_VAR1, MY_VAR2, and MY_VAR3 are NOT present in sandbox output (they were unset)
+    for var in ["MY_VAR1=", "MY_VAR2=", "MY_VAR3="]:
+        assert var not in sandbox_output, f"{var} should be unset in sandbox output"
+
+    # Verify MY_VAR and TEST_VAR are present (they were set via env_vars)
+    assert "MY_VAR=" in sandbox_output, "MY_VAR should be present"
+    assert "Hello from sandbox" in sandbox_output, "MY_VAR value should be present"
+    assert "TEST_VAR=" in sandbox_output, "TEST_VAR should be present"
+    assert "test_value" in sandbox_output, "TEST_VAR value should be present"

@@ -1,5 +1,5 @@
 # Agent Nook Default Sandbox Configuration
-name: "opencode-sandbox"
+name: "opencode-nook"
 #
 # This file contains all recommended mounts for the opencode coding agent.
 # Mounts are grouped by type for clarity.
@@ -174,13 +174,16 @@ hostname: "agent-sandbox"
 
 # === Environment ===
 # clear the Environment by default
-unset_vars:
-  - ALL
+# unset_vars: comma-separated list of variable names to unset
+#   - Use "ALL" to clear all environment variables
+#   - Use multiple names separated by commas: "VAR1, VAR2, VAR3"
+unset_vars: ALL
+# env_vars: environment variables to set (key-value pairs)
 env_vars:
-  - HOME: ${HOME}
-  - PATH: ${PATH}
-  - TERM: ${TERM}
-  - EDITOR: ${EDITOR:-}
+  HOME: ${HOME}
+  PATH: ${PATH}
+  TERM: ${TERM}
+  EDITOR: ${EDITOR:-}
 
 # === Timeout ===
 # Set a timeout in seconds for command execution.
