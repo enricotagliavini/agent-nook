@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+      - 'b*'
 
 jobs:
   build:
@@ -12,18 +13,18 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-      
+
       - name: Install pypa/build
         run: pip install pypa/build
-      
+
       - name: Build a binary wheel and a source tarball
         run: python -m build
-      
+
       - name: Store the distribution packages
         uses: actions/upload-artifact@v4
         with:
@@ -31,41 +32,67 @@ jobs:
           path: dist/
           retention-days: 3
 
+  validate-tag:
+    name: Validate tag format
+    runs-on: ubuntu-latest
+    outputs:
+      is-valid-version: ${{ steps.validate.outputs.is-valid-version }}
+      is-prerelease: ${{ steps.validate.outputs.is-prerelease }}
+    steps:
+      - name: Validate tag
+        id: validate
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "is-valid-version=true" >> $GITHUB_OUTPUT
+            echo "is-prerelease=false" >> $GITHUB_OUTPUT
+          elif [[ "$TAG" =~ ^b[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "is-valid-version=true" >> $GITHUB_OUTPUT
+            echo "is-prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "is-valid-version=false" >> $GITHUB_OUTPUT
+            echo "is-prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
   publish:
     name: Publish Python 🐍 distribution 📦 to PyPI
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, validate-tag]
     environment:
       name: pypi
       url: https://pypi.org/p/agent-nook
     permissions:
       id-token: write
+    if: ${{ needs.validate-tag.outputs.is-valid-version == 'true' && needs.validate-tag.outputs.is-prerelease == 'false' }}
     steps:
       - name: Download all the dists
         uses: actions/download-artifact@v4
         with:
           name: python-package-distributions
           path: dist/
-      
+
       - name: Publish distribution 📦 to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://pypi.org/legacy/
 
   publish-test:
     name: Publish Python 🐍 distribution 📦 to TestPyPI
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, validate-tag]
     environment:
       name: testpypi
       url: https://test.pypi.org/p/agent-nook
     permissions:
       id-token: write
+    if: ${{ needs.validate-tag.outputs.is-valid-version == 'true' }}
     steps:
       - name: Download all the dists
         uses: actions/download-artifact@v4
         with:
           name: python-package-distributions
           path: dist/
-      
+
       - name: Publish distribution 📦 to TestPyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
