@@ -12,15 +12,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.x'
 
-      - name: Install pypa/build
-        run: pip install pypa/build
+      - name: Install build
+        run: pip install build
 
       - name: Build a binary wheel and a source tarball
         run: python -m build
@@ -97,3 +97,25 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+
+  release:
+    name: Create GitHub Release 🏷️
+    runs-on: ubuntu-latest
+    needs: [build, validate-tag]
+    permissions:
+      contents: write
+    if: ${{ needs.validate-tag.outputs.is-valid-version == 'true' }}
+    steps:
+      - name: Download all the dists
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/*
+          body: ${{ needs.validate-tag.outputs.is-prerelease == 'false' && '🎉 A new stable release is available!' || '🧪 A new beta/pre-release is available!' }}
+          prerelease: ${{ needs.validate-tag.outputs.is-prerelease == 'true' }}
