@@ -94,11 +94,10 @@ class BwrapSandbox:
         config: SandboxConfig | None = None,
         command: list[str] | None = None,
     ) -> None:
-        """Initialize BwrapSandbox with an optional config and/or command.
+        """Initialize BwrapSandbox with a config and/or command.
 
         Args:
-            config: The sandbox configuration. If not provided,
-                a new empty SandboxConfig is created.
+            config: REQUIRED sandbox configuration. Cannot be None.
             command: The command to run. Can be provided at init time
                 and passed to `.build()` or `.run()`.
 
@@ -106,7 +105,9 @@ class BwrapSandbox:
             sandbox = BwrapSandbox(config)
             result = sandbox.run(["echo", "hello"])
         """
-        self._config = config if config is not None else SandboxConfig(name="anonymous-sandbox")
+        if config is None:
+            raise ValueError("config is required and cannot be None")
+        self._config = config
         self._command = command
         self._builder = BwrapBuilder(self._config)
 
@@ -137,14 +138,13 @@ class BwrapSandbox:
     @staticmethod
     def run(
         command: list[str],
-        config: SandboxConfig | None = None,
+        config: SandboxConfig,
     ) -> SandboxResult:
         """Run a command inside a sandbox using the given config.
 
         Args:
             command: The command and arguments to execute.
-            config: The sandbox configuration. If not provided, an
-                empty SandboxConfig is used.
+            config: REQUIRED sandbox configuration. Cannot be None.
 
         Returns:
             SandboxResult with execution details.
@@ -155,7 +155,7 @@ class BwrapSandbox:
                 _logger.info("Command executed successfully")
         """
         if config is None:
-            config = SandboxConfig(name="anonymous-sandbox")
+            raise ValueError("config is required and cannot be None")
 
         _logger.debug("Running sandbox with config: name=%s, command=%s", config.name, " ".join(command))
 
