@@ -1,4 +1,7 @@
-# Agent Nook Default Sandbox Configuration
+# Default sandbox configuration for Agent Nook.
+# 
+# This configuration is copied to ~/.config/agent-nook/sandbox.yaml on first run.
+# You can edit this file to customize sandbox behavior.
 name: "agent-sandbox"
 #
 # This file contains all recommended mounts for a typical agent sandbox.
