@@ -5,11 +5,7 @@ Usage:
     from agent_nook.sandbox import BwrapSandbox, BwrapBuilder, SandboxConfig
 
     # Preferred: use BwrapSandbox.run() which handles execution
-    result = BwrapSandbox.run(
-        command=["python3", "agent.py"],
-        config=config,
-        timeout=60,
-    )
+    result = BwrapSandbox(config).run(["python3", "agent.py"])
 
     # Manual builder
     cmd = BwrapBuilder(config).build(["python3", "agent.py"])

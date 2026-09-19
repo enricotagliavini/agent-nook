@@ -1,28 +1,22 @@
-"""Unified sandbox executor combining config + builder + execution.
+"""Unified sandbox executor combining config, builder, and execution.
 
 Usage:
     from agent_nook.sandbox import BwrapSandbox, BwrapBuilder, SandboxConfig
 
-    # Preferred: use BwrapSandbox.run() which handles execution
-    result = BwrapSandbox.run(
-        command=["python3", "agent.py"],
-        config=config,
-    )
+    # Run a command in a sandbox
+    result = BwrapSandbox(config).run(["python3", "agent.py"])
+    if result.success:
+        _logger.info("Command executed successfully")
+
+    # Build the bwrap command line without running it
+    cmd = BwrapSandbox(config).build(["python3", "agent.py"])
 
     # Manual builder
     cmd = BwrapBuilder(config).build(["python3", "agent.py"])
-
-    # Context manager
-    with BwrapSandbox(config).run(command=["echo", "hello"]) as result:
-        if result.success:
-            _logger.info("Command executed successfully")
 """
 
 import subprocess
 from dataclasses import dataclass
-
-# BwrapError and SandboxExecutionError have been removed; use RuntimeError instead
-from pathlib import Path
 
 from agent_nook.config.config import SandboxConfig
 from agent_nook.sandbox.builder import BwrapBuilder
@@ -45,17 +39,6 @@ class SandboxResult:
     success: bool
     return_code: int
 
-    def __post_init__(self) -> None:
-        """Validate the result."""
-        pass
-
-    def __enter__(self) -> "SandboxResult":
-        """Context manager entry - returns self."""
-        return self
-
-    def __exit__(self, exc_type: type | None, exc_val: BaseException | None, exc_tb: object | None) -> None:
-        """Context manager exit - no-op for clean exit paths."""
-
 
 class BwrapSandbox:
     """Unified sandbox executor combining config, builder, and execution.
@@ -64,42 +47,31 @@ class BwrapSandbox:
     commands in a bubblewrap sandbox.
 
     Usage:
-        # Quick API
-        result = BwrapSandbox.run(["python3", "agent.py"])
+        result = BwrapSandbox(config).run(["python3", "agent.py"])
+        if result.success:
+            _logger.info("Command executed successfully")
 
-        # With config
-        result = BwrapSandbox(config).run(
-            command=["python3", "agent.py"],
-        )
-
-        # Context manager
-        with BwrapSandbox(config).run(command=["echo", "hello"]) as result:
-            if result.success:
-                _logger.info("Command executed successfully")
+        # Build the command line without running it
+        cmd = BwrapSandbox(config).build(["python3", "agent.py"])
 
         # Manual builder (for advanced use)
-        builder = BwrapSandbox(config).builder
-        cmd = builder.build(["python3", "agent.py"])
+        cmd = BwrapBuilder(config).build(["python3", "agent.py"])
         subprocess.run(cmd)
 
     The BwrapSandbox class encapsulates the full lifecycle:
       1. Holds the SandboxConfig
       2. Builds the bwrap command line via BwrapBuilder
       3. Executes the command
-      4. Handles errors and cleanup
     """
 
     def __init__(
         self,
         config: SandboxConfig | None = None,
-        command: list[str] | None = None,
     ) -> None:
-        """Initialize BwrapSandbox with a config and/or command.
+        """Initialize BwrapSandbox with a config.
 
         Args:
             config: REQUIRED sandbox configuration. Cannot be None.
-            command: The command to run. Can be provided at init time
-                and passed to `.build()` or `.run()`.
 
         Example:
             sandbox = BwrapSandbox(config)
@@ -108,65 +80,54 @@ class BwrapSandbox:
         if config is None:
             raise ValueError("config is required and cannot be None")
         self._config = config
-        self._command = command
-        self._builder = BwrapBuilder(self._config)
+        self._builder = BwrapBuilder(config)
 
     @property
     def config(self) -> SandboxConfig:
         """Return the sandbox configuration."""
         return self._config
 
-    @property
-    def builder(self) -> BwrapBuilder:
-        """Return the underlying BwrapBuilder for manual control.
-
-        Use this if you need granular control over command construction.
-        """
-        return self._builder
-
-    def build(self, command: list[str]) -> list[str]:
+    def build(self, command: list[str] | None = None) -> list[str]:
         """Build the bwrap command line.
 
         Args:
-            command: The command and arguments to execute.
+            command: Optional command and arguments to append. When
+                omitted, the returned list contains only the sandbox
+                setup (useful for inspection or dry runs).
 
         Returns:
             The complete bwrap command line.
         """
-        return self._builder.build(command)
+        return self._builder.build(command or [])
 
-    @staticmethod
-    def run(
-        command: list[str],
-        config: SandboxConfig,
-    ) -> SandboxResult:
-        """Run a command inside a sandbox using the given config.
+    def run(self, command: list[str]) -> SandboxResult:
+        """Run a command inside the sandbox.
 
         Args:
             command: The command and arguments to execute.
-            config: REQUIRED sandbox configuration. Cannot be None.
 
         Returns:
             SandboxResult with execution details.
 
         Example:
-            result = BwrapSandbox.run(["/bin/echo", "hello"])
+            result = BwrapSandbox(config).run(["/bin/echo", "hello"])
             if result.success:
                 _logger.info("Command executed successfully")
         """
-        if config is None:
-            raise ValueError("config is required and cannot be None")
+        _logger.debug(
+            "Running sandbox with config: name=%s, command=%s",
+            self._config.name,
+            " ".join(command),
+        )
 
-        _logger.debug("Running sandbox with config: name=%s, command=%s", config.name, " ".join(command))
-
-        bwrap_cmd = BwrapSandbox._build_command(config, command)
+        bwrap_cmd = self.build(command)
 
         _logger.info("Full bwrap command: %s", " ".join(bwrap_cmd), extra={"command_only": True})
 
         # Run without capturing output - stdout/stderr go directly to console
         result = subprocess.run(
             bwrap_cmd,
-            timeout=config.timeout,
+            timeout=self._config.timeout,
             check=False,
         )
 
@@ -174,56 +135,6 @@ class BwrapSandbox:
             success=result.returncode == 0,
             return_code=result.returncode,
         )
-
-    @staticmethod
-    def build_command(
-        config: SandboxConfig,
-        command: list[str] | None = None,
-    ) -> list[str]:
-        """Build the bwrap command line from a configuration.
-
-        Args:
-            config: The sandbox configuration.
-            command: Optional command to append.
-
-        Returns:
-            The complete bwrap command line.
-        """
-        return BwrapSandbox._build_command(config, command)
-
-    @staticmethod
-    def _build_command(
-        config: SandboxConfig,
-        command: list[str] | None,
-    ) -> list[str]:
-        """Internal: build the complete bwrap command line.
-
-        This delegates to BwrapBuilder for the actual construction.
-        """
-        builder = BwrapBuilder(config)
-        cmd_args = command if command is not None else []
-        return builder.build(cmd_args)
-
-    @classmethod
-    def from_config_file(
-        cls,
-        path: str | Path,
-        command: list[str] | None = None,
-    ) -> "BwrapSandbox":
-        """Load config from a file and create a BwrapSandbox.
-
-        Args:
-            path: Path to the YAML config file.
-            command: Optional default command.
-
-        Returns:
-            A BwrapSandbox instance loaded from the config file.
-        """
-        from agent_nook.config.loader import ConfigLoader
-
-        config_loader = ConfigLoader()
-        config = config_loader.load(path)
-        return cls(config=config, command=command)
 
 
 __all__ = ["BwrapSandbox", "SandboxConfig", "SandboxResult"]

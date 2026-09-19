@@ -237,10 +237,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     # Run the command in the sandbox using the unified API
     try:
-        result = BwrapSandbox.run(
-            command,
-            config=config,
-        )
+        result = BwrapSandbox(config).run(command)
         if result.success:
             logger.info("✓ Sandbox executed successfully")
             return 0
