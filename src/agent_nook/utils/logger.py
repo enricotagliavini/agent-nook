@@ -36,13 +36,6 @@ __all__ = [
 ]
 
 
-# Module-level initialization flag
-_initialized: bool = False
-
-# Cached logger instance
-_logger: logging.Logger | None = None
-
-
 def get_state_dir() -> str:
     """Resolve the state directory path using XDG_STATE_HOME.
 
@@ -183,62 +176,58 @@ def _setup_logger(
 
 
 def reconfigure_logger(sandbox_name: str) -> None:
-    """Reconfigure the main logger to use a sandbox-specific log file.
+    """Get or reconfigure logger for sandbox-specific log file.
 
-    This should be called after the configuration has been loaded and the
-    sandbox name is known. It closes the existing file handler and opens
-    a new one for nook-{sandbox_name}.log.
+    Note: For CLI usage, this is rarely needed as logging is typically
+    configured once at startup. This function is primarily for testing.
 
     Args:
         sandbox_name: The name of the sandbox from the config file.
     """
-    global _logger
-    if _logger is None:
+    logger = logging.getLogger("agent_nook")
+
+    if not logger.handlers:
+        # First time setup - call _setup_logger
+        _setup_logger(
+            name="agent_nook",
+            level="INFO",
+            use_file=True,
+            use_console=True,
+            log_file=get_log_file_path(sandbox_name),
+        )
         return
 
-    new_log_file = get_log_file_path(sandbox_name)
+    # Reconfigure existing handler if it's a RotatingFileHandler
+    for i, handler in enumerate(logger.handlers):
+        if isinstance(handler, logging.handlers.RotatingFileHandler):
+            handler.close()
+            logger.removeHandler(handler)
 
-    # Find the RotatingFileHandler
-    handler_to_replace = None
-    for h in _logger.handlers[:]:
-        if isinstance(h, logging.handlers.RotatingFileHandler):
-            handler_to_replace = h
-            break
-
-    if handler_to_replace:
-        handler_to_replace.close()
-        _logger.removeHandler(handler_to_replace)
-
-    # Add new handler
-    try:
-        handler = logging.handlers.RotatingFileHandler(
-            new_log_file,
-            maxBytes=10 * 1024 * 1024,
-            backupCount=10,
-            encoding="utf-8",
-        )
-        handler.setLevel(logging.DEBUG)
-        handler.setFormatter(
-            logging.Formatter(
-                fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S",
+            # Add new handler with sandbox-specific log file
+            new_handler = logging.handlers.RotatingFileHandler(
+                get_log_file_path(sandbox_name),
+                maxBytes=10 * 1024 * 1024,
+                backupCount=10,
+                encoding="utf-8",
             )
-        )
-        handler.addFilter(lambda record: record.levelno >= logging.DEBUG)
-        _logger.addHandler(handler)
-    except (PermissionError, OSError) as e:
-        # Fallback logic if needed
-        # If we can't write to the new log file, we'll log an error to stderr
-        # as we can't easily add another handler here without potentially
-        # causing recursion or double logging.
-        sys.stderr.write(f"Error reconfiguring logger to {new_log_file}: {e}\n")
+            new_handler.setLevel(logging.DEBUG)
+            new_handler.setFormatter(
+                logging.Formatter(
+                    fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                    datefmt="%Y-%m-%d %H:%M:%S",
+                )
+            )
+            new_handler.addFilter(lambda record: record.levelno >= logging.DEBUG)
+            logger.addHandler(new_handler)
+            break
 
 
 def main_logger(name: str = "agent_nook", level: str = "INFO") -> logging.Logger:
-    """Set up logging and return the logger.
+    """Set up logging and return a logger for the given module.
 
-    This is the main entry point for setting up logging.
-    It configures the logger with INFO level by default.
+    This is the main entry point for setting up logging. It ensures the root
+    "agent_nook" logger is configured, then returns a logger for the given module
+    that will inherit the root's handlers and formatters.
 
     Usage:
         from agent_nook.utils.logger import main_logger
@@ -251,30 +240,18 @@ def main_logger(name: str = "agent_nook", level: str = "INFO") -> logging.Logger
 
     Returns:
         Configured logger instance.
-
-    Note:
-        This function ensures logging is initialized exactly once.
-        Subsequent calls return the appropriate logger for the given module name.
-        All loggers will inherit the root "agent_nook" logger's handlers and formatters.
     """
-    global _initialized, _logger
-
-    # Ensure the root "agent_nook" logger is initialized first
-    # This must be done before returning any logger, to ensure all loggers
-    # share the same handlers and formatters.
-    if not _initialized:
-        # Call _setup_logger() which will return the configured logger
-        # We must use the returned logger to ensure all references point
-        # to the same configured instance
-        _logger = _setup_logger(
+    # Ensure the root "agent_nook" logger is configured first
+    root_logger = logging.getLogger("agent_nook")
+    if not root_logger.handlers:
+        _setup_logger(
             name="agent_nook",
             level=level,
             use_file=True,
             use_console=True,
         )
-        _initialized = True
 
-    # Return the logger for the requested name (will inherit root handlers)
+    # Return logger for the requested name (will inherit root handlers)
     logger = logging.getLogger(name)
     logger.propagate = True  # Ensure messages propagate to root logger
     return logger
