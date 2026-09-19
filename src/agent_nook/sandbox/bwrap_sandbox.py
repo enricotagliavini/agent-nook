@@ -20,19 +20,8 @@ Usage:
 
 import subprocess
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-
-if TYPE_CHECKING:
-    from agent_nook.config.config import SandboxConfig
-
-try:
-    from agent_nook.runner import BwrapError
-    from agent_nook.runner import SandboxExecutionError
-except ImportError:
-    BwrapError = RuntimeError
-    SandboxExecutionError = RuntimeError
-
+# BwrapError and SandboxExecutionError have been removed; use RuntimeError instead
 from pathlib import Path
 
 from agent_nook.config.config import SandboxConfig
@@ -42,8 +31,6 @@ from agent_nook.utils.logger import main_logger
 
 # Module-level logger — uses centralized main_logger
 _logger = main_logger(__name__)
-
-__all__ = ["BwrapError", "BwrapSandbox", "SandboxConfig", "SandboxExecutionError", "SandboxResult"]
 
 
 @dataclass
@@ -239,4 +226,4 @@ class BwrapSandbox:
         return cls(config=config, command=command)
 
 
-__all__ = ["BwrapError", "BwrapSandbox", "SandboxConfig", "SandboxExecutionError", "SandboxResult"]
+__all__ = ["BwrapSandbox", "SandboxConfig", "SandboxResult"]

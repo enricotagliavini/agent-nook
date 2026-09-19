@@ -41,13 +41,6 @@ from dataclasses import dataclass
 from agent_nook.config.config import SandboxConfig
 
 
-# Re-export BwrapError from runner for CLI compatibility
-try:
-    from agent_nook.runner import BwrapError
-except ImportError:
-    BwrapError = RuntimeError
-
-
 def build_mounts_order(config: SandboxConfig) -> list[list[str]]:
     """Build a topologically-sorted list of mount arguments for the sandbox.
 
@@ -256,4 +249,4 @@ class BwrapBuilder:
         return args
 
 
-__all__ = ["BwrapBuilder", "BwrapError", "SandboxConfig"]
+__all__ = ["BwrapBuilder", "SandboxConfig"]

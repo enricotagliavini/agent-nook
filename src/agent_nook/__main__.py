@@ -204,7 +204,6 @@ def _cmd_run(args: argparse.Namespace) -> int:
     """Run a command inside a sandbox."""
     from agent_nook.config.loader import ConfigLoader
     from agent_nook.config.loader import ConfigValidationError
-    from agent_nook.sandbox import BwrapError
     from agent_nook.sandbox import BwrapSandbox
 
     # Logging is already initialized by _setup_logging()
@@ -248,7 +247,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         else:
             logger.error("✗ Sandbox execution failed with return code %d", result.return_code)
             return result.return_code or 1
-    except BwrapError as e:
+    except RuntimeError as e:
         logger.error("Bubblewrap error: %s", e)
         return 1
     except Exception:
