@@ -153,6 +153,33 @@ def test_load_yaml_unknown_mount_type_errors():
     with pytest.raises(ConfigValidationError, match="unknown mount type 'invalid-type'"):
         loader.load_from_dict(data)
 
+def test_load_from_dict_malformed_mount_entry_without_chdir_errors():
+    """Test that non-dict mount entries are rejected even when chdir is absent.
+
+    Regression test: _validate_structure() previously evaluated the mounts
+    branch against a stale `value` left over from the previous field (chdir),
+    so with chdir unset the mounts field was silently skipped and non-dict
+    entries passed structure validation.
+    """
+    loader = ConfigLoader()
+
+    # chdir absent — the case that was silently skipped before the fix
+    data = {
+        "name": "test",
+        "mounts": ["not-a-dict"],
+    }
+    with pytest.raises(ConfigValidationError, match=r"mount\[0\] must be a dict"):
+        loader.load_from_dict(data)
+
+    # chdir set — control case, validated before the fix as well
+    data = {
+        "name": "test",
+        "chdir": "/tmp",
+        "mounts": ["not-a-dict"],
+    }
+    with pytest.raises(ConfigValidationError, match=r"mount\[0\] must be a dict"):
+        loader.load_from_dict(data)
+
 
 def test_load_from_dict():
     """Test that load_from_dict returns a SandboxConfig."""

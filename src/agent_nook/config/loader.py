@@ -367,8 +367,9 @@ class ConfigLoader:
             elif field_name == "unset_vars":
                 # unset_vars is an optional string (can be empty or None)
                 value = data.get(field_name)
-            elif field_name == "mounts" and value is None:
-                value = []
+            elif field_name == "mounts":
+                # mounts defaults to an empty list when not present
+                value = data.get(field_name, [])
             elif field_name == "hostname":
                 value = data.get("hostname")
             elif field_name == "timeout":
