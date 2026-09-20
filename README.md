@@ -290,7 +290,7 @@ Edit `~/.config/agent-nook/sandbox.yaml` to customize:
 
 - **`name`**: Sandbox identifier (used in logs)
 - **`chdir`**: Working directory inside the sandbox
-- **`mounts`**: Bind mounts from host to sandbox. See below for supported types.
+- **`mounts`**: Mounts from host to sandbox. **At least one mount is required** — a config with no mounts is rejected, because the sandbox root would be completely empty (you can also add one at runtime via `--bind`). See below for supported types.
 - **`capabilities`**: Linux capabilities to drop (`drop: ["ALL"]`) or keep (`keep: ["CAP_CHOWN"]`)
 - **`unshare`**: Which namespaces to unshare (isolate) — `pid`, `uts`, `ipc`, `cgroup`, `user`, `network`
 - **`hostname`**: Sandbox hostname (implies UTS namespace unshare)

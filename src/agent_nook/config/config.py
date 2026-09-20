@@ -26,12 +26,11 @@ The validation is layered across modules:
     → Ensures namespace keys are valid and values are booleans.
     → Transforms into NamespaceSet dataclass.
 
-  **Layer 5 (config.py, SandboxConfig.__post_init__ → Mount.build()):**
-    → The Mount dataclass's build() method validates:
-        - Mount type must be one of the allowed types.
-        - Bind/ro-bind/dev-bind require non-None source and target.
-        - Dir/tmpfs require a non-None target.
-    → This is the **last line of defense** before the config is used.
+  **Layer 5 (config.py, SandboxConfig.__post_init__()):**
+    → Enforces the dataclass invariant: at least one mount point is required.
+      A config with zero mounts would create a completely empty sandbox.
+    → This is the **last line of defense** before the config is used:
+      every construction path (file, dict, programmatic) passes through it.
 
   **Layer 6 (sandbox/builder.py, BwrapBuilder.build()):**
     → Pure consumer: assumes config is already valid.
@@ -79,25 +78,20 @@ class Mount:
     - dev:      {"target": "/dev"}
     - dir:      {"target": "/workspace"}
 
-    ## Validation (Layer 5 of the pipeline)
+    ## Validation
 
-    This dataclass enforces semantic invariants in its build() method.
-    The build() method is the **last line of defense** in the validation
-    pipeline (Layer 5). It ensures that at construction time:
+    The build() method enforces the semantic invariants of a single mount:
 
       - Mount type must be one of: bind, ro-bind, dev-bind, tmpfs, proc, dev, dir.
       - Bind/ro-bind/dev-bind require both `source` and `target` to be non-None.
       - Dir/tmpfs require a non-None `target`.
       - Dev-bind requires `device=True`.
 
-    Why this layer exists:
-      - The ConfigLoader (Layers 1-4) transforms user input into Mount objects,
-        but does NOT validate the semantic correctness of each Mount's fields.
-      - Mount.build() provides a final, fast check that catches malformed
-        dataclasses that might have been created programmatically.
-      - This is NOT redundant — it is a defensive boundary that ensures
-        dataclass invariants are maintained even if the config is mutated
-        after loading.
+    build() is invoked by the builder (Layer 6, build_mounts_order()) when the
+    bwrap command line is constructed. It is a defensive boundary that catches
+    malformed Mount objects created or mutated programmatically. The
+    config-level invariant (at least one mount point) is enforced earlier, at
+    Layer 5, by SandboxConfig.__post_init__().
 
     Args:
         source: The source path (required for bind, ro-bind, dev-bind types).
@@ -117,9 +111,9 @@ class Mount:
     def build(self) -> list[str]:
         """Build the bwrap arguments for this mount.
 
-        This is **Layer 5** of the validation pipeline — the last line of
-        defense before the config is used. It validates that the Mount's
-        type and fields are semantically consistent.
+        build() is invoked by the builder (Layer 6, build_mounts_order())
+        when the bwrap command line is constructed. It validates that the
+        Mount's type and fields are semantically consistent.
 
         Validation performed:
           - Mount type must be one of: bind, ro-bind, dev-bind, tmpfs, proc, dev, dir.
@@ -128,9 +122,10 @@ class Mount:
           - Dev-bind requires `device=True`.
           - Size is parsed and converted to bytes for tmpfs.
 
-        Without this layer, a Mount created programmatically with invalid
+        Without this check, a Mount created programmatically with invalid
         fields could slip through to the bwrap builder, causing cryptic
-        runtime errors or incorrect behavior.
+        runtime errors or incorrect behavior. The config-level invariant
+        (at least one mount point) is enforced by SandboxConfig.__post_init__().
 
         Returns:
             A list of bwrap CLI arguments for this mount.
@@ -425,6 +420,24 @@ class SandboxConfig:
     env_vars: dict[str, str] = field(default_factory=dict)
     unset_vars: str = ""  # Comma-separated list of variable names to unset
     _raw_config: dict[str, Any] = field(default_factory=dict, repr=False)
+
+    def __post_init__(self) -> None:
+        """Enforce dataclass invariants on construction (Layer 5 of the pipeline).
+
+        This is the **last line of defense**: every SandboxConfig — whether
+        loaded from a file, parsed from a dict with CLI overrides, or
+        constructed programmatically — passes through here before use.
+
+        Raises:
+            ConfigValidationError: If the config defines no mount points.
+                A sandbox with zero mounts has a completely empty root and
+                bwrap fails at runtime with a cryptic execvp error.
+        """
+        if not self.mounts:
+            raise ConfigValidationError(
+                "at least one mount point is required: the sandbox root would be empty "
+                "(add a mount to the config file or pass --bind SRC:DEST)"
+            )
 
     def validate(self) -> None:
         """Run full validation.

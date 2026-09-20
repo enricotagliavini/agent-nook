@@ -70,7 +70,7 @@ def get_config_path() -> str:
 #            → Prevents namespace injection via malformed dicts
 #
 #   Layer 5: SandboxConfig.__post_init__() — Dataclass construction
-#            → Calls Mount.build() on each mount for final validation
+#            → Enforces the invariant: at least one mount point is required
 #            → The LAST line of defense before the config is used
 #
 # Key principle: Each layer has a distinct responsibility. No layer is redundant.

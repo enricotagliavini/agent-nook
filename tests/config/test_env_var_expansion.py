@@ -119,6 +119,7 @@ class TestEnvVarExpansion:
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
+                "mounts": [{"target": "/tmp", "type": "tmpfs"}],
                 "env_vars": {
                     "HOME": "${HOME}",
                 },
@@ -135,6 +136,7 @@ class TestEnvVarExpansion:
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
+                "mounts": [{"target": "/tmp", "type": "tmpfs"}],
                 "unset_vars": "${VAR1} ${literal} ${VAR2:-default2}",
             }
         )
@@ -149,7 +151,7 @@ class TestEnvVarExpansion:
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
-                "mounts": [],
+                "mounts": [{"target": "/tmp", "type": "tmpfs"}],
                 "chdir": "${WORKDIR}",
             }
         )
@@ -162,6 +164,7 @@ class TestEnvVarExpansion:
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
+                "mounts": [{"target": "/tmp", "type": "tmpfs"}],
                 "hostname": "${SANDBOX_NAME}",
             }
         )
@@ -174,6 +177,7 @@ class TestEnvVarExpansion:
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
+                "mounts": [{"target": "/tmp", "type": "tmpfs"}],
                 "capabilities": {
                     "drop": ["ALL", "${NESTED_VAR}"],
                     "keep": ["CAP_CHOWN"],
@@ -280,6 +284,7 @@ mounts:
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
+                "mounts": [{"target": "/tmp", "type": "tmpfs"}],
                 "unset_vars": "VAR1\nVAR2\nVAR3",
             }
         )
@@ -291,6 +296,7 @@ mounts:
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
+                "mounts": [{"target": "/tmp", "type": "tmpfs"}],
                 "unset_vars": "VAR1 VAR2 VAR3",
             }
         )
@@ -304,6 +310,7 @@ mounts:
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
+                "mounts": [{"target": "/tmp", "type": "tmpfs"}],
                 "unset_vars": "VAR1\tVAR2\nVAR3",  # Tab + newline
             }
         )
@@ -317,6 +324,7 @@ mounts:
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
+                "mounts": [{"target": "/tmp", "type": "tmpfs"}],
                 "unset_vars": "VAR1  VAR2  VAR3",  # Double spaces
             }
         )
@@ -330,6 +338,7 @@ mounts:
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
+                "mounts": [{"target": "/tmp", "type": "tmpfs"}],
                 "unset_vars": "  VAR1  VAR2  VAR3  ",
             }
         )
@@ -340,6 +349,7 @@ mounts:
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
+                "mounts": [{"target": "/tmp", "type": "tmpfs"}],
                 "unset_vars": "ALL",
             }
         )
@@ -354,6 +364,7 @@ mounts:
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
+                "mounts": [{"target": "/tmp", "type": "tmpfs"}],
                 "unset_vars": "${VAR1} ${VAR2}",
             }
         )
@@ -366,6 +377,7 @@ mounts:
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
+                "mounts": [{"target": "/tmp", "type": "tmpfs"}],
                 "unset_vars": "${UNSET_VAR1:-first} ${UNSET_VAR2:-second}",
             }
         )
@@ -377,6 +389,7 @@ mounts:
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
+                "mounts": [{"target": "/tmp", "type": "tmpfs"}],
                 "unset_vars": "",
             }
         )
@@ -387,6 +400,7 @@ mounts:
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
+                "mounts": [{"target": "/tmp", "type": "tmpfs"}],
                 "unset_vars": "   \t\n   ",  # Only whitespace
             }
         )
@@ -398,6 +412,7 @@ mounts:
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
+                "mounts": [{"target": "/tmp", "type": "tmpfs"}],
                 "unset_vars": "SINGLE",
             }
         )
@@ -411,6 +426,7 @@ mounts:
         config = ConfigLoader().load_from_dict(
             {
                 "name": "test",
+                "mounts": [{"target": "/tmp", "type": "tmpfs"}],
                 "unset_vars": "${MYALL}",
             }
         )

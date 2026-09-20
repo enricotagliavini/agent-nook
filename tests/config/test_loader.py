@@ -1,5 +1,6 @@
 """Tests for ConfigLoader."""
 
+import argparse
 import os
 import sys
 
@@ -203,3 +204,55 @@ def test_load_from_dict():
     assert config.mounts[1].type == "dev"
     assert config.mounts[2].type == "tmpfs"
     assert config.capabilities.dropped == ["ALL"]
+
+
+def test_load_from_dict_empty_mounts_errors():
+    """Test that an empty mounts list raises ConfigValidationError."""
+    loader = ConfigLoader()
+    data = {
+        "name": "test",
+        "mounts": [],
+    }
+
+    with pytest.raises(ConfigValidationError, match="at least one mount point"):
+        loader.load_from_dict(data)
+
+
+def _make_run_args(bind: list[str]) -> argparse.Namespace:
+    """Build a minimal argparse.Namespace mimicking `agent-nook run` flags."""
+    return argparse.Namespace(
+        config=None,
+        chdir=None,
+        die_with_parent=True,
+        new_session=True,
+        hostname=None,
+        bind=bind,
+        ro_bind=[],
+        cap_add=[],
+        cap_drop=[],
+        unshare=[],
+        env=[],
+        unset_env=[],
+    )
+
+
+def test_load_with_overrides_empty_mounts_with_cli_bind_succeeds(tmp_path):
+    """A config file without mounts is rescued by a CLI --bind override."""
+    config_file = tmp_path / "sandbox.yaml"
+    config_file.write_text("name: test\n", encoding="utf-8")
+
+    config = ConfigLoader().load_with_overrides(_make_run_args(["/host/src:/sandbox/src"]), path=str(config_file))
+
+    assert len(config.mounts) == 1
+    assert config.mounts[0].source == "/host/src"
+    assert config.mounts[0].target == "/sandbox/src"
+    assert config.mounts[0].type == "bind"
+
+
+def test_load_with_overrides_empty_mounts_without_cli_bind_errors(tmp_path):
+    """A config file without mounts and no CLI bind fails validation."""
+    config_file = tmp_path / "sandbox.yaml"
+    config_file.write_text("name: test\n", encoding="utf-8")
+
+    with pytest.raises(ConfigValidationError, match="at least one mount point"):
+        ConfigLoader().load_with_overrides(_make_run_args([]), path=str(config_file))

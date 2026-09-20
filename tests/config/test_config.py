@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from agent_nook.config.config import CapabilitySet
+from agent_nook.config.config import ConfigValidationError
 from agent_nook.config.config import Mount
 from agent_nook.config.config import NamespaceSet
 from agent_nook.config.config import SandboxConfig
@@ -239,3 +240,12 @@ def test_mount_type_enum_values():
     mount = Mount(type="UNKNOWN")
     with pytest.raises(ValueError, match="Unknown mount type"):
         mount.build()
+
+
+def test_sandbox_config_requires_at_least_one_mount():
+    """A SandboxConfig without any mount points is rejected at construction."""
+    with pytest.raises(ConfigValidationError, match="at least one mount point"):
+        SandboxConfig(name="test")
+
+    with pytest.raises(ConfigValidationError, match="at least one mount point"):
+        SandboxConfig(name="test", mounts=[])
