@@ -388,6 +388,7 @@ def test_builder_unset_vars_ALL_with_whitespace():
 def test_builder_unset_vars_ENV_VAR_EXPANSION():
     """Test builder with env var expansion in unset_vars."""
     import os
+
     from agent_nook.config.loader import ConfigLoader
     os.environ["TEST_VAR"] = "testvalue"
     os.environ["HOME"] = "/custom/home"
