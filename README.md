@@ -43,7 +43,7 @@ This is a project I do during my spare time. **It may contain errors or security
 This project is being developed with the assistance of AI open weight models and a lot of free and open software. With all of the following (plus more) this would not have been possible. A big thank you to everybody!
 
  - [Qwen AI model](https://huggingface.co/Qwen) for providing the open weight model.
- - [Qwen-code](https://github.com/qwenLM/qwen-code) and [Opencode](https://opencode.ai/) the AI coding agents I used for this project.
+ - [Oh My Pi](https://github.com/can1357/oh-my-pi), [Qwen-code](https://github.com/qwenLM/qwen-code) and [Opencode](https://opencode.ai/) the AI coding agents I used for this project.
  - [Lemonade AI server](https://lemonade-server.ai/) for the easy to use personal and local AI server.
  - [AMD ROCm](https://github.com/ROCm) for the great Linux support. Using ROCm on Fedora worked out of the box and it was a trouble free experience.
  - [Fedora](https://fedoraproject.org/kde) [Plasma Desktop](https://kde.org/) edition, for making a great Linux distro and packaging ROCm and llama-cpp making it a trouble free installation experience.
@@ -147,6 +147,8 @@ The sandbox will correctly mount `/home` first, then `/home/project` as a subdir
 
 ## Installation
 
+It is recommended to use the bubblewrap version that comes from the OS. If you OS supports flatpak bubblewrap should be already installed. If there is bubblewrap available, install adding the optional `[bubblewrap]` dependencies to pull a binary build from PyPi.
+
 ### From source
 
 ```bash
@@ -159,7 +161,14 @@ pip install -e ".[bubblewrap]"  # with bubblewrap dependency in case it's not al
 ### With pip
 
 ```bash
-pip install agent-nook[bubblewrap]
+pip install agent-nook
+agent-nook run --command "echo hello"
+```
+
+### With pipx
+
+```bash
+pipx install agent-nook
 agent-nook run --command "echo hello"
 ```
 
@@ -418,13 +427,6 @@ agent-nook run \
 
 Bubblewrap is the same technology behind Flatpak. It's a single binary that applies sandbox rules without requiring a container runtime. It's available out of the box on any distribution supporting Flatpak packages.
 
-### Conventions
-
-- **Python 3.10+** — type hints, dataclasses, type checking.
-- **`src/` layout** — one module per concern.
-- **Logging** — use `logging` module with XDG-compliant paths and levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`.
-- **XDG compliance** — all config, cache, and log files follow the XDG Base Directory Specification.
-
 ## Development
 
 ### Prerequisites
@@ -440,8 +442,7 @@ cd agent-nook
 pip install -e ".[dev]"
 
 # Run tests
-pytest
-pytest -v --cov=agent_nook
+./run_tests.sh
 
 # Format code
 ruff check src/
@@ -452,6 +453,6 @@ ruff format src/
 
 GPLv3 — see [`LICENSE`](LICENSE) for details.
 
-## Contributing
+## Contributing / Found a bug?
 
-Contributions are welcome! Please see [`AGENTS.md`](AGENTS.md) for engineering guidelines and contribution rules.
+Contributions are welcome! Feel free to open an issue or a pull request.
