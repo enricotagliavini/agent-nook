@@ -20,8 +20,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-
-__version__ = "0.1.1"
+from agent_nook import __version__
 
 
 def _auto_init() -> None:

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-nook"
-version = "0.1.1"
+dynamic = ["version"]
 description = "A lightweight bwrap sandbox for AI agents"
 readme = "README.md"
 license = {text = "GPL-3.0"}
@@ -30,6 +30,9 @@ dev = ["pytest>=7.0", "hatch>=1.0", "pipx>=1.0", "ruff>=0.16.0"]
 
 [project.scripts]
 agent-nook = "agent_nook.__main__:main"
+
+[tool.hatch.version]
+path = "src/agent_nook/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_nook"]
