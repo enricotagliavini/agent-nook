@@ -9,71 +9,30 @@ from pathlib import Path
 import pytest
 
 
-@pytest.hookimpl(tryfirst=True)
-def pytest_configure(config: pytest.Config) -> None:
-    """Build wheel if not present, but don't clear dist/ directory.
-
-    Tests should be run after building the wheel from source to ensure
-    they test the latest code. Clearing dist/ would cause tests to rebuild
-    from an outdated sdist.
-    """
-    pass
-
-
-
-
 @pytest.fixture(scope="session")
 def built_wheel() -> Path:
-    """Build and return the path to the wheel file.
+    """Build the wheel from the current source and return its path.
 
-    Session-scoped: builds ONCE per pytest run. Rebuilds automatically
-    if the dist/ directory is cleared by pytest_configure.
+    Session-scoped: built ONCE per pytest run, unconditionally. Stale
+    wheels in dist/ are removed first so integration tests never run
+    against an outdated build.
     """
     dist_dir = Path(__file__).parent.parent / "dist"
     dist_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build wheel if not present
+    for stale_wheel in dist_dir.glob("*.whl"):
+        stale_wheel.unlink()
+
+    subprocess.run(
+        [sys.executable, "-m", "hatch", "build", "-t", "wheel"],
+        cwd=Path(__file__).parent.parent,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
     wheel_path = list(dist_dir.glob("*.whl"))
-    if not wheel_path:
-        subprocess.run(
-            [sys.executable, "-m", "hatch", "build", "-t", "wheel"],
-            cwd=Path(__file__).parent.parent,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        wheel_path = list(dist_dir.glob("*.whl"))
-
     return wheel_path[0]
-
-
-@pytest.fixture(scope="session")
-def built_sdist() -> Path:
-    """Build and return the path to the sdist file.
-
-    Session-scoped: builds ONCE per pytest run. Rebuilds automatically
-    if the dist/ directory is cleared.
-    
-    Note: This fixture is only used as a fallback if no wheel exists.
-    Tests should prefer the built_wheel fixture to ensure they test
-    the latest code.
-    """
-    dist_dir = Path(__file__).parent.parent / "dist"
-    dist_dir.mkdir(parents=True, exist_ok=True)
-
-    # Build sdist if not present
-    sdist_path = list(dist_dir.glob("*.tar.gz"))
-    if not sdist_path:
-        subprocess.run(
-            [sys.executable, "-m", "hatch", "build", "-t", "sdist", "-c"],
-            cwd=Path(__file__).parent.parent,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        sdist_path = list(dist_dir.glob("*.tar.gz"))
-
-    return sdist_path[0]
 
 
 @pytest.fixture(scope="session")
@@ -165,16 +124,12 @@ def test_runner(
     xdg_config_dir: Path,
     pipx_test_env: tuple[Path, Path, list[str]],
     built_wheel: Path,
-    built_sdist: Path,
 ) -> subprocess.CompletedProcess:
     """Session-scoped runner that installs agent-nook once for all tests.
 
-    Uses a shared isolated pipx environment but with the freshly-built
-    wheel from built_wheel. Falls back to sdist only if wheel is not found.
-    
-    Note: We use the wheel instead of sdist because the wheel is rebuilt
-    from the latest source code before testing, ensuring tests run against
-    the most recent changes.
+    Uses a shared isolated pipx environment with the wheel that
+    built_wheel just rebuilt from the current source, so the tests
+    always run against the most recent code.
     """
     pipx_home, pipx_bin, env = pipx_test_env
 
@@ -186,12 +141,9 @@ def test_runner(
         f"pipx bin already contains files: {list(pipx_bin.glob('*'))}"
     )
 
-    # Use wheel if available, otherwise fall back to sdist
-    package_to_install = built_wheel if built_wheel.exists() else built_sdist
-    
     # Run pipx install once for the entire session
     result = subprocess.run(
-        [sys.executable, "-m", "pipx", "install", "--force", str(package_to_install)],
+        [sys.executable, "-m", "pipx", "install", "--force", str(built_wheel)],
         env=env,
         capture_output=True,
         text=True,
@@ -203,11 +155,7 @@ def test_runner(
         f"pipx install failed:\n  stdout: {result.stdout}\n  stderr: {result.stderr}"
     )
     
-    # Print the package that was installed for debugging
-    if package_to_install == built_wheel:
-        print(f"INFO: Installed agent-nook from wheel: {built_wheel}")
-    else:
-        print(f"INFO: Installed agent-nook from sdist: {built_sdist}")
+    print(f"INFO: Installed agent-nook from wheel: {built_wheel}")
 
     def run_command(*args: str, **kwargs) -> subprocess.CompletedProcess:
         return subprocess.run(

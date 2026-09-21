@@ -83,25 +83,23 @@ def pipx_test_env(tmp_path_factory: pytest.TempPathFactory):
 
 This isolates test venvs from the host system's pipx installations.
 
-### Wheel/Sdist Building
+### Wheel Building
 
-The test suite builds distribution artifacts once per session:
+Integration tests install a wheel that the `built_wheel` fixture rebuilds
+unconditionally at session start:
 
 ```python
 @pytest.fixture(scope="session")
 def built_wheel() -> Path:
-    """Builds wheel once per session, rebuilds if dist/ is cleared."""
-    subprocess.run([sys.executable, "-m", "hatch", "build", "-t", "wheel"])
+    """Rebuilds the wheel from the current source once per session."""
+    for stale_wheel in dist_dir.glob("*.whl"):
+        stale_wheel.unlink()
+    subprocess.run([sys.executable, "-m", "hatch", "build", "-t", "wheel"], check=True)
     return wheel_path[0]
-
-@pytest.fixture(scope="session")
-def built_sdist() -> Path:
-    """Builds sdist once per session, rebuilds if dist/ is cleared."""
-    subprocess.run([sys.executable, "-m", "hatch", "build", "-t", "sdist", "-c"])
-    return sdist_path[0]
 ```
 
-This avoids redundant builds across integration tests.
+The unconditional rebuild guarantees integration tests always run against
+the current source, never a stale build left in `dist/`.
 
 ### Test Runner Fixture
 
@@ -112,11 +110,11 @@ The `test_runner` fixture installs the package once per session:
 def test_runner(
     xdg_config_dir: Path,
     pipx_test_env: tuple[Path, Path, list[str]],
-    built_sdist: Path,
+    built_wheel: Path,
 ) -> subprocess.CompletedProcess:
     """Installs agent-nook via pipx once for all integration tests."""
     result = subprocess.run(
-        [sys.executable, "-m", "pipx", "install", "--force", str(built_sdist)],
+        [sys.executable, "-m", "pipx", "install", "--force", str(built_wheel)],
         env=env,
     )
     # Returns a callable that runs commands in the sandbox
@@ -159,8 +157,7 @@ Fixtures marked `scope="session"` are created once per test run and shared:
 - `xdg_config_dir`: Shared XDG config directory
 - `xdg_state_dir`: Shared XDG state directory
 - `pipx_test_env`: Shared pipx environment
-- `built_wheel`: Pre-built wheel file
-- `built_sdist`: Pre-built sdist file
+- `built_wheel`: Wheel rebuilt from the current source
 - `test_runner`: Pre-installed agent-nook binary
 
 This speeds up test execution by avoiding redundant setup.
@@ -181,8 +178,7 @@ Fixtures marked `scope="function"` are fresh for each test:
 | `xdg_config_dir` | session | Returns temp config directory under /tmp |
 | `xdg_state_dir` | session | Returns temp state directory under /tmp |
 | `pipx_test_env` | session | Isolated pipx environment (Path, Path, dict) |
-| `built_wheel` | session | Pre-built wheel file |
-| `built_sdist` | session | Pre-built sdist file |
+| `built_wheel` | session | Wheel rebuilt from the current source (once per session) |
 | `test_runner` | session | Installed agent-nook callable |
 
 ### Function Fixtures
@@ -224,24 +220,12 @@ def test_config_something(tmp_path: Path) -> None:
     # ... test logic ...
 ```
 
-## Dist Directory Cleaning
+## Wheel Freshness
 
-The `pytest_configure` hook cleans the `dist/` directory at session start:
-
-```python
-@pytest.hookimpl(tryfirst=True)
-def pytest_configure(config: pytest.Config) -> None:
-    """Clean dist/ directory at session start to ensure fresh builds."""
-    dist_dir = Path(__file__).parent.parent / "dist"
-    if dist_dir.exists():
-        for item in dist_dir.iterdir():
-            if item.is_dir():
-                shutil.rmtree(item)
-            else:
-                item.unlink()
-```
-
-This ensures tests always run against the latest source code.
+The `built_wheel` fixture removes any stale wheels from `dist/` and rebuilds
+the wheel from the current source at session start. Integration tests
+therefore always run against the latest code — no manual cleaning of `dist/`
+is needed.
 
 ## Best Practices
 
@@ -270,8 +254,7 @@ Use `temp_xdg_dirs` fixture to override for specific tests.
 
 If tests are slow:
 - Session-scoped fixtures should already be working
-- Check that `dist/` directory is not being cleaned unnecessarily
-- First run always builds wheel/sdist (can take time)
+- The wheel is rebuilt on every session (a few seconds), which is expected
 
 ### Lint/Format Failures
 
