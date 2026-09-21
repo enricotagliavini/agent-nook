@@ -14,9 +14,8 @@ tests/
 │   ├── test_config.py          # Config building tests
 │   ├── test_env_var_expansion.py # Environment variable expansion
 │   └── test_loader.py          # Config loader tests
-├── runner/                      # Unit tests for runner module
-│   └── test_runner.py          # Command building tests
 ├── sandbox/                     # Unit tests for sandbox module
+│   ├── test_bwrap_sandbox.py   # BwrapSandbox build/run tests
 │   └── test_builder.py         # Bubblewrap builder tests
 └── README.md                   # This file
 ```

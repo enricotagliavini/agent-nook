@@ -9,7 +9,6 @@ The key test verifies that the basic command:
 executes successfully and produces the expected output.
 """
 
-import subprocess
 
 import pytest
 

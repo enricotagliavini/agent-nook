@@ -1,8 +1,8 @@
-"""Tests for the sandbox runner.
+"""Tests for the BwrapSandbox executor (build and run).
 
-Note: This test directory is kept for backward compatibility with
-code that might import from `agent_nook.runner`. The functionality
-has been moved to `tests/sandbox/` and the module no longer exists.
+Complements test_builder.py, which covers BwrapBuilder in isolation:
+these tests exercise BwrapSandbox.build() delegation, command
+appending, and BwrapSandbox.run() execution end-to-end.
 """
 
 import os
@@ -13,37 +13,10 @@ import tempfile
 import pytest
 
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, "src")
 
 from agent_nook.config.loader import ConfigLoader
 from agent_nook.sandbox import BwrapSandbox
-
-
-def test_build_command_valid():
-    """Test BwrapSandbox.build() with valid config."""
-    config = ConfigLoader().set(
-        {
-            "name": "test",
-            "chdir": "/tmp",
-            "mounts": [
-                {"source": "/", "target": "/", "type": "bind"},
-                {"target": "/tmp", "type": "tmpfs"},
-            ],
-            "capabilities": {"drop": ["ALL"]},
-            "unshare": {"pid": True, "uts": True},
-        }
-    )
-    cmd = BwrapSandbox(config).build()
-    assert cmd[0] == "bwrap"
-    assert "--die-with-parent" in cmd
-    assert "--new-session" in cmd
-    assert "--cap-drop" in cmd
-    assert "ALL" in cmd
-    assert "--unshare-pid" in cmd
-    assert "--unshare-uts" in cmd
-    assert "--bind" in cmd
-    assert "/" in cmd
-    assert "--tmpfs" in cmd
 
 
 def test_build_command_with_ro_bind():
@@ -80,55 +53,6 @@ def test_build_command_with_bad_size():
     )
     with pytest.raises(ValueError, match="Invalid size suffix"):
         BwrapSandbox(config).build()
-
-
-def test_build_command_hostname():
-    """Test that hostname sets unshare-uts and --hostname."""
-    config = ConfigLoader().set(
-        {
-            "name": "test",
-            "chdir": "/tmp",
-            "mounts": [{"source": "/", "target": "/", "type": "bind"}],
-            "hostname": "sandbox-host",
-            "unshare": {"pid": True},
-        }
-    )
-    cmd = BwrapSandbox(config).build()
-    assert "--unshare-uts" in cmd
-    assert "--hostname" in cmd
-    assert "sandbox-host" in cmd
-
-
-def test_build_command_env_vars():
-    """Test that env_vars are added as --setenv arguments."""
-    config = ConfigLoader().set(
-        {
-            "name": "test",
-            "chdir": "/tmp",
-            "mounts": [{"source": "/", "target": "/", "type": "bind"}],
-            "env_vars": {"MY_VAR": "myvalue", "ANOTHER": "another"},
-        }
-    )
-    cmd = BwrapSandbox(config).build()
-    assert "--setenv" in cmd
-    assert "MY_VAR" in cmd
-    assert "myvalue" in cmd
-
-
-def test_build_command_unset_env_vars():
-    """Test that unset_vars are added as --unsetenv arguments (whitespace-separated)."""
-    config = ConfigLoader().set(
-        {
-            "name": "test",
-            "chdir": "/tmp",
-            "mounts": [{"source": "/", "target": "/", "type": "bind"}],
-            "unset_vars": "VAR1 VAR2",
-        }
-    )
-    cmd = BwrapSandbox(config).build()
-    assert "--unsetenv" in cmd
-    assert "VAR1" in cmd
-    assert "VAR2" in cmd
 
 
 def test_build_command_no_command():
@@ -421,32 +345,3 @@ def test_cli_command_building():
     assert "--tmpfs" in cmd
     # Command should NOT start with "bwrap" (no duplication)
     assert cmd[0] == "bwrap", "Command should start with 'bwrap', not duplicated"
-
-
-def test_cli_direct_execution():
-    """Test that CLI directly executes the bwrap command via subprocess.
-
-    This test verifies that BwrapSandbox.build() produces a
-    correct bwrap command and executes it successfully via subprocess.run().
-    """
-
-    config = ConfigLoader().set(
-        {
-            "name": "cli-test",
-            "chdir": "/tmp",
-            "mounts": [
-                {"source": "/", "target": "/", "type": "bind"},
-                {"source": "/etc/resolv.conf", "target": "/etc/resolv.conf", "type": "ro-bind"},
-                {"target": "/tmp", "type": "tmpfs"},
-            ],
-            "capabilities": {"drop": ["ALL"]},
-            "unshare": {"pid": True, "uts": True},
-        }
-    )
-    bwrap_cmd = BwrapSandbox(config).build(["echo", "hello from sandbox"])
-
-    # Verify the command builds correctly
-    assert bwrap_cmd[0] == "bwrap"
-    assert "--cap-drop" in bwrap_cmd
-    assert "ALL" in bwrap_cmd
-    assert "echo" in bwrap_cmd
