@@ -38,11 +38,35 @@ jobs:
     outputs:
       is-valid-version: ${{ steps.validate.outputs.is-valid-version }}
       is-prerelease: ${{ steps.validate.outputs.is-prerelease }}
+      version-matches: ${{ steps.validate.outputs.version-matches }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
       - name: Validate tag
         id: validate
         run: |
           TAG="${{ github.ref_name }}"
+          VERSION_FILE="src/agent_nook/__init__.py"
+
+          # Single source of truth for the version; hatch reads this dynamically.
+          SRC_VERSION="$(grep -E "^[[:space:]]*__version__[[:space:]]*=" "$VERSION_FILE" \
+            | head -n1 \
+            | sed -E 's/.*= *"([^"]+)".*/\1/')"
+
+          # Strip a single leading v/b prefix from the tag to get the numeric version.
+          TAG_VERSION="$(printf '%s' "$TAG" | sed -E 's/^[vb]//')"
+
+          echo "tag='${TAG}' tag-version='${TAG_VERSION}' package-version='${SRC_VERSION}'"
+
+          # The tag version must match the version declared in the package.
+          if [[ "$TAG_VERSION" != "$SRC_VERSION" ]]; then
+            echo "::error::Tag version '${TAG_VERSION}' does not match the package version '${SRC_VERSION}' in src/agent_nook/__init__.py"
+            exit 1
+          fi
+          echo "version-matches=true" >> $GITHUB_OUTPUT
+
+          # Tag format: vMAJOR.MINOR.PATCH is a stable release, bMAJOR.MINOR.PATCH is a beta.
           if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "is-valid-version=true" >> $GITHUB_OUTPUT
             echo "is-prerelease=false" >> $GITHUB_OUTPUT
@@ -63,7 +87,7 @@ jobs:
       url: https://pypi.org/p/agent-nook
     permissions:
       id-token: write
-    if: ${{ needs.validate-tag.outputs.is-valid-version == 'true' && needs.validate-tag.outputs.is-prerelease == 'false' }}
+    if: ${{ needs.validate-tag.outputs.is-valid-version == 'true' && needs.validate-tag.outputs.is-prerelease == 'false' && needs.validate-tag.outputs.version-matches == 'true' }}
     steps:
       - name: Download all the dists
         uses: actions/download-artifact@v4
@@ -85,7 +109,7 @@ jobs:
       url: https://test.pypi.org/p/agent-nook
     permissions:
       id-token: write
-    if: ${{ needs.validate-tag.outputs.is-valid-version == 'true' }}
+    if: ${{ needs.validate-tag.outputs.is-valid-version == 'true' && needs.validate-tag.outputs.version-matches == 'true' }}
     steps:
       - name: Download all the dists
         uses: actions/download-artifact@v4
@@ -104,7 +128,7 @@ jobs:
     needs: [build, validate-tag]
     permissions:
       contents: write
-    if: ${{ needs.validate-tag.outputs.is-valid-version == 'true' }}
+    if: ${{ needs.validate-tag.outputs.is-valid-version == 'true' && needs.validate-tag.outputs.version-matches == 'true' }}
     steps:
       - name: Download all the dists
         uses: actions/download-artifact@v4
