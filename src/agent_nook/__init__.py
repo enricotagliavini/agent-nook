@@ -11,7 +11,7 @@ Usage:
     cmd = BwrapBuilder(config).build(["python3", "agent.py"])
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # Unified sandbox exports
 # Config exports
