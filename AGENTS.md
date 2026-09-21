@@ -8,7 +8,7 @@
 
 ## XDG Configuration & Paths
 - **Config**: `~/.config/agent-nook/sandbox.yaml` (default copied from `src/agent_nook/config/sandbox.yaml`), `logging.yaml`
-- **State/Logs**: `~/.local/state/agent-nook/logs/`
+- **State/Logs**: `~/.local/state/agent-nook/`
 - **Cache**: `~/.local/state/agent-nook/cache/`
 - **Format**: Human-readable YAML. `/home` mounted as tmpfs by default.
 

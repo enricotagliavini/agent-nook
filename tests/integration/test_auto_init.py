@@ -75,8 +75,8 @@ def test_auto_init_creates_config_file(temp_xdg_dirs: tuple[str, str, Path, Path
     assert isinstance(config, dict), "Config should be a dictionary"
 
 
-def test_auto_init_creates_log_directory(temp_xdg_dirs: tuple[str, str, Path, Path]) -> None:
-    """Test that auto-init creates the log directory."""
+def test_auto_init_creates_state_directory(temp_xdg_dirs: tuple[str, str, Path, Path]) -> None:
+    """Test that auto-init creates the state directory (logs live there)."""
     config_dir, state_dir, config_path, state_path = temp_xdg_dirs
 
     # Run agent-nook with a simple command
@@ -87,10 +87,10 @@ def test_auto_init_creates_log_directory(temp_xdg_dirs: tuple[str, str, Path, Pa
         timeout=10,
     )
 
-    # Log directory should exist (created by auto-init)
-    logs_dir = state_path / "logs"
-    assert logs_dir.exists(), "Log directory was not created"
-    assert logs_dir.is_dir(), "Log path should be a directory"
+    # State directory should exist (created by auto-init; logs live there)
+    state_subdir = state_path / "agent-nook"
+    assert state_subdir.exists(), "State directory was not created"
+    assert state_subdir.is_dir(), "State path should be a directory"
 
 
 def test_auto_init_does_not_overwrite_existing_config(temp_xdg_dirs: tuple[str, str, Path, Path]) -> None:

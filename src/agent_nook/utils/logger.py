@@ -1,10 +1,10 @@
 """XDG-compliant logging setup for Agent Nook.
 
-All log files are written to ~/.local/state/agent-nook/logs/
+All log files are written to ~/.local/state/agent-nook/
 by default, following the XDG Base Directory Specification.
 
 Environment variables respected:
-- XDG_STATE_HOME  -> ~/.local/state/agent-nook/logs/
+- XDG_STATE_HOME  -> $XDG_STATE_HOME/agent-nook/
 - XDG_CONFIG_HOME -> ~/.config/agent-nook/logging.yaml
 
 Usage:
@@ -43,28 +43,32 @@ __all__ = [
 
 
 def get_state_dir() -> str:
-    """Resolve the state directory path using XDG_STATE_HOME.
+    """Resolve the agent-nook state directory using XDG_STATE_HOME.
 
+    XDG-compliant: the application gets its own subdirectory.
     Reads XDG_STATE_HOME from the environment, falls back to
     ~/.local/state if not set.
 
     Returns:
-        The absolute path to the state directory.
+        The absolute path to the state directory
+        (e.g., ~/.local/state/agent-nook).
     """
     state_dir = os.environ.get("XDG_STATE_HOME")
     if not state_dir:
         state_dir = os.path.expanduser("~/.local/state")
-    return Path(state_dir).expanduser()
+    return os.path.join(Path(state_dir).expanduser(), "agent-nook")
 
 
 def get_log_directory() -> str:
     """Get the log directory path.
 
+    Log files live directly in the application state directory.
+
     Returns:
         The absolute path to the log directory
-        (e.g., ~/.local/state/agent-nook/logs).
+        (e.g., ~/.local/state/agent-nook).
     """
-    return os.path.join(get_state_dir(), "logs")
+    return get_state_dir()
 
 
 def get_log_file_path() -> str:
@@ -72,7 +76,7 @@ def get_log_file_path() -> str:
 
     Returns:
         The absolute path to the log file
-        (e.g., ~/.local/state/agent-nook/logs/agent-nook.log).
+        (e.g., ~/.local/state/agent-nook/agent-nook.log).
     """
     return os.path.join(get_log_directory(), "agent-nook.log")
 
@@ -127,7 +131,7 @@ def _setup_logger(
     Returns:
         Configured logging.Logger instance.
 
-    Log file location: ~/.local/state/agent-nook/logs/agent-nook.log
+    Log file location: ~/.local/state/agent-nook/agent-nook.log
 
     The logger uses:
     - RotatingFileHandler: writes to disk, rotates at 10MB, keeps 10 backups.

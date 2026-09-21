@@ -274,7 +274,7 @@ Configuration follows [XDG Base Directory Specification](https://specifications.
 
 - `~/.config/agent-nook/sandbox.yaml` — Main sandbox configuration
 - `~/.config/agent-nook/logging.yaml` — Logger configuration
-- `~/.local/state/agent-nook/logs/` — Log files; lines are tagged with the active sandbox name (e.g., `agent_nook[mybox]`)
+- `~/.local/state/agent-nook/` — Log files; lines are tagged with the active sandbox name (e.g., `agent_nook[mybox]`)
 
 ### Setting up config
 

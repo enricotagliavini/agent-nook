@@ -27,7 +27,7 @@ tests/
 All tests respect the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html):
 
 - **Config**: `~/.config/agent-nook/sandbox.yaml`
-- **State/Logs**: `~/.local/state/agent-nook/logs/`
+- **State/Logs**: `~/.local/state/agent-nook/`
 
 ### Automatic Setup
 

@@ -29,7 +29,7 @@ def _auto_init() -> None:
 
     This ensures that the required directories exist before any command is run:
     - ~/.config/agent-nook/ (config)
-    - ~/.local/state/agent-nook/logs/ (logs)
+    - ~/.local/state/agent-nook/ (state, logs)
 
     It also copies the bundled default config file if it doesn't exist.
     """
@@ -259,6 +259,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
 def _cmd_status(args: argparse.Namespace) -> int:
     """Display agent-nook status."""
     from agent_nook.config import get_config_path
+    from agent_nook.utils.logger import get_log_file_path
+    from agent_nook.utils.logger import get_state_dir
 
     logger = logging.getLogger("agent_nook")
     logger.info("Agent Nook Status")
@@ -280,13 +282,11 @@ def _cmd_status(args: argparse.Namespace) -> int:
     else:
         logger.info("  Config: %s (not found)", config_path)
 
-    state_dir = os.environ.get("XDG_STATE_HOME", "~/.local/state")
-    state_dir = os.path.expanduser(state_dir)
-    state_path = os.path.join(state_dir, "agent-nook")
+    state_path = get_state_dir()
 
     if os.path.exists(state_path):
         logger.info("  State: %s (found)", state_path)
-        log_path = os.path.join(state_path, "logs", "agent-nook.log")
+        log_path = get_log_file_path()
         if os.path.exists(log_path):
             logger.info("  Logs: %s (%d KB)", log_path, os.path.getsize(log_path) / 1024)
     else:
@@ -303,11 +303,11 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 def _cmd_logs(args: argparse.Namespace) -> int:
     """Show recent logs, optionally following them live (like tail -F)."""
-    from agent_nook.utils.logger import get_log_directory
+    from agent_nook.utils.logger import get_log_file_path
 
     logger = logging.getLogger("agent_nook")
 
-    log_file = os.path.join(get_log_directory(), "agent-nook.log")
+    log_file = get_log_file_path()
 
     if args.follow:
         # tail -F (--follow=name --retry) reopens the file after log rotation

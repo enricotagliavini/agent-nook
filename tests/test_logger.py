@@ -88,9 +88,9 @@ def test_set_sandbox_name_tags_lines_and_keeps_log_file(isolated_agent_nook_logg
     set_sandbox_name("mybox")
     logger.info("after sandbox")
 
-    log_file = tmp_path / "logs" / "agent-nook.log"
+    log_file = tmp_path / "agent-nook" / "agent-nook.log"
     assert log_file.exists()
-    assert not (tmp_path / "logs" / "nook-mybox.log").exists()
+    assert not (tmp_path / "agent-nook" / "nook-mybox.log").exists()
 
     lines = log_file.read_text(encoding="utf-8").splitlines()
     assert any(re.search(rf"^{LINE_RE} - agent_nook - INFO - before sandbox$", line) for line in lines)
