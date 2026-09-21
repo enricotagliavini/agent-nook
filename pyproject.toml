@@ -26,7 +26,7 @@ dependencies = [
 
 [project.optional-dependencies]
 bubblewrap = ["bubblewrap-bin>=0.11.0"]
-dev = ["pytest>=7.0", "hatch>=1.0", "pipx>=1.0"]
+dev = ["pytest>=7.0", "hatch>=1.0", "pipx>=1.0", "ruff>=0.16.0"]
 
 [project.scripts]
 agent-nook = "agent_nook.__main__:main"

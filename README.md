@@ -444,10 +444,16 @@ pip install -e ".[dev]"
 # Run tests
 ./run_tests.sh
 
-# Format code
-ruff check src/
-ruff format src/
+# Lint and format (run with --check to verify without fixing, as CI does)
+./run_lint.sh
 ```
+
+### Continuous integration
+
+A GitHub Actions workflow (`.github/workflows/tests.yml`) runs on every push and pull request:
+
+- **`test`** — full test suite (`./run_tests.sh`) across a Python 3.10–3.14 matrix on `ubuntu-latest` runners. Integration tests launch real sandboxes, so the job installs `bubblewrap` and lifts Ubuntu 24.04's default AppArmor restriction on unprivileged user namespaces (`kernel.apparmor_restrict_unprivileged_userns=0`).
+- **`lint`** — `./run_lint.sh --check` (ruff lint + format verification).
 
 ## License
 
