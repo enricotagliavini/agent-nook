@@ -152,6 +152,7 @@ def main() -> int:
     # logs command
     logs_parser = subparsers.add_parser("logs", help="Show recent logs")
     logs_parser.add_argument("--tail", "-n", type=int, default=50, help="Number of lines to show (default: 50)")
+    logs_parser.add_argument("-f", "-F", "--follow", action="store_true", help="Follow log output (like tail -F)")
 
     # list command
     list_parser = subparsers.add_parser("list", help="List available sandboxes")
@@ -214,9 +215,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
     try:
         config_loader = ConfigLoader(None)  # Let load_with_overrides resolve the path
         config = config_loader.load_with_overrides(args)
-        from agent_nook.utils.logger import reconfigure_logger
+        from agent_nook.utils.logger import set_sandbox_name
 
-        reconfigure_logger(config.name)
+        set_sandbox_name(config.name)
     except FileNotFoundError as e:
         logger.error("Config file not found: %s", e)
         return 1
@@ -301,31 +302,42 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 
 def _cmd_logs(args: argparse.Namespace) -> int:
-    """Show recent logs."""
+    """Show recent logs, optionally following them live (like tail -F)."""
     from agent_nook.utils.logger import get_log_directory
 
     logger = logging.getLogger("agent_nook")
-    logger.info("Showing last %d lines of logs...", args.tail)
 
-    log_dir = get_log_directory()
-    log_file = os.path.join(log_dir, "agent-nook.log")
+    log_file = os.path.join(get_log_directory(), "agent-nook.log")
+
+    if args.follow:
+        # tail -F (--follow=name --retry) reopens the file after log rotation
+        # and waits if it does not exist yet, so this can be started before
+        # any sandbox has run.
+        try:
+            proc = subprocess.Popen(["tail", "-n", str(args.tail), "-F", log_file])
+        except FileNotFoundError:
+            logger.error("tail command not found; cannot follow logs")
+            return 1
+        try:
+            returncode = proc.wait()
+        except KeyboardInterrupt:
+            # In a terminal, Ctrl+C reaches both processes; the kill covers
+            # the case where only this process received the signal.
+            proc.kill()
+            proc.wait()
+            raise  # main() converts this to exit code 130
+        return returncode or 0
 
     if not os.path.exists(log_file):
         logger.info("No log file found yet.")
         return 0
 
     try:
-        with open(log_file) as f:
-            lines = f.readlines()
-            lines = lines[-args.tail :]
-
-        for line in reversed(lines):
-            logger.info(line.strip())
-    except OSError as e:
-        logger.error("Failed to read logs: %s", e)
+        result = subprocess.run(["tail", "-n", str(args.tail), log_file], check=False)
+    except FileNotFoundError:
+        logger.error("tail command not found; cannot show logs")
         return 1
-
-    return 0
+    return result.returncode or 0
 
 
 def _cmd_list(args: argparse.Namespace) -> int:

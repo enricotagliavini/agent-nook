@@ -180,7 +180,7 @@ agent-nook run --command "echo hello"
 |---------|-------------|
 | `run` | Run a command in a sandbox |
 | `status` | Show agent-nook status |
-| `logs` | Show recent logs |
+| `logs` | Show recent logs (live follow with `-f`) |
 | `list` | List available sandboxes |
 
 ### Running a command in a sandbox
@@ -229,6 +229,22 @@ agent-nook run python3 my_script.py
 agent-nook run --quiet python3 my_script.py
 ```
 
+### Viewing logs
+
+```bash
+# Show the last 50 lines
+agent-nook logs
+
+# Show the last 100 lines
+agent-nook logs -n 100
+
+# Follow the log live (like `tail -F`); stop with Ctrl+C
+agent-nook logs -f
+
+# Follow, starting from the last 100 lines (`-F` / `--follow` work too)
+agent-nook logs -F -n 100
+```
+
 ### CLI Reference
 
 | Flag | Description |
@@ -258,7 +274,7 @@ Configuration follows [XDG Base Directory Specification](https://specifications.
 
 - `~/.config/agent-nook/sandbox.yaml` — Main sandbox configuration
 - `~/.config/agent-nook/logging.yaml` — Logger configuration
-- `~/.local/state/agent-nook/logs/` — Log files
+- `~/.local/state/agent-nook/logs/` — Log files; lines are tagged with the active sandbox name (e.g., `agent_nook[mybox]`)
 
 ### Setting up config
 

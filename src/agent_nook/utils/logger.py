@@ -17,6 +17,10 @@ Usage:
     # Get child loggers (automatically configured)
     log = logger.getChild("my_module")
     log.debug("This is a debug message")
+
+    # After loading the config, tag subsequent lines with the sandbox name
+    from agent_nook.utils.logger import set_sandbox_name
+    set_sandbox_name(config.name)
 """
 
 from __future__ import annotations
@@ -29,10 +33,12 @@ from pathlib import Path
 
 
 __all__ = [
+    "SandboxFormatter",
     "get_log_directory",
     "get_log_file_path",
     "get_state_dir",
     "main_logger",
+    "set_sandbox_name",
 ]
 
 
@@ -61,16 +67,43 @@ def get_log_directory() -> str:
     return os.path.join(get_state_dir(), "logs")
 
 
-def get_log_file_path(sandbox_name: str | None = None) -> str:
+def get_log_file_path() -> str:
     """Get the path to the main log file.
 
     Returns:
-        The absolute path to the log file.
-        If sandbox_name is provided, returns nook-{sandbox_name}.log.
-        Otherwise, returns agent-nook.log.
+        The absolute path to the log file
+        (e.g., ~/.local/state/agent-nook/logs/agent-nook.log).
     """
-    filename = f"nook-{sandbox_name}.log" if sandbox_name else "agent-nook.log"
-    return os.path.join(get_log_directory(), filename)
+    return os.path.join(get_log_directory(), "agent-nook.log")
+
+
+class SandboxFormatter(logging.Formatter):
+    """Formatter that tags log lines with the active sandbox name.
+
+    Before a sandbox name is set (config not loaded yet) the logger name
+    renders as-is (e.g. ``agent_nook``). Once set, it renders as
+    ``name[sandbox]`` (e.g. ``agent_nook[mybox]``). Child loggers keep
+    their dotted names, e.g. ``agent_nook.sandbox.bwrap_sandbox[mybox]``.
+
+    The log file itself is never changed by the sandbox name.
+    """
+
+    def __init__(self, sandbox_name: str = "") -> None:
+        super().__init__(
+            fmt="%(asctime)s - %(agent_nook_name)s - %(levelname)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        self.sandbox_name = sandbox_name
+
+    def format(self, record: logging.LogRecord) -> str:
+        # Compute a new attribute instead of mutating record.name: the same
+        # LogRecord is formatted by every handler, so mutation would
+        # double-suffix the name (e.g. agent_nook[box][box]).
+        name = record.name
+        if self.sandbox_name:
+            name = f"{name}[{self.sandbox_name}]"
+        record.agent_nook_name = name
+        return super().format(record)
 
 
 def _setup_logger(
@@ -109,11 +142,8 @@ def _setup_logger(
     if logger.handlers:
         return logger
 
-    # Create formatter (used by file and console handlers below)
-    formatter = logging.Formatter(
-        fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    # Create formatter (shared by the file and console handlers below)
+    formatter = SandboxFormatter()
 
     # File handler (only if we can write to the state directory)
     if use_file:
@@ -144,10 +174,6 @@ def _setup_logger(
             )
 
             try:
-                formatter = logging.Formatter(
-                    fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                    datefmt="%Y-%m-%d %H:%M:%S",
-                )
                 handler = logging.handlers.RotatingFileHandler(
                     log_file,
                     maxBytes=10 * 1024 * 1024,
@@ -175,51 +201,21 @@ def _setup_logger(
     return logger
 
 
-def reconfigure_logger(sandbox_name: str) -> None:
-    """Get or reconfigure logger for sandbox-specific log file.
+def set_sandbox_name(sandbox_name: str) -> None:
+    """Tag subsequent log lines with the active sandbox name.
 
-    Note: For CLI usage, this is rarely needed as logging is typically
-    configured once at startup. This function is primarily for testing.
+    Updates the SandboxFormatter on every handler of the "agent_nook"
+    logger so both console and file output render the logger name as
+    ``name[sandbox_name]`` from this point on. The log file itself is
+    not changed.
 
     Args:
         sandbox_name: The name of the sandbox from the config file.
     """
     logger = logging.getLogger("agent_nook")
-
-    if not logger.handlers:
-        # First time setup - call _setup_logger
-        _setup_logger(
-            name="agent_nook",
-            level="INFO",
-            use_file=True,
-            use_console=True,
-            log_file=get_log_file_path(sandbox_name),
-        )
-        return
-
-    # Reconfigure existing handler if it's a RotatingFileHandler
-    for i, handler in enumerate(logger.handlers):
-        if isinstance(handler, logging.handlers.RotatingFileHandler):
-            handler.close()
-            logger.removeHandler(handler)
-
-            # Add new handler with sandbox-specific log file
-            new_handler = logging.handlers.RotatingFileHandler(
-                get_log_file_path(sandbox_name),
-                maxBytes=10 * 1024 * 1024,
-                backupCount=10,
-                encoding="utf-8",
-            )
-            new_handler.setLevel(logging.DEBUG)
-            new_handler.setFormatter(
-                logging.Formatter(
-                    fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                    datefmt="%Y-%m-%d %H:%M:%S",
-                )
-            )
-            new_handler.addFilter(lambda record: record.levelno >= logging.DEBUG)
-            logger.addHandler(new_handler)
-            break
+    for handler in logger.handlers:
+        if isinstance(handler.formatter, SandboxFormatter):
+            handler.formatter.sandbox_name = sandbox_name
 
 
 def main_logger(name: str = "agent_nook", level: str = "INFO") -> logging.Logger:
