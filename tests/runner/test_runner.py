@@ -345,7 +345,7 @@ mounts:
     type: bind
   - target: /tmp
     type: tmpfs
-timeout: 2
+timeout: 0.1
 die_with_parent: true
 new_session: true
 """

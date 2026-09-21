@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -246,6 +247,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
     except RuntimeError as e:
         logger.error("Bubblewrap error: %s", e)
         return 1
+    except subprocess.TimeoutExpired:
+        logger.error("Sandbox execution timed out after %s seconds", config.timeout)
+        return 1
     except Exception:
         logger.exception("Unexpected error")
         return 1
@@ -258,8 +262,6 @@ def _cmd_status(args: argparse.Namespace) -> int:
     logger = logging.getLogger("agent_nook")
     logger.info("Agent Nook Status")
     logger.info("=" * 40)
-
-    import subprocess
 
     try:
         result = subprocess.run(["bwrap", "--version"], capture_output=True, text=True, timeout=5, check=False)

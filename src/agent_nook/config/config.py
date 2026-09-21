@@ -377,8 +377,9 @@ class SandboxConfig:
         - type: "dir"       → --dir TARGET
 
     Timeout:
-        - timeout: int or None (default) → No timeout
+        - timeout: int, float or None (default) → No timeout
         - timeout: 60                    → Command fails after 60s
+        - timeout: 0.5                   → Command fails after half a second
 
     ## Validation Pipeline
 
@@ -416,7 +417,7 @@ class SandboxConfig:
     die_with_parent: bool = True
     new_session: bool = True
     hostname: str | None = None
-    timeout: int | None = None
+    timeout: int | float | None = None
     env_vars: dict[str, str] = field(default_factory=dict)
     unset_vars: str = ""  # Comma-separated list of variable names to unset
     _raw_config: dict[str, Any] = field(default_factory=dict, repr=False)

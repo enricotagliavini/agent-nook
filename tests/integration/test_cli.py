@@ -193,30 +193,55 @@ def test_env_vars_in_sandbox(test_sandbox_run) -> None:
 
 
 @pytest.mark.integration
-def test_timeout_with_busy_command(test_sandbox_run) -> None:
-    """Test that agent-nook respects timeouts.
+def test_timeout_with_busy_command(test_sandbox_run, tmp_path) -> None:
+    """Test that agent-nook kills a command that exceeds the config timeout.
 
-    Verifies that the sandbox can be killed when a command exceeds
-    its timeout limit.
+    The config sets timeout: 0.1, far below the 30-second sleep, so
+    agent-nook must terminate the sandbox, report the timeout, and exit
+    non-zero — well within the generous 10s outer timeout, which must
+    never trigger.
 
     Args:
         test_sandbox_run: Fixture that returns a subprocess runner.
+        tmp_path: Temp directory for the timeout config.
 
     Raises:
-        subprocess.TimeoutExpired: Expected — the command should timeout.
+        AssertionError: If agent-nook does not report the timeout.
     """
     run_command = test_sandbox_run
 
-    with pytest.raises(subprocess.TimeoutExpired, match="timed out"):
-        run_command(
-            "run",
-            "--config",
-            "src/agent_nook/config/sandbox.yaml",
-            "bash",
-            "-c",
-            "while true; do :; done",
-            timeout=2,
-        )
+    config_file = tmp_path / "timeout.yaml"
+    config_file.write_text(
+        "name: test-timeout\n"
+        "chdir: \"/tmp\"\n"
+        "mounts:\n"
+        "  - source: /\n"
+        "    target: /\n"
+        "    type: bind\n"
+        "  - target: /tmp\n"
+        "    type: tmpfs\n"
+        "timeout: 0.1\n"
+        "die_with_parent: true\n"
+        "new_session: true\n",
+        encoding="utf-8",
+    )
+
+    result = run_command(
+        "run",
+        "--config",
+        str(config_file),
+        "sleep",
+        "30",
+        timeout=10,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, (
+        f"Command should fail on timeout, got return code {result.returncode}:\n"
+        f"  stdout: {result.stdout!r}\n"
+        f"  stderr: {result.stderr!r}"
+    )
+    assert "timed out" in output.lower(), f"Expected a timeout error message, got:\n  {output!r}"
 
 
 @pytest.mark.integration

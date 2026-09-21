@@ -101,11 +101,12 @@ class ConfigLoader:
         "die_with_parent": "bool",
         "new_session": "bool",
         "hostname": "str | None",
-        "timeout": "int | None",
+        "timeout": "int | float | None",
         "env_vars": "dict[str, str]",
         "unset_vars": "str | None",
     }
 
+    _OPTIONAL_TYPES = frozenset({"str | None", "int | None", "int | float | None"})
     _VALID_MOUNT_TYPES = frozenset({"bind", "ro-bind", "dev-bind", "tmpfs", "proc", "dev", "dir"})
 
     def __init__(self, config_path: str | None = None) -> None:
@@ -382,7 +383,7 @@ class ConfigLoader:
                 value = data.get(field_name)
 
             # Handle optional fields that are None
-            if value is None and expected_type in ("str | None", "int | None"):
+            if value is None and expected_type in self._OPTIONAL_TYPES:
                 # Optional fields are allowed to be None
                 continue
 
@@ -404,7 +405,7 @@ class ConfigLoader:
             elif expected_type == "int":
                 if not isinstance(value, int):
                     raise ConfigValidationError(f"Field '{field_name}' must be an integer, got {type(value).__name__}")
-            elif expected_type in {"str | None", "int | None"}:
+            elif expected_type in self._OPTIONAL_TYPES:
                 # Optional fields - already handled above with continue
                 pass
             elif expected_type == "dict[str, str]":
