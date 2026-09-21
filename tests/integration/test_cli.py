@@ -619,3 +619,49 @@ def test_unset_vars_multiline_format(test_sandbox_run, test_unset_vars_multiline
     assert "Hello from sandbox" in sandbox_output, "MY_VAR value should be present"
     assert "TEST_VAR=" in sandbox_output, "TEST_VAR should be present"
     assert "test_value" in sandbox_output, "TEST_VAR value should be present"
+
+
+@pytest.mark.integration
+def test_config_flag_before_subcommand_rejected(test_sandbox_run) -> None:
+    """Test that --config placed before the subcommand is rejected loudly.
+
+    The main parser no longer defines --config: the run subparser's
+    default previously clobbered the global value, so a config passed
+    before the subcommand was silently ignored and the sandbox ran with
+    the default config. Now argparse rejects the global placement with
+    a usage error (exit code 2) and the command never runs.
+
+    Command tested:
+        agent_nook --config <config> run ...   (rejected)
+
+    Args:
+        test_sandbox_run: Fixture that returns a subprocess runner.
+
+    Raises:
+        AssertionError: If the command is not rejected with exit code 2.
+    """
+    result = test_sandbox_run(
+        "--config",
+        "src/agent_nook/config/sandbox.yaml",
+        "run",
+        "python3",
+        "-c",
+        "print('should never run')",
+    )
+
+    assert result.returncode == 2, (
+        f"Expected argparse rejection (exit code 2), got {result.returncode}:\n"
+        f"  stdout: {result.stdout!r}\n"
+        f"  stderr: {result.stderr!r}"
+    )
+
+    assert "agent-nook: error" in result.stderr, (
+        f"Expected an argparse usage error in stderr, got: {result.stderr!r}"
+    )
+
+    # The whole point: the flag is no longer silently ignored, so the
+    # sandboxed command must not run with the default config.
+    assert "should never run" not in result.stdout, (
+        f"Sandboxed command ran despite invalid flag placement:\n"
+        f"  stdout: {result.stdout!r}"
+    )

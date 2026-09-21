@@ -76,7 +76,6 @@ def main() -> int:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
     parser.add_argument("--quiet", action="store_true", help="Suppress non-error output")
-    parser.add_argument("--config", default=None, help="Override config file path (default: ~/.config/agent-nook/sandbox.yaml)")
 
     subparsers = parser.add_subparsers(dest="subcommand", help="Available commands")
 
