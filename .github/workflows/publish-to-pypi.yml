@@ -26,7 +26,7 @@ jobs:
         run: python -m build
 
       - name: Store the distribution packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: python-package-distributions
           path: dist/
@@ -90,7 +90,7 @@ jobs:
     if: ${{ needs.validate-tag.outputs.is-valid-version == 'true' && needs.validate-tag.outputs.is-prerelease == 'false' && needs.validate-tag.outputs.version-matches == 'true' }}
     steps:
       - name: Download all the dists
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: python-package-distributions
           path: dist/
@@ -112,7 +112,7 @@ jobs:
     if: ${{ needs.validate-tag.outputs.is-valid-version == 'true' && needs.validate-tag.outputs.version-matches == 'true' }}
     steps:
       - name: Download all the dists
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: python-package-distributions
           path: dist/
@@ -131,14 +131,14 @@ jobs:
     if: ${{ needs.validate-tag.outputs.is-valid-version == 'true' && needs.validate-tag.outputs.version-matches == 'true' }}
     steps:
       - name: Download all the dists
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: python-package-distributions
           path: dist/
 
       - name: Create GitHub Release
         id: create_release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           body: ${{ needs.validate-tag.outputs.is-prerelease == 'false' && '🎉 A new stable release is available!' || '🧪 A new beta/pre-release is available!' }}
