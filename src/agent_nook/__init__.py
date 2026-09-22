@@ -13,7 +13,7 @@ Usage:
 
 # Single source of truth for the version. pyproject.toml reads this
 # dynamically via [tool.hatch.version]; __main__.py imports it.
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 # Unified sandbox exports
 # Config exports
