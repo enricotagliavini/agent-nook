@@ -4,10 +4,10 @@
 - **Simplicity first**: Straightforward solutions, no overengineering.
 - **Solid engineering**: Follow best practices, document everything.
 - **Unprivileged**: NO root/sudo. Runs as normal user.
-- **Sandboxing**: Bubblewrap (`bwrap`) ONLY. NO podman, docker, or apptainer. No dedicated images; starts from host FS. Uses `--unshare=cgroup`.
+- **Sandboxing**: Bubblewrap (`bwrap`) ONLY. NO podman, docker, or apptainer. No dedicated images; starts from host FS. Uses `--unshare-cgroup`.
 
 ## XDG Configuration & Paths
-- **Config**: `~/.config/agent-nook/sandbox.yaml` (default copied from `src/agent_nook/config/sandbox.yaml`), `logging.yaml`
+- **Config**: `~/.config/agent-nook/sandbox.yaml` (default copied from `src/agent_nook/config/sandbox.yaml`)
 - **State/Logs**: `~/.local/state/agent-nook/`
 - **Cache**: `~/.local/state/agent-nook/cache/`
 - **Format**: Human-readable YAML. `/home` mounted as tmpfs by default.

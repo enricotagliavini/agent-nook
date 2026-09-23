@@ -16,7 +16,7 @@ Unlike full container systems (podman, docker, apptainer), this is:
 - **No root required** — works with unprivileged users
 - **Lightweight & fast** — minimal overhead, no daemon required
 - **Easy to install** — python based, nearly zero dependencies (Python + PyYAML), pip or pipx install
-- **No online services interaction** — does need to download recipes or templates online. Should be simple enough to setup the configuration from the examples
+- **No online services interaction** — it doesn't need to download recipes or templates online. Should be simple enough to setup the configuration from the examples
 
 This project has similarities and shares many goal with the following projects, which you can consider as alternative is you wish:
  - [Docker Sandboxes](https://www.docker.com/products/docker-sandboxes/)
@@ -56,7 +56,7 @@ This project is being developed with the assistance of AI open weight models and
 git clone https://github.com/enricotagliavini/agent-nook
 cd agent-nook
 pip install -e .
-agent-nook run --command "echo hello from sandbox"
+agent-nook run echo hello from sandbox
 ```
 
 ## Design Decisions
@@ -76,7 +76,7 @@ agent-nook run --command "echo hello from sandbox"
 Agent → bwrap sandbox → isolated filesystem + capabilities → agent runs safely
 ```
 
-Bubblewrap applies filesystem isolation, network isolation, and capability restrictions in userspace — no kernel namespaces or privileged containers needed.
+Bubblewrap applies filesystem isolation, network isolation, and capability restrictions in userspace — no privileged containers or root needed (it does unshare kernel namespaces).
 
 ### What bubblewrap does
 
@@ -162,14 +162,14 @@ pip install -e ".[bubblewrap]"  # with bubblewrap dependency in case it's not al
 
 ```bash
 pip install agent-nook
-agent-nook run --command "echo hello"
+agent-nook run echo hello
 ```
 
 ### With pipx
 
 ```bash
 pipx install agent-nook
-agent-nook run --command "echo hello"
+agent-nook run echo hello
 ```
 
 ## CLI Usage
@@ -207,8 +207,8 @@ agent-nook run --cap-add NET_BIND_SERVICE --cap-add SYS_PTRACE python3 net_scrip
 # Drop capabilities
 agent-nook run --cap-drop SYS_ADMIN --cap-drop SYS_PTRACE python3 safe_script.py
 
-# Unshare namespaces (space-separated)
-agent-nook run --unshare pid uts ipc python3 script.py
+# Unshare namespaces (comma-separated)
+agent-nook run --unshare pid,uts,ipc python3 script.py
 
 # Environment variables
 agent-nook run --env PATH=/usr/bin --env HOME=/root python3 script.py
@@ -254,7 +254,9 @@ agent-nook logs -F -n 100
 | `--chdir DIR` | Change working directory in sandbox (overrides config) |
 | `--cap-add CAP` | Add capability (e.g. `CAP_NET_BIND_SERVICE`, repeat for multiple) |
 | `--cap-drop CAP` | Drop capability (e.g. `CAP_SYS_ADMIN`, repeat for multiple) |
-| `--unshare NS` | Unshare namespace (e.g. `pid uts ipc`, repeat for multiple) |
+| `--caps CAP` | Additional capability to add (repeat for multiple) |
+| `--drop-caps CAP` | Additional capability to drop (repeat for multiple) |
+| `--unshare NS` | Unshare namespace (e.g. `pid,uts,ipc`, repeat for multiple) |
 | `--bind SRC:DEST` | Bind mount host SRC to sandbox DEST (repeat for multiple) |
 | `--ro-bind SRC:DEST` | Read-only bind mount host SRC to sandbox DEST (repeat for multiple) |
 | `--env KEY=VALUE` | Set environment variable (repeat for multiple) |
@@ -262,6 +264,8 @@ agent-nook logs -F -n 100
 | `--hostname HOSTNAME` | Set sandbox hostname |
 | `--new-session` | Create new session (prevents TIOCSTI attacks, **default: on**) |
 | `--no-new-session` | Don't create new session (allows TIOCSTI) |
+| `--version` | Print version and exit |
+| `-v`/`--verbose` | Enable verbose output |
 | `--quiet` | Suppress non-error output |
 | `--die-with-parent` | Kill sandbox child when parent dies (**default: on**) |
 | `--no-die-with-parent` | Keep sandbox alive after parent exits |
@@ -273,7 +277,6 @@ Configuration follows [XDG Base Directory Specification](https://specifications.
 ### Where config lives
 
 - `~/.config/agent-nook/sandbox.yaml` — Main sandbox configuration
-- `~/.config/agent-nook/logging.yaml` — Logger configuration
 - `~/.local/state/agent-nook/` — Log files; lines are tagged with the active sandbox name (e.g., `agent_nook[mybox]`)
 
 ### Setting up config
@@ -323,7 +326,7 @@ Edit `~/.config/agent-nook/sandbox.yaml` to customize:
 - **`new_session`**: Create a new session (prevents TIOCSTI attacks, default: `true`)
 - **`timeout`**: Maximum execution time in seconds (`null` = no timeout)
 - **`env_vars`**: Environment variables to set (YAML map: `KEY: value`)
-- **`unset_vars`**: Environment variables to unset (YAML array: `["PATH", "HOME"]`)
+- **`unset_vars`**: Environment variables to unset as a space-separated string, or `ALL` to clear all env vars (e.g. `unset_vars: "PATH HOME"` or `unset_vars: ALL`)
 
 ### Supported mount types
 
