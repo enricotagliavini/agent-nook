@@ -23,6 +23,32 @@ from pathlib import Path
 from agent_nook import __version__
 
 
+class _OverlayOpAction(argparse.Action):
+    """Record overlay flags in command-line order.
+
+    argparse stores each flag's occurrences in a per-flag list, losing the
+    interleaving order between flags. Bubblewrap's overlay semantics are
+    positional: an ``--overlay-src`` applies to the next overlay flag that
+    follows it on the command line. This action therefore records every
+    overlay flag as an ``(op, value)`` pair in the order typed into
+    ``namespace._overlay_ops``. ``ConfigLoader._merge_cli_overrides``
+    consumes that list.
+    """
+
+    def __init__(self, op: str, option_strings, **kwargs) -> None:
+        kwargs["dest"] = argparse.SUPPRESS
+        kwargs["default"] = argparse.SUPPRESS
+        super().__init__(option_strings=option_strings, **kwargs)
+        self.op = op
+
+    def __call__(self, parser, namespace, values, option_string=None) -> None:
+        ops = getattr(namespace, "_overlay_ops", None)
+        if ops is None:
+            ops = []
+            namespace._overlay_ops = ops
+        ops.append((self.op, values))
+
+
 def _auto_init() -> None:
     """Automatically initialize configuration and directories on first run.
 
@@ -117,6 +143,34 @@ def main() -> int:
         default=[],
         metavar="SRC:DEST",
         help="Read-only bind mount host SRC to sandbox DEST (repeat for multiple)",
+    )
+    run_parser.add_argument(
+        "--overlay-src",
+        action=_OverlayOpAction,
+        op="overlay-src",
+        metavar="SRC",
+        help="Lower layer for the following --overlay/--ro-overlay/--tmp-overlay (repeat for multiple)",
+    )
+    run_parser.add_argument(
+        "--overlay",
+        action=_OverlayOpAction,
+        op="overlay",
+        metavar="SRC:WORKDIR:DEST",
+        help="Writable overlayfs mount: reads prefer SRC then the preceding --overlay-src layers, writes go to SRC (repeat for multiple)",
+    )
+    run_parser.add_argument(
+        "--ro-overlay",
+        action=_OverlayOpAction,
+        op="ro-overlay",
+        metavar="DEST",
+        help="Read-only overlayfs mount from at least two preceding --overlay-src layers (repeat for multiple)",
+    )
+    run_parser.add_argument(
+        "--tmp-overlay",
+        action=_OverlayOpAction,
+        op="tmp-overlay",
+        metavar="DEST",
+        help="Overlayfs mount from preceding --overlay-src layers with non-persistent writes (repeat for multiple)",
     )
     run_parser.add_argument(
         "--env",

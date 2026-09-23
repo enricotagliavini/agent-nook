@@ -66,6 +66,95 @@ def _ensure_mount_sources(mounts: list[Mount]) -> None:
         _logger.debug("Ensured mount source %s exists (%s)", mount.source, "file" if as_file else "directory")
 
 
+def _prepare_overlays(mounts: list[Mount]) -> None:
+    """Prepare host paths for overlay mounts before the sandbox starts.
+
+    For each ``overlay`` mount, ensure the workdir exists as a directory
+    (created when missing) and lives on the same filesystem as the
+    read-write source — the kernel rejects the mount otherwise. Emptiness
+    is deliberately NOT enforced: the kernel leaves internal state (a
+    ``work`` subdirectory) in the workdir after every run, and reusing the
+    same workdir across runs must keep working.
+
+    Also rejects layer paths that do not exist, are duplicated, or where one
+    layer is an ancestor of another after resolving symlinks — within each
+    overlay mount (overlayfs behavior there is undefined and some kernels
+    do not detect the problem). The same lower directory MAY be shared
+    between different overlay mounts, but a workdir may not.
+
+    Mounts missing required fields (e.g. a programmatically created
+    ``overlay`` mount without source/workdir) are skipped here and are
+    rejected with a clear error by ``Mount.build()`` instead.
+
+    Args:
+        mounts: The mounts from the sandbox configuration.
+
+    Raises:
+        RuntimeError: If a workdir cannot be created, is on a different
+            filesystem than the source, is shared between two overlay
+            mounts, or layer paths overlap.
+    """
+    overlay_mounts = [m for m in mounts if m.type.lower().strip() in ("overlay", "ro-overlay", "tmp-overlay")]
+    if not overlay_mounts:
+        return
+
+    # Workdir preparation (overlay mounts only).
+    for mount in overlay_mounts:
+        if mount.type.lower().strip() != "overlay" or mount.source is None or mount.workdir is None:
+            continue
+        source = Path(mount.source)
+        workdir = Path(mount.workdir)
+        if not source.exists():
+            raise RuntimeError(f"Overlay source (RWSRC) '{source}' does not exist")
+        try:
+            workdir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            _logger.exception("Failed to create overlay workdir %r for mount %r -> %r", workdir, source, mount.target)
+            raise RuntimeError(f"Failed to create overlay workdir '{workdir}': {e}") from e
+        if not workdir.is_dir():
+            raise RuntimeError(f"Overlay workdir '{workdir}' is not a directory")
+        try:
+            dev_workdir = workdir.resolve().stat().st_dev
+            dev_source = source.resolve().stat().st_dev
+        except OSError as e:
+            _logger.exception("Failed to stat overlay source %r or workdir %r", source, workdir)
+            raise RuntimeError(f"Cannot stat overlay source '{source}' or workdir '{workdir}': {e}") from e
+        if dev_workdir != dev_source:
+            raise RuntimeError(f"Overlay workdir '{workdir}' must be on the same filesystem as source '{source}'")
+        _logger.debug("Ensured overlay workdir %s exists (same filesystem as %s)", workdir, source)
+
+    # Workdirs must not be shared between two overlay mounts.
+    seen_workdirs: dict[str, str] = {}
+    for mount in overlay_mounts:
+        if mount.type.lower().strip() != "overlay" or mount.workdir is None:
+            continue
+        workdir = str(Path(mount.workdir).resolve())
+        if workdir in seen_workdirs:
+            raise RuntimeError(
+                f"Overlay workdir '{workdir}' is used by more than one overlay mount ('{seen_workdirs[workdir]}' and '{mount.target}')"
+            )
+        seen_workdirs[workdir] = mount.target or ""
+
+    # Layer checks, per overlay mount: layers must exist and must not be
+    # duplicated or nested (undefined overlayfs behavior).
+    for mount in overlay_mounts:
+        layers = list(mount.overlay_src)
+        if mount.type.lower().strip() == "overlay" and mount.source is not None:
+            layers.append(mount.source)
+        real_paths: list[tuple[str, str]] = []
+        for layer in layers:
+            if not Path(layer).exists():
+                raise RuntimeError(f"Overlay layer '{layer}' does not exist (mount type '{mount.type}', target '{mount.target}')")
+            real_paths.append((str(Path(layer).resolve()), layer))
+
+        for i, (real_a, raw_a) in enumerate(real_paths):
+            for real_b, raw_b in real_paths[i + 1 :]:
+                if real_a == real_b:
+                    raise RuntimeError(f"Overlay layers must be unique, found duplicate: '{raw_a}'")
+                if real_b.startswith(real_a + "/") or real_a.startswith(real_b + "/"):
+                    raise RuntimeError(f"Overlay layers must not be nested: '{raw_a}' and '{raw_b}'")
+
+
 @dataclass
 class SandboxResult:
     """Result of a sandboxed command execution.
@@ -100,8 +189,9 @@ class BwrapSandbox:
     The BwrapSandbox class encapsulates the full lifecycle:
       1. Holds the SandboxConfig
       2. Ensures mount sources exist (create-source option)
-      3. Builds the bwrap command line via BwrapBuilder
-      4. Executes the command
+      3. Prepares overlay mounts (workdir, layer checks)
+      4. Builds the bwrap command line via BwrapBuilder
+      5. Executes the command
     """
 
     def __init__(
@@ -151,7 +241,9 @@ class BwrapSandbox:
 
         Raises:
             RuntimeError: If a mount source that must be created
-                (create-source: true) cannot be created.
+                (create-source: true) cannot be created, or if an overlay
+                workdir cannot be prepared (missing source, different
+                filesystem, overlapping layers).
 
         Example:
             result = BwrapSandbox(config).run(["/bin/echo", "hello"])
@@ -166,6 +258,7 @@ class BwrapSandbox:
 
         # Ensure mount sources that must be created exist before bwrap runs
         _ensure_mount_sources(self._config.mounts)
+        _prepare_overlays(self._config.mounts)
 
         bwrap_cmd = self.build(command)
 

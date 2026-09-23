@@ -440,3 +440,259 @@ def test_run_mount_source_file_conflicts_with_directory_errors(tmp_path, monkeyp
     )
     with pytest.raises(RuntimeError, match="Failed to create mount source"):
         BwrapSandbox(config).run(["echo", "hi"])
+
+
+def test_run_overlay_creates_missing_workdir(tmp_path, monkeypatch):
+    """A missing overlay workdir (including parents) is created before execution."""
+    source = tmp_path / "upper"
+    source.mkdir()
+    (tmp_path / "lower").mkdir()
+    calls = _mock_bwrap(monkeypatch)
+    config = ConfigLoader().set(
+        {
+            "name": "test",
+            "mounts": [
+                {
+                    "source": str(source),
+                    "workdir": str(tmp_path / "wd" / "nested"),
+                    "target": "/d",
+                    "type": "overlay",
+                    "overlay-src": [str(tmp_path / "lower")],
+                }
+            ],
+        }
+    )
+    result = BwrapSandbox(config).run(["echo", "hi"])
+    assert result.success
+    assert (tmp_path / "wd" / "nested").is_dir()
+    assert len(calls) == 1
+
+
+def test_run_overlay_reuses_workdir_with_leftover_state(tmp_path, monkeypatch):
+    """A workdir with leftover kernel state (a 'work' subdirectory) is reused, not rejected."""
+    source = tmp_path / "upper"
+    source.mkdir()
+    (tmp_path / "lower").mkdir()
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    (workdir / "work").mkdir()  # leftover from a previous run
+    calls = _mock_bwrap(monkeypatch)
+    config = ConfigLoader().set(
+        {
+            "name": "test",
+            "mounts": [
+                {
+                    "source": str(source),
+                    "workdir": str(workdir),
+                    "target": "/d",
+                    "type": "overlay",
+                    "overlay-src": [str(tmp_path / "lower")],
+                }
+            ],
+        }
+    )
+    result = BwrapSandbox(config).run(["echo", "hi"])
+    assert result.success
+    assert (workdir / "work").is_dir()
+    assert len(calls) == 1
+
+
+def test_run_overlay_missing_source_errors(tmp_path, monkeypatch):
+    """A missing overlay source (RWSRC) is rejected before bwrap runs."""
+    (tmp_path / "lower").mkdir()
+    _mock_bwrap(monkeypatch)
+    config = ConfigLoader().set(
+        {
+            "name": "test",
+            "mounts": [
+                {
+                    "source": str(tmp_path / "nope"),
+                    "workdir": str(tmp_path / "wd"),
+                    "target": "/d",
+                    "type": "overlay",
+                    "overlay-src": [str(tmp_path / "lower")],
+                }
+            ],
+        }
+    )
+    with pytest.raises(RuntimeError, match="does not exist"):
+        BwrapSandbox(config).run(["echo", "hi"])
+
+
+def test_run_overlay_missing_layer_errors(tmp_path, monkeypatch):
+    """A nonexistent overlay-src layer is rejected before bwrap runs."""
+    source = tmp_path / "upper"
+    source.mkdir()
+    _mock_bwrap(monkeypatch)
+    config = ConfigLoader().set(
+        {
+            "name": "test",
+            "mounts": [
+                {
+                    "source": str(source),
+                    "workdir": str(tmp_path / "wd"),
+                    "target": "/d",
+                    "type": "overlay",
+                    "overlay-src": [str(tmp_path / "ghost")],
+                }
+            ],
+        }
+    )
+    with pytest.raises(RuntimeError, match="does not exist"):
+        BwrapSandbox(config).run(["echo", "hi"])
+
+
+def test_run_overlay_nested_layers_error(tmp_path, monkeypatch):
+    """One layer being an ancestor of another is rejected (undefined overlayfs behavior)."""
+    source = tmp_path / "upper"
+    source.mkdir()
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    (parent / "child").mkdir()
+    _mock_bwrap(monkeypatch)
+    config = ConfigLoader().set(
+        {
+            "name": "test",
+            "mounts": [
+                {
+                    "source": str(source),
+                    "workdir": str(tmp_path / "wd"),
+                    "target": "/d",
+                    "type": "overlay",
+                    "overlay-src": [str(parent), str(parent / "child")],
+                }
+            ],
+        }
+    )
+    with pytest.raises(RuntimeError, match="must not be nested"):
+        BwrapSandbox(config).run(["echo", "hi"])
+
+
+def test_run_overlay_duplicate_layers_error(tmp_path, monkeypatch):
+    """Duplicated overlay layers are rejected."""
+    source = tmp_path / "upper"
+    source.mkdir()
+    lower = tmp_path / "lower"
+    lower.mkdir()
+    _mock_bwrap(monkeypatch)
+    config = ConfigLoader().set(
+        {
+            "name": "test",
+            "mounts": [
+                {
+                    "source": str(source),
+                    "workdir": str(tmp_path / "wd"),
+                    "target": "/d",
+                    "type": "overlay",
+                    "overlay-src": [str(lower), str(lower)],
+                }
+            ],
+        }
+    )
+    with pytest.raises(RuntimeError, match="must be unique"):
+        BwrapSandbox(config).run(["echo", "hi"])
+
+
+def test_run_overlay_workdir_different_filesystem_errors(tmp_path, monkeypatch):
+    """A workdir on a different filesystem than the source is rejected."""
+    from pathlib import Path
+
+    source = tmp_path / "upper"
+    source.mkdir()
+    (tmp_path / "lower").mkdir()
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+
+    class _FakePath(Path):
+        def stat(self, *args, **kwargs):
+            st = super().stat(*args, **kwargs)
+            if str(self) == str(workdir.resolve()):
+
+                class _St:
+                    st_dev = 999
+
+                return _St()
+            return st
+
+    monkeypatch.setattr("agent_nook.sandbox.bwrap_sandbox.Path", _FakePath)
+    _mock_bwrap(monkeypatch)
+    config = ConfigLoader().set(
+        {
+            "name": "test",
+            "mounts": [
+                {
+                    "source": str(source),
+                    "workdir": str(workdir),
+                    "target": "/d",
+                    "type": "overlay",
+                    "overlay-src": [str(tmp_path / "lower")],
+                }
+            ],
+        }
+    )
+    with pytest.raises(RuntimeError, match="same filesystem"):
+        BwrapSandbox(config).run(["echo", "hi"])
+
+
+def test_run_overlay_shared_lower_between_mounts_allowed(tmp_path, monkeypatch):
+    """The same lower directory may be shared between different overlay mounts."""
+    lower = tmp_path / "shared-lower"
+    lower.mkdir()
+    (tmp_path / "upper").mkdir()
+    calls = _mock_bwrap(monkeypatch)
+    config = ConfigLoader().set(
+        {
+            "name": "test",
+            "mounts": [
+                {
+                    "source": str(tmp_path / "upper"),
+                    "workdir": str(tmp_path / "wd1"),
+                    "target": "/d1",
+                    "type": "overlay",
+                    "overlay-src": [str(lower)],
+                },
+                {
+                    "target": "/d2",
+                    "type": "tmp-overlay",
+                    "overlay-src": [str(lower)],
+                },
+            ],
+        }
+    )
+    result = BwrapSandbox(config).run(["echo", "hi"])
+    assert result.success
+    assert len(calls) == 1
+
+
+def test_run_overlay_shared_workdir_between_mounts_errors(tmp_path, monkeypatch):
+    """A workdir used by two overlay mounts is rejected."""
+    (tmp_path / "upper1").mkdir()
+    (tmp_path / "upper2").mkdir()
+    lower = tmp_path / "lower"
+    lower.mkdir()
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    _mock_bwrap(monkeypatch)
+    config = ConfigLoader().set(
+        {
+            "name": "test",
+            "mounts": [
+                {
+                    "source": str(tmp_path / "upper1"),
+                    "workdir": str(workdir),
+                    "target": "/d1",
+                    "type": "overlay",
+                    "overlay-src": [str(lower)],
+                },
+                {
+                    "source": str(tmp_path / "upper2"),
+                    "workdir": str(workdir),
+                    "target": "/d2",
+                    "type": "overlay",
+                    "overlay-src": [str(lower)],
+                },
+            ],
+        }
+    )
+    with pytest.raises(RuntimeError, match="more than one overlay mount"):
+        BwrapSandbox(config).run(["echo", "hi"])

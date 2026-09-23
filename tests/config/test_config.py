@@ -269,3 +269,80 @@ def test_sandbox_config_requires_at_least_one_mount():
 
     with pytest.raises(ConfigValidationError, match="at least one mount point"):
         SandboxConfig(name="test", mounts=[])
+
+
+def test_mount_build_overlay():
+    """Test overlay mount produces --overlay-src layers then --overlay RWSRC WORKDIR DEST."""
+    mount = Mount(source="/rw", workdir="/wd", target="/d", type="overlay", overlay_src=["/a", "/b"])
+    assert mount.build() == ["--overlay-src", "/a", "--overlay-src", "/b", "--overlay", "/rw", "/wd", "/d"]
+
+
+def test_mount_build_ro_overlay():
+    """Test ro-overlay mount produces --overlay-src layers then --ro-overlay DEST."""
+    mount = Mount(target="/d", type="ro-overlay", overlay_src=["/a", "/b"])
+    assert mount.build() == ["--overlay-src", "/a", "--overlay-src", "/b", "--ro-overlay", "/d"]
+
+
+def test_mount_build_tmp_overlay():
+    """Test tmp-overlay mount produces --overlay-src layers then --tmp-overlay DEST."""
+    mount = Mount(target="/d", type="tmp-overlay", overlay_src=["/a"])
+    assert mount.build() == ["--overlay-src", "/a", "--tmp-overlay", "/d"]
+
+
+def test_mount_overlay_field_defaults():
+    """overlay_src defaults to an empty list and workdir to None."""
+    mount = Mount(source="/host", target="/sandbox", type="bind")
+    assert mount.overlay_src == []
+    assert mount.workdir is None
+
+
+def test_mount_build_overlay_requires_source():
+    """Test overlay mount without source raises ValueError."""
+    with pytest.raises(ValueError, match="requires a source"):
+        Mount(workdir="/wd", target="/d", type="overlay", overlay_src=["/a"]).build()
+
+
+def test_mount_build_overlay_requires_workdir():
+    """Test overlay mount without workdir raises ValueError."""
+    with pytest.raises(ValueError, match="requires a workdir"):
+        Mount(source="/rw", target="/d", type="overlay", overlay_src=["/a"]).build()
+
+
+def test_mount_build_overlay_requires_target():
+    """Test overlay mount without target raises ValueError."""
+    with pytest.raises(ValueError, match="requires a target"):
+        Mount(source="/rw", workdir="/wd", type="overlay", overlay_src=["/a"]).build()
+
+
+def test_mount_build_overlay_requires_at_least_one_layer():
+    """Test overlay mount without overlay-src layers raises ValueError."""
+    with pytest.raises(ValueError, match="at least one overlay-src"):
+        Mount(source="/rw", workdir="/wd", target="/d", type="overlay").build()
+
+
+def test_mount_build_ro_overlay_requires_two_layers():
+    """Test ro-overlay mount with a single layer raises ValueError."""
+    with pytest.raises(ValueError, match="at least two overlay-src"):
+        Mount(target="/d", type="ro-overlay", overlay_src=["/a"]).build()
+
+
+def test_mount_build_tmp_overlay_requires_one_layer():
+    """Test tmp-overlay mount without layers raises ValueError."""
+    with pytest.raises(ValueError, match="at least one overlay-src"):
+        Mount(target="/d", type="tmp-overlay").build()
+
+
+def test_mount_build_ro_overlay_rejects_source_and_workdir():
+    """Test ro-overlay/tmp-overlay with source or workdir raise ValueError."""
+    with pytest.raises(ValueError, match="does not accept"):
+        Mount(source="/rw", target="/d", type="ro-overlay", overlay_src=["/a", "/b"]).build()
+    with pytest.raises(ValueError, match="does not accept"):
+        Mount(workdir="/wd", target="/d", type="tmp-overlay", overlay_src=["/a"]).build()
+
+
+def test_mount_build_non_overlay_rejects_overlay_fields():
+    """Test non-overlay mounts with overlay_src or workdir raise ValueError."""
+    with pytest.raises(ValueError, match="does not support"):
+        Mount(source="/s", target="/t", type="bind", overlay_src=["/a"]).build()
+    with pytest.raises(ValueError, match="does not support"):
+        Mount(target="/t", type="tmpfs", workdir="/wd").build()

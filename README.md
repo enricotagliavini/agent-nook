@@ -89,7 +89,7 @@ Bubblewrap creates a **userspace sandbox** by:
 
 ### Mount types
 
-Seven mount types are supported:
+Ten mount types are supported:
 
 | Type | Syntax | Description |
 |------|--------|-------------|
@@ -100,6 +100,9 @@ Seven mount types are supported:
 | `proc` | `--proc TARGET` | Proc filesystem |
 | `dev` | `--dev TARGET` | Dev filesystem |
 | `dir` | `--dir TARGET` | Directory without content check |
+| `overlay` | `--overlay-src SRC… --overlay RWSRC WORKDIR DEST` | Writable overlayfs union; writes go to RWSRC |
+| `ro-overlay` | `--overlay-src SRC… --ro-overlay TARGET` | Read-only overlayfs union (≥2 layers) |
+| `tmp-overlay` | `--overlay-src SRC… --tmp-overlay TARGET` | Overlayfs union with non-persistent writes |
 
 ### Namespace isolation
 
@@ -259,6 +262,10 @@ agent-nook logs -F -n 100
 | `--unshare NS` | Unshare namespace (e.g. `pid,uts,ipc`, repeat for multiple) |
 | `--bind SRC:DEST` | Bind mount host SRC to sandbox DEST (repeat for multiple) |
 | `--ro-bind SRC:DEST` | Read-only bind mount host SRC to sandbox DEST (repeat for multiple) |
+| `--overlay SRC:WORKDIR:DEST` | Writable overlayfs mount: reads prefer SRC, then the preceding `--overlay-src` layers; writes go to SRC (repeat for multiple) |
+| `--ro-overlay DEST` | Read-only overlayfs mount from at least two preceding `--overlay-src` layers (repeat for multiple) |
+| `--tmp-overlay DEST` | Overlayfs mount from preceding `--overlay-src` layers with non-persistent writes (repeat for multiple) |
+| `--overlay-src SRC` | Lower layer for the next `--overlay`/`--ro-overlay`/`--tmp-overlay` (repeat for multiple) |
 | `--env KEY=VALUE` | Set environment variable (repeat for multiple) |
 | `--unset-env KEY` | Unset environment variable (repeat for multiple) |
 | `--hostname HOSTNAME` | Set sandbox hostname |
@@ -330,7 +337,7 @@ Edit `~/.config/agent-nook/sandbox.yaml` to customize:
 
 ### Supported mount types
 
-Seven mount types are supported:
+Ten mount types are supported:
 
 ```yaml
 # Read-write bind mount
@@ -370,6 +377,27 @@ mounts:
   - target: /sandbox/workspace
     type: dir
 
+# Writable overlayfs union (writes go to `source` and persist on the host)
+  - source: /host/upper
+    workdir: /host/upper-work
+    target: /sandbox/path
+    type: overlay
+    overlay-src:
+      - /host/lower1
+      - /host/lower2
+
+# Read-only overlayfs union (at least two layers)
+  - target: /sandbox/ro
+    type: ro-overlay
+    overlay-src:
+      - /host/lower1
+      - /host/lower2
+
+# Overlayfs union with non-persistent writes (private tmpfs)
+  - target: /sandbox/scratch
+    type: tmp-overlay
+    overlay-src:
+      - /host/lower1
 ```
 
 CLI equivalents:
@@ -380,6 +408,17 @@ CLI equivalents:
 - `--proc TARGET` → `type: proc`
 - `--dev TARGET` → `type: dev`
 - `--dir TARGET` → `type: dir`
+- `--overlay SRC:WORKDIR:DEST` → `type: overlay` (with `source`, `workdir`)
+- `--ro-overlay DEST` → `type: ro-overlay`
+- `--tmp-overlay DEST` → `type: tmp-overlay`
+- `--overlay-src SRC` → an entry in `overlay-src` of the next overlay mount
+
+Overlay mounts require a bubblewrap with overlay support (≥ 0.4.0) and, for
+multi-layer unions, a Linux kernel ≥ 4.0. Layer order: `overlay-src` entries
+are listed bottom to top (later entries shadow earlier ones); for `overlay`
+mounts the `source` (RWSRC) layer sits above all of them and receives all
+writes. The `workdir` of an `overlay` mount must be a directory on the same
+filesystem as `source`; it is created when missing and reused across runs.
 
 ### Optional mount flags
 

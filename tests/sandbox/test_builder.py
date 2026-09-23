@@ -410,3 +410,37 @@ def test_builder_unset_vars_ENV_VAR_EXPANSION():
     assert len(unset_indices) == 2
     assert "testvalue" in cmd[unset_indices[0] + 1]
     assert "/custom/home" in cmd[unset_indices[1] + 1]
+
+
+def test_builder_overlay_mount_order_parent_before_child():
+    """Overlay mount targets participate in topological ordering (parent before child)."""
+    config = SandboxConfig(
+        name="test",
+        mounts=[
+            Mount(target="/home/ovl/child", type="tmp-overlay", overlay_src=["/a"]),
+            Mount(source="/rw", workdir="/wd", target="/home", type="overlay", overlay_src=["/a", "/b"]),
+        ],
+    )
+    cmd = BwrapBuilder(config).build(["echo", "hi"])
+    overlay_idx = cmd.index("--overlay")
+    tmp_idx = cmd.index("--tmp-overlay")
+    assert overlay_idx < tmp_idx, "Parent overlay target must be mounted before child target"
+    # Each overlay's --overlay-src flags appear immediately before its mount flag
+    assert cmd[overlay_idx - 4 : overlay_idx] == ["--overlay-src", "/a", "--overlay-src", "/b"]
+    assert cmd[tmp_idx - 2 : tmp_idx] == ["--overlay-src", "/a"]
+
+
+def test_builder_overlay_contiguous_block():
+    """All arguments of an overlay mount are emitted as one contiguous block."""
+    config = SandboxConfig(
+        name="test",
+        mounts=[
+            Mount(target="/a/ovl", type="overlay", source="/rw", workdir="/wd", overlay_src=["/l1", "/l2"]),
+            Mount(target="/a", type="tmp-overlay", overlay_src=["/l3"]),
+        ],
+    )
+    cmd = BwrapBuilder(config).build([])
+    # The full overlay block (4 src/args + 4 mount args) is contiguous
+    assert ["--overlay-src", "/l1", "--overlay-src", "/l2", "--overlay", "/rw", "/wd", "/a/ovl"] in [
+        cmd[i : i + 8] for i in range(len(cmd) - 8 + 1)
+    ]

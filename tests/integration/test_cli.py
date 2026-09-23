@@ -13,6 +13,7 @@ executes successfully and produces the expected output.
 from pathlib import Path
 
 import pytest
+import re
 
 
 @pytest.fixture(scope="function")
@@ -753,3 +754,180 @@ def test_create_source_creates_missing_directory(test_sandbox_run, test_create_s
     )
 
     assert source.is_dir(), f"Expected create-source to create {source}, but it does not exist"
+
+
+_overlay_probe: bool | None = None
+
+
+def _require_overlay_support() -> None:
+    """Skip the test if unprivileged bwrap overlayfs is not available here.
+
+    Runs a minimal real bwrap overlay once (cached) to detect kernel/bwrap
+    support; the overlay integration tests require unprivileged user
+    namespaces with overlayfs.
+    """
+    global _overlay_probe
+    if _overlay_probe is None:
+        import shutil
+        import subprocess
+        import tempfile
+
+        _overlay_probe = False
+        if shutil.which("bwrap") is not None:
+            with tempfile.TemporaryDirectory(prefix="agent-nook-overlay-probe-") as tmp:
+                t = Path(tmp)
+                (t / "l").mkdir()
+                (t / "u").mkdir()
+                (t / "w").mkdir()
+                (t / "l" / "f.txt").write_text("probe")
+                try:
+                    proc = subprocess.run(
+                        [
+                            "bwrap",
+                            "--bind",
+                            "/",
+                            "/",
+                            "--overlay-src",
+                            str(t / "l"),
+                            "--overlay",
+                            str(t / "u"),
+                            str(t / "w"),
+                            str(t / "d"),
+                            "/bin/sh",
+                            "-c",
+                            f"cat {t}/d/f.txt",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    proc = None
+                _overlay_probe = proc is not None and proc.returncode == 0 and "probe" in proc.stdout
+    if not _overlay_probe:
+        pytest.skip("bwrap overlayfs not available unprivileged in this environment")
+
+
+def _command_output(result) -> list[str]:
+    """Return the sandboxed command's stdout lines, with agent-nook log lines removed.
+
+    The CLI logger writes INFO lines to stdout (``YYYY-MM-DD HH:MM:SS -
+    agent_nook ...``); strip them so only the command's own output remains.
+    """
+    return [
+        line for line in result.stdout.splitlines() if not re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} - ", line)
+    ]
+
+
+@pytest.mark.integration
+def test_overlay_mounts(test_sandbox_run, xdg_config_dir, tmp_path) -> None:
+    """Overlay mounts work end-to-end (single CLI session, 3 runs total).
+
+    Verifies layer visibility and precedence, write persistence to the RWSRC
+    (host), read-only rejection for ro-overlay, non-persistent writes for
+    tmp-overlay, workdir reuse across runs, and the CLI flag forms.
+    """
+    _require_overlay_support()
+
+    l1 = tmp_path / "l1"
+    l2 = tmp_path / "l2"
+    upper = tmp_path / "upper"
+    workdir = tmp_path / "work"
+    dest = tmp_path / "dest"
+    dest_ro = tmp_path / "dest-ro"
+    dest_tmp = tmp_path / "dest-tmp"
+    for d in (l1, l2, upper):
+        d.mkdir()
+    (l1 / "f.txt").write_text("base\n")
+    (l2 / "f.txt").write_text("mid\n")  # shadows l1 (listed last)
+    (l1 / "only-l1.txt").write_text("l1\n")
+
+    upper2 = tmp_path / "upper2"
+    workdir2 = tmp_path / "work2"
+    dest_cli = tmp_path / "dest-cli"
+    upper2.mkdir()
+
+    config_path = xdg_config_dir / "test_overlay.yaml"
+    config_path.write_text(
+        f"""name: test-overlay
+mounts:
+  - source: /
+    target: /
+    type: bind
+  - target: /proc
+    type: proc
+  - target: /dev
+    type: dev
+  - type: overlay
+    source: {upper}
+    workdir: {workdir}
+    target: {dest}
+    overlay-src:
+      - {l1}
+      - {l2}
+  - type: ro-overlay
+    target: {dest_ro}
+    overlay-src:
+      - {l1}
+      - {l2}
+  - type: tmp-overlay
+    target: {dest_tmp}
+    overlay-src:
+      - {l1}
+""",
+        encoding="utf-8",
+    )
+
+    script = (
+        f"cat {dest}/f.txt"
+        f" && cat {dest}/only-l1.txt"
+        f" && echo written > {dest}/new.txt"
+        f" && cat {dest_ro}/f.txt"
+        f" && (echo x > {dest_ro}/w.txt) && echo RO-BROKEN || echo ro-denied"
+        f" && cat {dest_tmp}/only-l1.txt"
+        f" && echo tmp > {dest_tmp}/t.txt && cat {dest_tmp}/t.txt"
+    )
+    result = test_sandbox_run("run", "--config", str(config_path), "sh", "-c", script)
+    assert result.returncode == 0, (
+        f"Overlay run failed with return code {result.returncode}:\n"
+        f"  stdout: {result.stdout!r}\n"
+        f"  stderr: {result.stderr!r}"
+    )
+    lines = _command_output(result)
+    assert lines[0] == "mid", f"layer precedence wrong (last src should win): {lines!r}"
+    assert "ro-denied" in lines, f"ro-overlay accepted a write: {lines!r}"
+    assert "RO-BROKEN" not in lines
+    assert lines[-1] == "tmp"
+    # The writable-overlay write persisted to the RWSRC on the host
+    assert (upper / "new.txt").read_text() == "written\n"
+
+    # Second run: the workdir now holds the kernel's leftover state; it must
+    # still work (no emptiness enforcement).
+    result2 = test_sandbox_run("run", "--config", str(config_path), "sh", "-c", f"cat {dest}/new.txt")
+    assert result2.returncode == 0, (
+        f"Workdir reuse run failed:\n  stdout: {result2.stdout!r}\n  stderr: {result2.stderr!r}"
+    )
+    assert _command_output(result2) == ["written"]
+
+    # tmp-overlay writes are not persisted anywhere on the host
+    assert not list(tmp_path.rglob("t.txt"))
+
+    # CLI flag forms: --overlay-src … --overlay SRC:WORKDIR:DEST
+    result3 = test_sandbox_run(
+        "run",
+        "--config",
+        str(config_path),
+        "--overlay-src",
+        str(l1),
+        "--overlay-src",
+        str(l2),
+        "--overlay",
+        f"{upper2}:{workdir2}:{dest_cli}",
+        "sh",
+        "-c",
+        f"cat {dest_cli}/f.txt",
+    )
+    assert result3.returncode == 0, (
+        f"CLI overlay run failed:\n  stdout: {result3.stdout!r}\n  stderr: {result3.stderr!r}"
+    )
+    assert _command_output(result3) == ["mid"]

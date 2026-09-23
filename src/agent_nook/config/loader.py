@@ -60,6 +60,7 @@ def get_config_path() -> str:
 #   Layer 2: _parse_mounts()            — Dict list → Mount dataclass list
 #            → Validates mount type enum, required fields (source/target) per type
 #            → Validates create-source (bool) / create-as (dir|file) options
+#            → Validates overlay-src (list) / workdir (str) options for overlay mounts
 #            → Transforms user-friendly YAML format into internal Mount objects
 #
 #   Layer 3: _parse_capabilities()      — Dict → CapabilitySet dataclass
@@ -108,8 +109,11 @@ class ConfigLoader:
     }
 
     _OPTIONAL_TYPES = frozenset({"str | None", "int | None", "int | float | None"})
-    _VALID_MOUNT_TYPES = frozenset({"bind", "ro-bind", "dev-bind", "tmpfs", "proc", "dev", "dir"})
+    _VALID_MOUNT_TYPES = frozenset(
+        {"bind", "ro-bind", "dev-bind", "tmpfs", "proc", "dev", "dir", "overlay", "ro-overlay", "tmp-overlay"}
+    )
     _SOURCE_MOUNT_TYPES = frozenset({"bind", "ro-bind", "dev-bind"})
+    _OVERLAY_MOUNT_TYPES = frozenset({"overlay", "ro-overlay", "tmp-overlay"})
     _VALID_CREATE_AS = frozenset({"dir", "file"})
 
     def __init__(self, config_path: str | None = None) -> None:
@@ -192,6 +196,47 @@ class ConfigLoader:
                         "target": parts[1],
                         "type": "ro-bind",
                     }
+                )
+
+        # Override overlays with --overlay-src / --overlay / --ro-overlay /
+        # --tmp-overlay. Like bwrap, --overlay-src flags apply to the next
+        # overlay flag that follows them on the command line. The ordered
+        # list of (op, value) pairs is collected by the CLI's
+        # _OverlayOpAction, because argparse per-flag lists lose the
+        # interleaving order between flags.
+        overlay_ops = getattr(args, "_overlay_ops", None) or []
+        if overlay_ops:
+            pending_srcs: list[str] = []
+            for op_name, value in overlay_ops:
+                if op_name == "overlay-src":
+                    pending_srcs.append(value)
+                    continue
+                parts = value.split(":")
+                if op_name == "overlay":
+                    if len(parts) != 3:
+                        raise ConfigValidationError(f"--overlay expects SRC:WORKDIR:DEST, got '{value}'")
+                    mount_dict = {
+                        "type": "overlay",
+                        "source": parts[0],
+                        "workdir": parts[1],
+                        "target": parts[2],
+                        "overlay_src": list(pending_srcs),
+                    }
+                elif op_name in ("ro-overlay", "tmp-overlay"):
+                    if len(parts) != 1:
+                        raise ConfigValidationError(f"--{op_name} expects DEST, got '{value}'")
+                    mount_dict = {
+                        "type": op_name,
+                        "target": parts[0],
+                        "overlay_src": list(pending_srcs),
+                    }
+                else:
+                    raise ConfigValidationError(f"unknown overlay operation '{op_name}'")
+                result.setdefault("mounts", []).append(mount_dict)
+                pending_srcs = []
+            if pending_srcs:
+                raise ConfigValidationError(
+                    f"{len(pending_srcs)} --overlay-src value(s) have no following --overlay/--ro-overlay/--tmp-overlay to attach to"
                 )
 
         # Override capabilities with --cap-add / --cap-drop
@@ -448,6 +493,11 @@ class ConfigLoader:
                 bind/ro-bind/dev-bind mounts.
               * 'create-as' must be 'dir' or 'file' and is only valid when
                 'create-source' is true.
+              * 'overlay-src' must be a list of non-empty strings and is only
+                valid for overlay/ro-overlay/tmp-overlay mounts.
+              * 'workdir' must be a non-empty string and is only valid for
+                overlay/ro-overlay/tmp-overlay mounts.
+              * 'source' is not valid for ro-overlay/tmp-overlay mounts.
 
         Without this layer, a user could specify:
             mounts:
@@ -498,6 +548,26 @@ class ConfigLoader:
                 if mount.get("create_source") is not True:
                     raise ConfigValidationError(f"mount[{i}]: 'create-as' is only valid when 'create-source' is true")
                 mount["create_as"] = create_as
+
+            # Translate hyphenated overlay keys and validate the overlay
+            # options (scope: only overlay-family types may use them).
+            if "overlay-src" in mount or "workdir" in mount:
+                if mount_type not in self._OVERLAY_MOUNT_TYPES:
+                    raise ConfigValidationError(
+                        f"mount[{i}]: 'overlay-src'/'workdir' are only valid for overlay, ro-overlay and tmp-overlay mounts, "
+                        f"got type '{mount_type}'"
+                    )
+            if "overlay-src" in mount:
+                mount["overlay_src"] = mount.pop("overlay-src")
+            if "overlay_src" in mount:
+                overlay_src = mount["overlay_src"]
+                if not isinstance(overlay_src, list) or not all(isinstance(s, str) and s for s in overlay_src):
+                    raise ConfigValidationError(f"mount[{i}]: 'overlay-src' must be a list of non-empty strings")
+            if "workdir" in mount:
+                if not isinstance(mount["workdir"], str) or not mount["workdir"]:
+                    raise ConfigValidationError(f"mount[{i}]: 'workdir' must be a non-empty string")
+            if mount_type in ("ro-overlay", "tmp-overlay") and "source" in mount:
+                raise ConfigValidationError(f"mount[{i}]: 'source' is not valid for '{mount_type}' mounts; use 'overlay-src' layers")
 
             validated_mounts.append(Mount(**mount))
         return validated_mounts

@@ -113,6 +113,38 @@ mounts:
   # Uncomment and adjust as needed:
   # - target: /workspace
   #   type: dir
+  #
+  # --- Mount type: overlay    → --overlay-src SRC… --overlay RWSRC WORKDIR DEST ---
+  # Writable overlayfs union: reads prefer `source` (RWSRC), then the
+  # `overlay-src` layers (listed bottom to top, later entries shadow
+  # earlier ones); writes go to `source` and persist on the host.
+  # `workdir` must be on the same filesystem as `source` (created if missing).
+  # Requires bubblewrap >= 0.4.0; multi-layer unions need kernel >= 4.0.
+  #
+  # - source: /data/upper
+  #   workdir: /data/upper-work
+  #   target: /workspace
+  #   type: overlay
+  #   overlay-src:
+  #     - /data/lower1
+  #     - /data/lower2
+  #
+  # --- Mount type: ro-overlay → --overlay-src SRC… --ro-overlay DEST ---
+  # Read-only overlayfs union (at least two layers):
+  #
+  # - target: /readonly-union
+  #   type: ro-overlay
+  #   overlay-src:
+  #     - /data/lower1
+  #     - /data/lower2
+  #
+  # --- Mount type: tmp-overlay → --overlay-src SRC… --tmp-overlay DEST ---
+  # Overlayfs union with non-persistent writes (private tmpfs):
+  #
+  # - target: /scratch
+  #   type: tmp-overlay
+  #   overlay-src:
+  #     - /data/lower1
 
 # Capabilities
 #

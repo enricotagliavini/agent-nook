@@ -17,6 +17,7 @@ The validation is layered across modules:
     → Validates mount type enum values.
     → Validates required fields per mount type (e.g., tmpfs requires target).
     → Validates create-source (bool) / create-as (dir|file) options.
+    → Validates overlay-src (list) / workdir (str) options for overlay mounts.
     → Transforms dicts into Mount dataclass instances.
 
   **Layer 3 (loader.py, ConfigLoader._parse_capabilities()):**
@@ -72,23 +73,33 @@ class Mount:
 
     A single mount is specified as one of:
 
-    - bind:     {"source": "/host/path", "target": "/sandbox/path"}
-    - ro-bind:  {"source": "/host/path", "target": "/sandbox/path"}
-    - dev-bind: {"source": "/dev/sda", "target": "/sandbox/dev"}
-    - tmpfs:    {"target": "/tmp", "size": "100M"}
-    - proc:     {"target": "/proc"}
-    - dev:      {"target": "/dev"}
-    - dir:      {"target": "/workspace"}
+    - bind:        {"source": "/host/path", "target": "/sandbox/path"}
+    - ro-bind:     {"source": "/host/path", "target": "/sandbox/path"}
+    - dev-bind:    {"source": "/dev/sda", "target": "/sandbox/dev"}
+    - tmpfs:       {"target": "/tmp", "size": "100M"}
+    - proc:        {"target": "/proc"}
+    - dev:         {"target": "/dev"}
+    - dir:         {"target": "/workspace"}
+    - overlay:     {"source": "/host/rw", "workdir": "/host/work", "target": "/sandbox/path",
+                    "overlay-src": ["/host/lower1", "/host/lower2"]}
+    - ro-overlay:  {"target": "/sandbox/path", "overlay-src": ["/host/lower1", "/host/lower2"]}
+    - tmp-overlay: {"target": "/sandbox/path", "overlay-src": ["/host/lower1"]}
 
     ## Validation
 
     The build() method enforces the semantic invariants of a single mount:
 
-      - Mount type must be one of: bind, ro-bind, dev-bind, tmpfs, proc, dev, dir.
+      - Mount type must be one of: bind, ro-bind, dev-bind, tmpfs, proc, dev, dir,
+        overlay, ro-overlay, tmp-overlay.
       - Bind/ro-bind/dev-bind require both `source` and `target` to be non-None.
       - Dir/tmpfs require a non-None `target`.
       - Dev-bind requires `device=True`.
       - `create_as` must be "dir" or "file".
+      - `overlay` requires `source` (RWSRC), `workdir`, `target` and at least one
+        `overlay_src` layer; `ro-overlay` requires `target` and at least two
+        `overlay_src` layers; `tmp-overlay` requires `target` and at least one
+        `overlay_src` layer. `source`/`workdir` are forbidden for ro-overlay and
+        tmp-overlay, and `overlay_src`/`workdir` for all non-overlay types.
 
     build() is invoked by the builder (Layer 6, build_mounts_order()) when the
     bwrap command line is constructed. It is a defensive boundary that catches
@@ -114,6 +125,14 @@ class Mount:
         create_as: What create_source should create: "dir" (a directory, the
               default) or "file" (an empty file; parent directories are
               created as needed). Only meaningful when create_source is True.
+        overlay_src: Lower layers for overlay mounts, in bottom-to-top order:
+              the first entry is the bottom of the stack, later entries shadow
+              earlier ones, and for `overlay` mounts the `source` (RWSRC) layer
+              sits above all of them. Only meaningful for overlay, ro-overlay
+              and tmp-overlay mounts. Default: empty list.
+        workdir: Internal kernel workdir for `overlay` mounts: a directory on
+              the same filesystem as `source`, created when missing. Only
+              meaningful for `overlay` mounts. Default: None.
     """
 
     source: str | None = field(default=None, repr=False)
@@ -123,6 +142,8 @@ class Mount:
     size: str = ""
     create_source: bool = False
     create_as: str = "dir"
+    overlay_src: list[str] = field(default_factory=list)
+    workdir: str | None = field(default=None, repr=False)
 
     def build(self) -> list[str]:
         """Build the bwrap arguments for this mount.
@@ -132,12 +153,19 @@ class Mount:
         Mount's type and fields are semantically consistent.
 
         Validation performed:
-          - Mount type must be one of: bind, ro-bind, dev-bind, tmpfs, proc, dev, dir.
+          - Mount type must be one of: bind, ro-bind, dev-bind, tmpfs, proc, dev, dir,
+            overlay, ro-overlay, tmp-overlay.
           - Bind/ro-bind/dev-bind require both `source` and `target` to be non-None.
           - Dir/tmpfs require a non-None `target`.
           - Dev-bind requires `device=True`.
           - `create_as` must be "dir" or "file".
           - Size is parsed and converted to bytes for tmpfs.
+          - `overlay` requires `source` (RWSRC), `workdir`, `target` and at least
+            one `overlay_src` layer; `ro-overlay` requires `target` and at least
+            two `overlay_src` layers; `tmp-overlay` requires `target` and at least
+            one `overlay_src` layer. `source`/`workdir` are rejected for
+            ro-overlay and tmp-overlay; `overlay_src`/`workdir` are rejected for
+            non-overlay types.
 
         Without this check, a Mount created programmatically with invalid
         fields could slip through to the bwrap builder, causing cryptic
@@ -152,8 +180,9 @@ class Mount:
                 invalid type, or dev-bind without device=True).
         """
         args: list[str] = []
+        mount_type = self.type.lower().strip()
 
-        if self.type.lower().strip() not in (
+        if mount_type not in (
             "bind",
             "ro-bind",
             "dev-bind",
@@ -161,21 +190,36 @@ class Mount:
             "proc",
             "dev",
             "dir",
+            "overlay",
+            "ro-overlay",
+            "tmp-overlay",
         ):
-            raise ValueError(f"Unknown mount type: {self.type}. Valid types: bind, ro-bind, dev-bind, tmpfs, proc, dev, dir")
+            raise ValueError(
+                f"Unknown mount type: {self.type}. "
+                "Valid types: bind, ro-bind, dev-bind, tmpfs, proc, dev, dir, overlay, ro-overlay, tmp-overlay"
+            )
 
         if self.create_as not in ("dir", "file"):
             raise ValueError(f"Invalid create-as value: {self.create_as!r}. Valid values: 'dir', 'file'")
 
-        if self.type.lower().strip() in ("bind", "ro-bind", "dev-bind"):
+        if mount_type in ("overlay", "ro-overlay", "tmp-overlay"):
+            return self._build_overlay_args(mount_type)
+
+        if self.overlay_src or self.workdir is not None:
+            raise ValueError(
+                f"Mount type '{self.type}' does not support 'overlay-src'/'workdir' "
+                "(only overlay, ro-overlay and tmp-overlay mounts do)"
+            )
+
+        if mount_type in ("bind", "ro-bind", "dev-bind"):
             if self.source is None:
                 raise ValueError(f"Mount type '{self.type}' requires a non-empty source")
             if self.target is None:
                 raise ValueError(f"Mount type '{self.type}' requires a non-empty target")
 
-            if self.type.lower().strip() == "ro-bind":
+            if mount_type == "ro-bind":
                 args.extend(["--ro-bind", self.source, self.target])
-            elif self.type.lower().strip() == "dev-bind":
+            elif mount_type == "dev-bind":
                 if self.device:
                     args.extend(["--dev-bind", self.source, self.target])
                 else:
@@ -187,7 +231,7 @@ class Mount:
             else:
                 args.extend(["--bind", self.source, self.target])
 
-        elif self.type.lower().strip() == "tmpfs":
+        elif mount_type == "tmpfs":
             if self.target is None:
                 raise ValueError("tmpfs mount requires a target")
             size_bytes = self._parse_size(self.size)
@@ -196,22 +240,81 @@ class Mount:
             else:
                 args.extend(["--tmpfs", self.target])
 
-        elif self.type.lower().strip() == "proc":
+        elif mount_type == "proc":
             if self.target is None:
                 args.extend(["--proc", "/proc"])
             else:
                 args.extend(["--proc", self.target])
 
-        elif self.type.lower().strip() == "dev":
+        elif mount_type == "dev":
             if self.target is None:
                 args.extend(["--dev", "/dev"])
             else:
                 args.extend(["--dev", self.target])
 
-        elif self.type.lower().strip() == "dir":
+        elif mount_type == "dir":
             if self.target is None:
                 raise ValueError("dir mount requires a target")
             args.extend(["--dir", self.target])
+
+        return args
+
+    def _build_overlay_args(self, mount_type: str) -> list[str]:
+        """Build the bwrap arguments for overlay, ro-overlay and tmp-overlay mounts.
+
+        Emits one ``--overlay-src`` argument per lower layer in bottom-to-top
+        order (first layer = bottom of the stack), followed by the overlay
+        mount flag itself. Enforces the per-type invariants:
+
+          - overlay:     source (RWSRC), workdir and target required; at least
+                         one overlay_src layer
+          - ro-overlay:  target required; at least two overlay_src layers;
+                         source/workdir forbidden
+          - tmp-overlay: target required; at least one overlay_src layer;
+                         source/workdir forbidden
+
+        Args:
+            mount_type: The normalized mount type (already validated as one of
+                the three overlay types by build()).
+
+        Returns:
+            A list of bwrap CLI arguments for this mount.
+
+        Raises:
+            ValueError: If a required field is missing, a forbidden field is
+                set, or the number of lower layers is insufficient.
+        """
+        if self.target is None:
+            raise ValueError(f"{mount_type} mount requires a target")
+
+        for src in self.overlay_src:
+            if not isinstance(src, str) or not src:
+                raise ValueError(f"{mount_type} mount overlay-src layers must be non-empty strings")
+
+        args: list[str] = []
+        for src in self.overlay_src:
+            args.extend(["--overlay-src", src])
+
+        if mount_type == "overlay":
+            if self.source is None:
+                raise ValueError("overlay mount requires a source (the read-write layer, RWSRC)")
+            if not self.workdir:
+                raise ValueError("overlay mount requires a workdir (a directory on the same filesystem as the source)")
+            if len(self.overlay_src) < 1:
+                raise ValueError("overlay mount requires at least one overlay-src layer")
+            args.extend(["--overlay", self.source, self.workdir, self.target])
+        elif mount_type == "ro-overlay":
+            if self.source is not None or self.workdir is not None:
+                raise ValueError("ro-overlay mount does not accept 'source' or 'workdir'; use overlay-src layers")
+            if len(self.overlay_src) < 2:
+                raise ValueError("ro-overlay mount requires at least two overlay-src layers")
+            args.extend(["--ro-overlay", self.target])
+        else:  # tmp-overlay
+            if self.source is not None or self.workdir is not None:
+                raise ValueError("tmp-overlay mount does not accept 'source' or 'workdir'; use overlay-src layers")
+            if len(self.overlay_src) < 1:
+                raise ValueError("tmp-overlay mount requires at least one overlay-src layer")
+            args.extend(["--tmp-overlay", self.target])
 
         return args
 

@@ -327,3 +327,193 @@ def test_load_from_dict_create_as_invalid_value_errors():
     }
     with pytest.raises(ConfigValidationError, match="'dir' or 'file'"):
         loader.load_from_dict(data)
+
+
+def test_load_from_dict_overlay_mount():
+    """An overlay mount with the hyphenated overlay-src key parses into Mount."""
+    config = ConfigLoader().load_from_dict(
+        {
+            "name": "test",
+            "mounts": [
+                {
+                    "source": "/rw",
+                    "workdir": "/wd",
+                    "target": "/d",
+                    "type": "overlay",
+                    "overlay-src": ["/a", "/b"],
+                }
+            ],
+        }
+    )
+    mount = config.mounts[0]
+    assert mount.type == "overlay"
+    assert mount.source == "/rw"
+    assert mount.workdir == "/wd"
+    assert mount.target == "/d"
+    assert mount.overlay_src == ["/a", "/b"]
+
+
+def test_load_from_dict_ro_overlay_mount():
+    """A ro-overlay mount parses and builds the expected bwrap arguments."""
+    config = ConfigLoader().load_from_dict(
+        {"name": "test", "mounts": [{"target": "/d", "type": "ro-overlay", "overlay-src": ["/a", "/b"]}]}
+    )
+    assert config.mounts[0].build() == ["--overlay-src", "/a", "--overlay-src", "/b", "--ro-overlay", "/d"]
+
+
+def test_load_from_dict_tmp_overlay_mount():
+    """A tmp-overlay mount parses and builds the expected bwrap arguments."""
+    config = ConfigLoader().load_from_dict(
+        {"name": "test", "mounts": [{"target": "/d", "type": "tmp-overlay", "overlay-src": ["/a"]}]}
+    )
+    assert config.mounts[0].build() == ["--overlay-src", "/a", "--tmp-overlay", "/d"]
+
+
+def test_load_from_dict_overlay_env_var_expansion_in_srcs():
+    """Environment variables expand inside overlay-src list entries."""
+    os.environ["OVL_TEST_DIR"] = "/envdir"
+    try:
+        config = ConfigLoader().load_from_dict(
+            {
+                "name": "test",
+                "mounts": [
+                    {
+                        "source": "/rw",
+                        "workdir": "/wd",
+                        "target": "/d",
+                        "type": "overlay",
+                        "overlay-src": ["${OVL_TEST_DIR}/lower"],
+                    }
+                ],
+            }
+        )
+        assert config.mounts[0].overlay_src == ["/envdir/lower"]
+    finally:
+        del os.environ["OVL_TEST_DIR"]
+
+
+def test_load_from_dict_overlay_src_on_non_overlay_mount_errors():
+    """overlay-src on a non-overlay mount type (bind) is rejected."""
+    with pytest.raises(ConfigValidationError, match="only valid for overlay"):
+        ConfigLoader().load_from_dict(
+            {"name": "test", "mounts": [{"source": "/s", "target": "/t", "type": "bind", "overlay-src": ["/a"]}]}
+        )
+
+
+def test_load_from_dict_workdir_on_non_overlay_mount_errors():
+    """workdir on a non-overlay mount type (tmpfs) is rejected."""
+    with pytest.raises(ConfigValidationError, match="only valid for overlay"):
+        ConfigLoader().load_from_dict(
+            {"name": "test", "mounts": [{"target": "/t", "type": "tmpfs", "workdir": "/wd"}]}
+        )
+
+
+def test_load_from_dict_source_on_ro_overlay_errors():
+    """source on a ro-overlay mount is rejected (use overlay-src layers instead)."""
+    with pytest.raises(ConfigValidationError, match="'source' is not valid"):
+        ConfigLoader().load_from_dict(
+            {
+                "name": "test",
+                "mounts": [{"source": "/s", "target": "/d", "type": "ro-overlay", "overlay-src": ["/a", "/b"]}],
+            }
+        )
+
+
+def test_load_from_dict_overlay_src_wrong_type_errors():
+    """overlay-src must be a list of non-empty strings."""
+    with pytest.raises(ConfigValidationError, match="list of non-empty strings"):
+        ConfigLoader().load_from_dict(
+            {"name": "test", "mounts": [{"target": "/d", "type": "ro-overlay", "overlay-src": "/a"}]}
+        )
+    with pytest.raises(ConfigValidationError, match="list of non-empty strings"):
+        ConfigLoader().load_from_dict(
+            {"name": "test", "mounts": [{"target": "/d", "type": "ro-overlay", "overlay-src": ["/a", ""]}]}
+        )
+
+
+def test_load_from_dict_workdir_wrong_type_errors():
+    """workdir must be a non-empty string."""
+    with pytest.raises(ConfigValidationError, match="'workdir' must be a non-empty string"):
+        ConfigLoader().load_from_dict(
+            {
+                "name": "test",
+                "mounts": [{"source": "/rw", "workdir": 42, "target": "/d", "type": "overlay", "overlay-src": ["/a"]}],
+            }
+        )
+
+
+def _make_overlay_run_args(overlay_ops: list) -> argparse.Namespace:
+    """Build a minimal argparse.Namespace with an ordered overlay-ops list.
+
+    Mimics what the CLI's _OverlayOpAction stores in namespace._overlay_ops.
+    """
+    return argparse.Namespace(
+        config=None,
+        chdir=None,
+        die_with_parent=True,
+        new_session=True,
+        hostname=None,
+        bind=[],
+        ro_bind=[],
+        cap_add=[],
+        cap_drop=[],
+        unshare=[],
+        env=[],
+        unset_env=[],
+        _overlay_ops=overlay_ops,
+    )
+
+
+def test_load_with_overrides_overlay_cli_flags(tmp_path):
+    """CLI --overlay-src/--overlay/--ro-overlay merge into overlay mounts in order."""
+    config_file = tmp_path / "sandbox.yaml"
+    config_file.write_text("name: test\n", encoding="utf-8")
+
+    args = _make_overlay_run_args(
+        [
+            ("overlay-src", "/a"),
+            ("overlay-src", "/b"),
+            ("overlay", "/rw:/wd:/d"),
+            ("overlay-src", "/c"),
+            ("ro-overlay", "/ro"),
+        ]
+    )
+    config = ConfigLoader().load_with_overrides(args, path=str(config_file))
+
+    assert [m.type for m in config.mounts] == ["overlay", "ro-overlay"]
+    overlay, ro = config.mounts
+    assert (overlay.source, overlay.workdir, overlay.target) == ("/rw", "/wd", "/d")
+    assert overlay.overlay_src == ["/a", "/b"]
+    assert (ro.source, ro.workdir) == (None, None)
+    assert ro.target == "/ro"
+    assert ro.overlay_src == ["/c"]
+
+
+def test_load_with_overrides_dangling_overlay_src_errors(tmp_path):
+    """--overlay-src without a following overlay flag is rejected."""
+    config_file = tmp_path / "sandbox.yaml"
+    config_file.write_text("name: test\n", encoding="utf-8")
+
+    args = _make_overlay_run_args([("overlay-src", "/a")])
+    with pytest.raises(ConfigValidationError, match="no following"):
+        ConfigLoader().load_with_overrides(args, path=str(config_file))
+
+
+def test_load_with_overrides_malformed_overlay_value_errors(tmp_path):
+    """--overlay with a value that is not SRC:WORKDIR:DEST is rejected."""
+    config_file = tmp_path / "sandbox.yaml"
+    config_file.write_text("name: test\n", encoding="utf-8")
+
+    args = _make_overlay_run_args([("overlay", "/only-two:parts")])
+    with pytest.raises(ConfigValidationError, match="SRC:WORKDIR:DEST"):
+        ConfigLoader().load_with_overrides(args, path=str(config_file))
+
+
+def test_load_with_overrides_malformed_tmp_overlay_value_errors(tmp_path):
+    """--tmp-overlay with a value that is not a bare DEST is rejected."""
+    config_file = tmp_path / "sandbox.yaml"
+    config_file.write_text("name: test\n", encoding="utf-8")
+
+    args = _make_overlay_run_args([("tmp-overlay", "/a:/b")])
+    with pytest.raises(ConfigValidationError, match="expects DEST"):
+        ConfigLoader().load_with_overrides(args, path=str(config_file))
