@@ -65,19 +65,19 @@ mounts:
 
   - source: ${HOME}/.config/opencode
     target: ${HOME}/.config/opencode
-    type: ro-bind
+    type: bind
 
   - source: ${HOME}/.local/share/opencode
     target: ${HOME}/.local/share/opencode
-    type: ro-bind
+    type: bind
 
   - source: ${HOME}/.local/state/opencode
     target: ${HOME}/.local/state/opencode
-    type: ro-bind
+    type: bind
 
   - source: ${HOME}/.opencode
     target: ${HOME}/.opencode
-    type: ro-bind
+    type: bind
 
   - source: ${HOME}/bin
     target: ${HOME}/bin
