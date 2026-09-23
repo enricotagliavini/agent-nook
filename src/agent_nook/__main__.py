@@ -81,15 +81,18 @@ def _auto_init() -> None:
             logger.debug("Copied bundled config to user config dir")
 
 
-def _setup_logging(verbose: bool) -> None:
+def _setup_logging(level: str) -> None:
     """Initialize logging at startup.
 
     This must be called early in the application lifecycle,
     before importing modules that use the logger.
+
+    Args:
+        level: Log level as string (DEBUG, INFO, WARNING, ERROR, CRITICAL).
     """
     from agent_nook.utils.logger import main_logger
 
-    logger = main_logger("agent_nook", level="DEBUG" if verbose else "INFO")
+    logger = main_logger("agent_nook", level=level)
     logger.debug("Logger initialized")
 
 
@@ -100,8 +103,9 @@ def main() -> int:
         description="A lightweight bwrap sandbox for AI agents",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
-    parser.add_argument("--quiet", action="store_true", help="Suppress non-error output")
+    level_group = parser.add_mutually_exclusive_group()
+    level_group.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output (DEBUG logging)")
+    level_group.add_argument("-q", "--quiet", action="store_true", help="Suppress non-error output (WARNING logging)")
 
     subparsers = parser.add_subparsers(dest="subcommand", help="Available commands")
 
@@ -221,7 +225,8 @@ def main() -> int:
         os.environ["PYTHONVERBOSE"] = "1"
 
     # Initialize logging early, before any modules are imported
-    _setup_logging(args.verbose)
+    level = "DEBUG" if args.verbose else "WARNING" if args.quiet else "INFO"
+    _setup_logging(level)
 
     # Auto-initialize configuration and directories
     _auto_init()

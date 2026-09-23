@@ -228,8 +228,8 @@ agent-nook run --chdir /home/enrico python3 my_script.py
 # Work directory from config
 agent-nook run python3 my_script.py
 
-# Quiet mode (suppress non-error output)
-agent-nook run --quiet python3 my_script.py
+# Quiet mode (suppress non-error output; global flag, before the subcommand)
+agent-nook --quiet run python3 my_script.py
 ```
 
 ### Viewing logs
@@ -273,7 +273,7 @@ agent-nook logs -F -n 100
 | `--no-new-session` | Don't create new session (allows TIOCSTI) |
 | `--version` | Print version and exit |
 | `-v`/`--verbose` | Enable verbose output |
-| `--quiet` | Suppress non-error output |
+| `-q`/`--quiet` | Suppress non-error output (log level WARN) |
 | `--die-with-parent` | Kill sandbox child when parent dies (**default: on**) |
 | `--no-die-with-parent` | Keep sandbox alive after parent exits |
 

@@ -144,6 +144,13 @@ def _setup_logger(
 
     # Check if already configured (has handlers)
     if logger.handlers:
+        # Re-apply the level to the console handler. Module-level loggers may
+        # have configured the logger at import time, so an explicit level
+        # given later (e.g. by the CLI) must still take effect. The file
+        # handler intentionally stays at DEBUG to capture everything on disk.
+        for handler in logger.handlers:
+            if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
+                handler.setLevel(log_level)
         return logger
 
     # Create formatter (shared by the file and console handlers below)
@@ -222,7 +229,7 @@ def set_sandbox_name(sandbox_name: str) -> None:
             handler.formatter.sandbox_name = sandbox_name
 
 
-def main_logger(name: str = "agent_nook", level: str = "INFO") -> logging.Logger:
+def main_logger(name: str = "agent_nook", level: str | None = None) -> logging.Logger:
     """Set up logging and return a logger for the given module.
 
     This is the main entry point for setting up logging. It ensures the root
@@ -236,17 +243,23 @@ def main_logger(name: str = "agent_nook", level: str = "INFO") -> logging.Logger
 
     Args:
         name: Logger name. Defaults to "agent_nook".
-        level: Log level. Defaults to "INFO".
+        level: Log level to force (e.g. by the CLI at startup). When None,
+            the default INFO level is applied only on the first
+            configuration, so later import-time loggers cannot clobber a
+            level the CLI has already set.
 
     Returns:
         Configured logger instance.
     """
-    # Ensure the root "agent_nook" logger is configured first
+    # An explicitly requested level always wins (e.g. CLI -v/--quiet).
+    # Without one, only the first configuration applies, so import-time
+    # module loggers can't clobber a level set earlier at startup.
     root_logger = logging.getLogger("agent_nook")
-    if not root_logger.handlers:
+    effective_level = level if level is not None else ("INFO" if not root_logger.handlers else None)
+    if effective_level is not None:
         _setup_logger(
             name="agent_nook",
-            level=level,
+            level=effective_level,
             use_file=True,
             use_console=True,
         )

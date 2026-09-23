@@ -97,6 +97,72 @@ def test_basic_hello_world(test_sandbox_run) -> None:
 
 
 @pytest.mark.integration
+def test_quiet_flag_suppresses_info_output(test_sandbox_run) -> None:
+    """Test that --quiet (level WARNING) suppresses INFO log output.
+
+    With --quiet the console log level is WARNING, so INFO lines such as
+    "Running command" must not appear on stdout. A control run without
+    the flag confirms INFO lines are normally emitted.
+
+    Command tested:
+        agent_nook --quiet run --config src/agent_nook/config/sandbox.yaml \
+            python3 -c "print('hello world')"
+
+    Args:
+        test_sandbox_run: Fixture that returns a subprocess runner.
+
+    Raises:
+        AssertionError: If quiet mode leaks INFO output or the command fails.
+    """
+
+    run_command = test_sandbox_run
+
+    result = run_command(
+        "--quiet",
+        "run",
+        "--config",
+        "src/agent_nook/config/sandbox.yaml",
+        "python3",
+        "-c",
+        "print('hello world')",
+    )
+
+    assert result.returncode == 0, (
+        f"Command failed with return code {result.returncode}:\n"
+        f"  stdout: {result.stdout!r}\n"
+        f"  stderr: {result.stderr!r}"
+    )
+
+    assert "hello world" in result.stdout, (
+        f"Expected 'hello world' in stdout, got: {result.stdout!r}"
+    )
+
+    assert "- INFO -" not in result.stdout, (
+        f"Expected no INFO log lines with --quiet, got: {result.stdout!r}"
+    )
+
+    # Control: without --quiet the INFO line is emitted.
+    control = run_command(
+        "run",
+        "--config",
+        "src/agent_nook/config/sandbox.yaml",
+        "python3",
+        "-c",
+        "print('hello world')",
+    )
+
+    assert control.returncode == 0, (
+        f"Control run failed with return code {control.returncode}:\n"
+        f"  stdout: {control.stdout!r}\n"
+        f"  stderr: {control.stderr!r}"
+    )
+
+    assert "- INFO -" in control.stdout, (
+        f"Expected an INFO log line without --quiet, got: {control.stdout!r}"
+    )
+
+
+@pytest.mark.integration
 def test_python_script_execution(test_sandbox_run) -> None:
     """Test that agent-nook can execute Python scripts.
 
