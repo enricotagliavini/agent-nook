@@ -603,18 +603,38 @@ def test_run_overlay_workdir_different_filesystem_errors(tmp_path, monkeypatch):
     workdir = tmp_path / "wd"
     workdir.mkdir()
 
-    class _FakePath(Path):
-        def stat(self, *args, **kwargs):
-            st = super().stat(*args, **kwargs)
-            if str(self) == str(workdir.resolve()):
+    _real_stat = Path.stat
+    _workdir_resolved = str(workdir.resolve())
 
-                class _St:
-                    st_dev = 999
+    class _StatView:
+        """A read-only wrapper around a real ``os.stat`` result.
 
-                return _St()
-            return st
+        Lets the test override only ``st_dev`` (to simulate the workdir
+        living on a different filesystem) while every other attribute
+        (``st_mode``, ``st_size`` ...) keeps delegating to the real
+        result. Portable across Python versions instead of subclassing
+        ``Path`` (a ``Path`` subclass cannot reliably override ``stat``
+        before 3.14).
+        """
 
-    monkeypatch.setattr("agent_nook.sandbox.bwrap_sandbox.Path", _FakePath)
+        __slots__ = ("_st",)
+
+        def __init__(self, st):
+            self._st = st
+
+        @property
+        def st_dev(self):
+            return 999
+
+        def __getattr__(self, name):
+            return getattr(self._st, name)
+
+    def _fake_stat(self, *args, **kwargs):
+        if str(self) == _workdir_resolved:
+            return _StatView(_real_stat(self, *args, **kwargs))
+        return _real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _fake_stat)
     _mock_bwrap(monkeypatch)
     config = ConfigLoader().set(
         {
