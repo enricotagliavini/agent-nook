@@ -17,7 +17,9 @@ Usage:
 
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
+from agent_nook.config.config import Mount
 from agent_nook.config.config import SandboxConfig
 from agent_nook.sandbox.builder import BwrapBuilder
 from agent_nook.utils.logger import main_logger
@@ -25,6 +27,43 @@ from agent_nook.utils.logger import main_logger
 
 # Module-level logger — uses centralized main_logger
 _logger = main_logger(__name__)
+
+
+def _ensure_mount_sources(mounts: list[Mount]) -> None:
+    """Create missing mount source paths before the sandbox starts.
+
+    For each mount with ``create_source=True`` and a non-empty source,
+    ensures the host source path exists: a directory (including missing
+    parents) by default, or an empty file when ``create_as="file"``
+    (parent directories are created as needed). Existing paths are left
+    untouched. Mounts without a source are skipped, so the options are a
+    harmless no-op for tmpfs/proc/dev/dir mounts.
+
+    Args:
+        mounts: The mounts from the sandbox configuration.
+
+    Raises:
+        RuntimeError: If a source path cannot be created (e.g. permission
+            denied, or a directory exists where a file is required).
+    """
+    for mount in mounts:
+        if not mount.create_source or not mount.source:
+            continue
+        source = Path(mount.source)
+        as_file = mount.create_as == "file"
+        try:
+            if as_file:
+                if source.is_dir():
+                    raise FileExistsError(f"'{source}' is a directory, cannot create it as a file")
+                source.parent.mkdir(parents=True, exist_ok=True)
+                if not source.exists():
+                    source.touch()
+            else:
+                source.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            _logger.exception("Failed to create mount source %r for %s mount -> %r", mount.source, mount.type, mount.target)
+            raise RuntimeError(f"Failed to create mount source '{mount.source}': {e}") from e
+        _logger.debug("Ensured mount source %s exists (%s)", mount.source, "file" if as_file else "directory")
 
 
 @dataclass
@@ -60,8 +99,9 @@ class BwrapSandbox:
 
     The BwrapSandbox class encapsulates the full lifecycle:
       1. Holds the SandboxConfig
-      2. Builds the bwrap command line via BwrapBuilder
-      3. Executes the command
+      2. Ensures mount sources exist (create-source option)
+      3. Builds the bwrap command line via BwrapBuilder
+      4. Executes the command
     """
 
     def __init__(
@@ -109,6 +149,10 @@ class BwrapSandbox:
         Returns:
             SandboxResult with execution details.
 
+        Raises:
+            RuntimeError: If a mount source that must be created
+                (create-source: true) cannot be created.
+
         Example:
             result = BwrapSandbox(config).run(["/bin/echo", "hello"])
             if result.success:
@@ -119,6 +163,9 @@ class BwrapSandbox:
             self._config.name,
             " ".join(command),
         )
+
+        # Ensure mount sources that must be created exist before bwrap runs
+        _ensure_mount_sources(self._config.mounts)
 
         bwrap_cmd = self.build(command)
 

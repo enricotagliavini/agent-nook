@@ -691,3 +691,65 @@ def test_config_flag_before_subcommand_rejected(test_sandbox_run) -> None:
         f"Sandboxed command ran despite invalid flag placement:\n"
         f"  stdout: {result.stdout!r}"
     )
+
+
+@pytest.fixture(scope="function")
+def test_create_source_config(xdg_config_dir, tmp_path) -> tuple[Path, Path]:
+    """Create a config file whose bind source does not exist on the host yet."""
+    source = tmp_path / "agent" / "workspace"
+    config_path = xdg_config_dir / "test_create_source.yaml"
+    config_path.write_text(
+        f"""# Test config for create-source: the bind source does not exist yet
+name: test-create-source
+mounts:
+  - type: ro-bind
+    source: /
+    target: /
+  - type: tmpfs
+    target: /tmp
+  - type: bind
+    source: {source}
+    target: /tmp/agent_workspace
+    create-source: true
+"""
+    )
+    return config_path, source
+
+
+@pytest.mark.integration
+def test_create_source_creates_missing_directory(test_sandbox_run, test_create_source_config) -> None:
+    """create-source: true creates a missing source directory before execution.
+
+    Runs the real CLI with a config whose bind mount source does not exist
+    yet (including missing parents). The sandbox must start successfully and
+    the host source directory must exist afterwards.
+
+    Command tested:
+        agent_nook run --config <config> python3 -c "print('create-source ok')"
+
+    Args:
+        test_sandbox_run: Fixture that returns a subprocess runner.
+        test_create_source_config: (config_path, source) fixture pair.
+
+    Raises:
+        AssertionError: If the command fails or the source is not created.
+    """
+    config_path, source = test_create_source_config
+    assert not source.exists(), "Precondition: source directory must not exist"
+
+    result = test_sandbox_run(
+        "run",
+        "--config",
+        str(config_path),
+        "python3",
+        "-c",
+        "print('create-source ok')",
+    )
+
+    assert result.returncode == 0, (
+        f"Command failed with return code {result.returncode}:\n"
+        f"  stdout: {result.stdout!r}\n"
+        f"  stderr: {result.stderr!r}"
+    )
+
+    assert source.is_dir(), f"Expected create-source to create {source}, but it does not exist"

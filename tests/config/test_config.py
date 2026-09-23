@@ -75,6 +75,26 @@ def test_mount_build_dir():
     assert mount.build() == ["--dir", "/workspace"]
 
 
+def test_mount_create_source_defaults():
+    """create_source defaults to False and create_as to 'dir'."""
+    mount = Mount(source="/host", target="/sandbox", type="bind")
+    assert mount.create_source is False
+    assert mount.create_as == "dir"
+
+
+def test_mount_create_source_flags_do_not_change_args():
+    """create-source/create-as never leak into the bwrap command line."""
+    mount = Mount(source="/host", target="/sandbox", type="bind", create_source=True, create_as="file")
+    assert mount.build() == ["--bind", "/host", "/sandbox"]
+
+
+def test_mount_build_error_invalid_create_as():
+    """An invalid create-as value raises ValueError in build()."""
+    mount = Mount(source="/host", target="/sandbox", type="bind", create_as="volume")
+    with pytest.raises(ValueError, match="create-as"):
+        mount.build()
+
+
 def test_mount_build_error_no_source():
     """Test bind mount without source raises ValueError."""
     mount = Mount(target="/sandbox", type="bind")

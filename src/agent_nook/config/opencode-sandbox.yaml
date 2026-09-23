@@ -63,21 +63,30 @@ mounts:
     target: ${HOME}/.gitconfig
     type: ro-bind
 
+  # The agent may be installed *inside* the sandbox (pip/npm/etc.), so these
+  # directories may not exist on the host yet. create-source: true creates
+  # them (including missing parents) before the sandbox starts, if absent.
+  # See the README ("create-source" / "create-as" mount options).
+
   - source: ${HOME}/.config/opencode
     target: ${HOME}/.config/opencode
     type: bind
+    create-source: true
 
   - source: ${HOME}/.local/share/opencode
     target: ${HOME}/.local/share/opencode
     type: bind
+    create-source: true
 
   - source: ${HOME}/.local/state/opencode
     target: ${HOME}/.local/state/opencode
     type: bind
+    create-source: true
 
   - source: ${HOME}/.opencode
     target: ${HOME}/.opencode
     type: bind
+    create-source: true
 
   - source: ${HOME}/bin
     target: ${HOME}/bin

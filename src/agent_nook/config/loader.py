@@ -59,6 +59,7 @@ def get_config_path() -> str:
 #
 #   Layer 2: _parse_mounts()            — Dict list → Mount dataclass list
 #            → Validates mount type enum, required fields (source/target) per type
+#            → Validates create-source (bool) / create-as (dir|file) options
 #            → Transforms user-friendly YAML format into internal Mount objects
 #
 #   Layer 3: _parse_capabilities()      — Dict → CapabilitySet dataclass
@@ -108,6 +109,8 @@ class ConfigLoader:
 
     _OPTIONAL_TYPES = frozenset({"str | None", "int | None", "int | float | None"})
     _VALID_MOUNT_TYPES = frozenset({"bind", "ro-bind", "dev-bind", "tmpfs", "proc", "dev", "dir"})
+    _SOURCE_MOUNT_TYPES = frozenset({"bind", "ro-bind", "dev-bind"})
+    _VALID_CREATE_AS = frozenset({"dir", "file"})
 
     def __init__(self, config_path: str | None = None) -> None:
         """Initialize the config loader.
@@ -441,6 +444,10 @@ class ConfigLoader:
               * A 'bind' mount MUST have both 'source' and 'target' fields.
               * Mount type strings must be in the allowed enum.
               * The 'size' field must be a valid size string (or empty).
+              * 'create-source' must be a boolean and is only valid for
+                bind/ro-bind/dev-bind mounts.
+              * 'create-as' must be 'dir' or 'file' and is only valid when
+                'create-source' is true.
 
         Without this layer, a user could specify:
             mounts:
@@ -460,13 +467,39 @@ class ConfigLoader:
             ValueError: If a mount type string is not recognized.
         """
         validated_mounts: list[Mount] = []
-        for mount_dict in mounts:
+        for i, mount_dict in enumerate(mounts):
             mount_type = mount_dict.get("type")
             if not isinstance(mount_type, str):
                 raise ConfigValidationError(f"mount type must be a string, got {type(mount_type).__name__}: {mount_type!r}")
             if mount_type not in self._VALID_MOUNT_TYPES:
                 raise ConfigValidationError(f"unknown mount type '{mount_type}'")
-            validated_mounts.append(Mount(**mount_dict))
+
+            # Translate hyphenated YAML keys to dataclass field names and
+            # validate the create-source/create-as options.
+            mount = dict(mount_dict)
+            if "create-source" in mount or "create-as" in mount:
+                if mount_type not in self._SOURCE_MOUNT_TYPES:
+                    raise ConfigValidationError(
+                        f"mount[{i}]: 'create-source'/'create-as' are only valid for bind, ro-bind and dev-bind mounts, "
+                        f"got type '{mount_type}'"
+                    )
+            if "create-source" in mount:
+                create_source = mount.pop("create-source")
+                if not isinstance(create_source, bool):
+                    raise ConfigValidationError(
+                        f"mount[{i}]: 'create-source' must be a boolean (true/false), "
+                        f"got {type(create_source).__name__}: {create_source!r}"
+                    )
+                mount["create_source"] = create_source
+            if "create-as" in mount:
+                create_as = mount.pop("create-as")
+                if not isinstance(create_as, str) or create_as not in self._VALID_CREATE_AS:
+                    raise ConfigValidationError(f"mount[{i}]: 'create-as' must be 'dir' or 'file', got {create_as!r}")
+                if mount.get("create_source") is not True:
+                    raise ConfigValidationError(f"mount[{i}]: 'create-as' is only valid when 'create-source' is true")
+                mount["create_as"] = create_as
+
+            validated_mounts.append(Mount(**mount))
         return validated_mounts
 
     def _parse_capabilities(self, caps: dict[str, Any]) -> CapabilitySet:

@@ -381,6 +381,35 @@ CLI equivalents:
 - `--dev TARGET` → `type: dev`
 - `--dir TARGET` → `type: dir`
 
+### Optional mount flags
+
+Bind-family mounts (`bind`, `ro-bind`, `dev-bind`) support two optional flags
+that control how the **host source path** is handled before the sandbox starts:
+
+- **`create-source`** (default: `false`): if `true`, the host source path is
+  created when it does not exist yet, including any missing parent
+  directories. Must be a boolean. Without it, a missing source makes bwrap
+  fail.
+- **`create-as`** (default: `"dir"`): what `create-source` creates — `dir`
+  (a directory) or `file` (an empty file; parent directories are created as
+  needed). Only valid when `create-source: true`.
+
+```yaml
+# Create a missing directory (incl. parents) before the sandbox starts
+mounts:
+  - source: /data/agent
+    target: /workspace
+    type: bind
+    create-source: true
+
+# Create a missing empty file (parents as needed)
+  - source: /data/agent/agent.yaml
+    target: /workspace/agent.yaml
+    type: bind
+    create-source: true
+    create-as: file
+```
+
 ### Supported namespace types
 
 Six namespaces can be unshared (isolated):

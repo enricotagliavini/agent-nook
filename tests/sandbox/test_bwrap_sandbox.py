@@ -345,3 +345,98 @@ def test_cli_command_building():
     assert "--tmpfs" in cmd
     # Command should NOT start with "bwrap" (no duplication)
     assert cmd[0] == "bwrap", "Command should start with 'bwrap', not duplicated"
+
+
+def _mock_bwrap(monkeypatch) -> list:
+    """Replace subprocess.run inside the executor; returns captured invocations."""
+    calls: list = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+
+        class _Result:
+            returncode = 0
+
+        return _Result()
+
+    monkeypatch.setattr("agent_nook.sandbox.bwrap_sandbox.subprocess.run", fake_run)
+    return calls
+
+
+def test_run_creates_missing_mount_source_dir(tmp_path, monkeypatch):
+    """A missing source directory (including parents) is created before execution."""
+    source = tmp_path / "missing" / "nested"
+    calls = _mock_bwrap(monkeypatch)
+    config = ConfigLoader().set(
+        {
+            "name": "test",
+            "mounts": [{"source": str(source), "target": "/data", "type": "bind", "create-source": True}],
+        }
+    )
+    result = BwrapSandbox(config).run(["echo", "hi"])
+    assert result.success
+    assert source.is_dir()
+    assert len(calls) == 1
+
+
+def test_run_creates_missing_mount_source_file(tmp_path, monkeypatch):
+    """A missing source file is created empty, parent directories as needed."""
+    source = tmp_path / "missing" / "agent.yaml"
+    _mock_bwrap(monkeypatch)
+    config = ConfigLoader().set(
+        {
+            "name": "test",
+            "mounts": [
+                {"source": str(source), "target": "/data", "type": "bind", "create-source": True, "create-as": "file"},
+            ],
+        }
+    )
+    result = BwrapSandbox(config).run(["echo", "hi"])
+    assert result.success
+    assert source.is_file()
+    assert source.stat().st_size == 0
+
+
+def test_run_existing_mount_source_is_untouched(tmp_path, monkeypatch):
+    """Existing sources (dir or file) do not fail and are left as-is."""
+    dir_source = tmp_path / "dir"
+    dir_source.mkdir()
+    file_source = tmp_path / "file.txt"
+    file_source.write_text("data")
+    _mock_bwrap(monkeypatch)
+    config = ConfigLoader().set(
+        {
+            "name": "test",
+            "mounts": [
+                {"source": str(dir_source), "target": "/d", "type": "bind", "create-source": True},
+                {
+                    "source": str(file_source),
+                    "target": "/f",
+                    "type": "bind",
+                    "create-source": True,
+                    "create-as": "file",
+                },
+            ],
+        }
+    )
+    result = BwrapSandbox(config).run(["echo", "hi"])
+    assert result.success
+    assert dir_source.is_dir()
+    assert file_source.read_text() == "data"
+
+
+def test_run_mount_source_file_conflicts_with_directory_errors(tmp_path, monkeypatch):
+    """create-as: file with an existing directory as source raises RuntimeError."""
+    source = tmp_path / "adir"
+    source.mkdir()
+    _mock_bwrap(monkeypatch)
+    config = ConfigLoader().set(
+        {
+            "name": "test",
+            "mounts": [
+                {"source": str(source), "target": "/data", "type": "bind", "create-source": True, "create-as": "file"},
+            ],
+        }
+    )
+    with pytest.raises(RuntimeError, match="Failed to create mount source"):
+        BwrapSandbox(config).run(["echo", "hi"])

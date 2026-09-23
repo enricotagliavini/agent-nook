@@ -57,6 +57,26 @@ mounts:
   # --- Mount type: ro-bind    → --ro-bind SRC DEST ---
   # Read-only host mounts (safer for multi-tenant use).
 
+  # Optional flags for bind/ro-bind/dev-bind mounts:
+  #   create-source: true|false (default: false)
+  #     Create the host source path before the sandbox starts, if it does
+  #     not exist yet. Missing parent directories are created as needed.
+  #   create-as: dir|file (default: "dir")
+  #     What to create when create-source is true: "dir" creates a
+  #     directory; "file" creates an empty file (parents as needed).
+  #
+  # Examples:
+  # - source: /data/agent
+  #   target: /workspace
+  #   type: bind
+  #   create-source: true
+  #
+  # - source: /data/agent/agent.yaml
+  #   target: /workspace/agent.yaml
+  #   type: bind
+  #   create-source: true
+  #   create-as: file
+  #
   # - source: /etc/hosts
   #   target: /etc/hosts
   #   type: ro-bind

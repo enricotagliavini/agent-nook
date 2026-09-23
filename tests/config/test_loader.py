@@ -256,3 +256,74 @@ def test_load_with_overrides_empty_mounts_without_cli_bind_errors(tmp_path):
 
     with pytest.raises(ConfigValidationError, match="at least one mount point"):
         ConfigLoader().load_with_overrides(_make_run_args([]), path=str(config_file))
+
+
+def test_load_from_dict_create_source():
+    """create-source true/false parse into Mount.create_source; omitted defaults to False."""
+    loader = ConfigLoader()
+    data = {
+        "name": "test",
+        "mounts": [
+            {"source": "/a", "target": "/a", "type": "bind", "create-source": True},
+            {"source": "/b", "target": "/b", "type": "ro-bind", "create-source": False},
+            {"source": "/c", "target": "/c", "type": "bind"},
+        ],
+    }
+    config = loader.load_from_dict(data)
+    assert config.mounts[0].create_source is True
+    assert config.mounts[1].create_source is False
+    assert config.mounts[2].create_source is False
+
+
+def test_load_from_dict_create_as():
+    """create-as 'file'/'dir' parse into Mount.create_as; omitted defaults to 'dir'."""
+    loader = ConfigLoader()
+    data = {
+        "name": "test",
+        "mounts": [
+            {"source": "/a", "target": "/a", "type": "bind", "create-source": True, "create-as": "file"},
+            {"source": "/b", "target": "/b", "type": "bind", "create-source": True, "create-as": "dir"},
+            {"source": "/c", "target": "/c", "type": "bind", "create-source": True},
+        ],
+    }
+    config = loader.load_from_dict(data)
+    assert config.mounts[0].create_as == "file"
+    assert config.mounts[1].create_as == "dir"
+    assert config.mounts[2].create_as == "dir"
+
+
+def test_load_from_dict_create_source_non_boolean_errors():
+    """A non-boolean create-source (e.g. quoted 'true') is rejected."""
+    loader = ConfigLoader()
+    data = {"name": "test", "mounts": [{"source": "/a", "target": "/a", "type": "bind", "create-source": "true"}]}
+    with pytest.raises(ConfigValidationError, match="boolean"):
+        loader.load_from_dict(data)
+
+
+def test_load_from_dict_create_source_on_sourceless_mount_errors():
+    """create-source on a source-less mount type (tmpfs) is rejected."""
+    loader = ConfigLoader()
+    data = {"name": "test", "mounts": [{"target": "/tmp", "type": "tmpfs", "create-source": True}]}
+    with pytest.raises(ConfigValidationError, match="only valid for"):
+        loader.load_from_dict(data)
+
+
+def test_load_from_dict_create_as_without_create_source_errors():
+    """create-as without create-source: true is rejected."""
+    loader = ConfigLoader()
+    data = {"name": "test", "mounts": [{"source": "/a", "target": "/a", "type": "bind", "create-as": "file"}]}
+    with pytest.raises(ConfigValidationError, match="only valid when"):
+        loader.load_from_dict(data)
+
+
+def test_load_from_dict_create_as_invalid_value_errors():
+    """A create-as value other than 'dir'/'file' is rejected."""
+    loader = ConfigLoader()
+    data = {
+        "name": "test",
+        "mounts": [
+            {"source": "/a", "target": "/a", "type": "bind", "create-source": True, "create-as": "volume"},
+        ],
+    }
+    with pytest.raises(ConfigValidationError, match="'dir' or 'file'"):
+        loader.load_from_dict(data)

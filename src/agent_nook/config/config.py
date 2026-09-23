@@ -16,6 +16,7 @@ The validation is layered across modules:
   **Layer 2 (loader.py, ConfigLoader._parse_mounts()):**
     → Validates mount type enum values.
     → Validates required fields per mount type (e.g., tmpfs requires target).
+    → Validates create-source (bool) / create-as (dir|file) options.
     → Transforms dicts into Mount dataclass instances.
 
   **Layer 3 (loader.py, ConfigLoader._parse_capabilities()):**
@@ -38,6 +39,7 @@ The validation is layered across modules:
     → Errors here indicate a programming error (e.g., wrong type passed).
 
   **Layer 7 (sandbox/bwrap_sandbox.py, BwrapSandbox.run):**
+    → Creates missing mount sources (create-source option) before execution.
     → Executes the command; handles runtime bwrap errors.
     → Does NOT repeat validation.
 
@@ -86,12 +88,17 @@ class Mount:
       - Bind/ro-bind/dev-bind require both `source` and `target` to be non-None.
       - Dir/tmpfs require a non-None `target`.
       - Dev-bind requires `device=True`.
+      - `create_as` must be "dir" or "file".
 
     build() is invoked by the builder (Layer 6, build_mounts_order()) when the
     bwrap command line is constructed. It is a defensive boundary that catches
     malformed Mount objects created or mutated programmatically. The
     config-level invariant (at least one mount point) is enforced earlier, at
     Layer 5, by SandboxConfig.__post_init__().
+
+    The `create_source`/`create_as` options do NOT affect the bwrap command
+    line: they are handled by the executor (Layer 7, BwrapSandbox.run()),
+    which creates the missing host source path before bwrap starts.
 
     Args:
         source: The source path (required for bind, ro-bind, dev-bind types).
@@ -100,6 +107,13 @@ class Mount:
               proc, dev, dir.
         device: True for dev-bind mounts (required when type="dev-bind").
         size: Human-readable size string for tmpfs mounts (e.g., "100M").
+        create_source: When True, the host source path is created before the
+              sandbox starts if it does not exist yet (missing parent
+              directories are created as needed). Only meaningful for
+              bind, ro-bind and dev-bind mounts. Default: False.
+        create_as: What create_source should create: "dir" (a directory, the
+              default) or "file" (an empty file; parent directories are
+              created as needed). Only meaningful when create_source is True.
     """
 
     source: str | None = field(default=None, repr=False)
@@ -107,6 +121,8 @@ class Mount:
     type: str = "bind"
     device: bool = False
     size: str = ""
+    create_source: bool = False
+    create_as: str = "dir"
 
     def build(self) -> list[str]:
         """Build the bwrap arguments for this mount.
@@ -120,6 +136,7 @@ class Mount:
           - Bind/ro-bind/dev-bind require both `source` and `target` to be non-None.
           - Dir/tmpfs require a non-None `target`.
           - Dev-bind requires `device=True`.
+          - `create_as` must be "dir" or "file".
           - Size is parsed and converted to bytes for tmpfs.
 
         Without this check, a Mount created programmatically with invalid
@@ -146,6 +163,9 @@ class Mount:
             "dir",
         ):
             raise ValueError(f"Unknown mount type: {self.type}. Valid types: bind, ro-bind, dev-bind, tmpfs, proc, dev, dir")
+
+        if self.create_as not in ("dir", "file"):
+            raise ValueError(f"Invalid create-as value: {self.create_as!r}. Valid values: 'dir', 'file'")
 
         if self.type.lower().strip() in ("bind", "ro-bind", "dev-bind"):
             if self.source is None:
