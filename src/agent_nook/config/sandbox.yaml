@@ -84,6 +84,12 @@ mounts:
   # - source: /etc/resolv.conf
   #   target: /etc/resolv.conf
   #   type: ro-bind
+  #
+  # on some systems /etc/resolv.conf is a symbolic link to
+  # - source: /run/systemd/resolve/stub-resolv.conf
+  #   target: /run/systemd/resolve/stub-resolv.conf
+  #   type: ro-bind
+
 
   # --- Mount type: dir        → --dir DEST ---
   # Creates the destination directory if it doesn't exist.
