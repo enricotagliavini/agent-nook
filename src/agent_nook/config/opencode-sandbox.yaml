@@ -68,6 +68,14 @@ mounts:
   # them (including missing parents) before the sandbox starts, if absent.
   # See the README ("create-source" / "create-as" mount options).
 
+  # in case you have a custom .npmrc. You can also make this a RW bind and add create-as: file and create-source: true
+  # the bind should be made RW if you wish to change the npm configuration file from inside the sandbox. In that case
+  # it's recommended to bind it to a dedicated persistend file, different from the one on the host system, in case
+  # the configuration inside and outside the sandbox should be different
+  # - source: ${HOME}/.npmrc
+  #   target: ${HOME}/.npmrc
+  #   type: ro-bind
+
   - source: ${HOME}/.npm-global
     target: ${HOME}/.npm-global
     type: bind
