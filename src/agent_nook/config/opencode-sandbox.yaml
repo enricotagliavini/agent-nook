@@ -68,6 +68,11 @@ mounts:
   # them (including missing parents) before the sandbox starts, if absent.
   # See the README ("create-source" / "create-as" mount options).
 
+  - source: ${HOME}/.npm-global
+    target: ${HOME}/.npm-global
+    type: bind
+    create-source: true
+
   - source: ${HOME}/.config/opencode
     target: ${HOME}/.config/opencode
     type: bind
@@ -88,10 +93,7 @@ mounts:
     type: bind
     create-source: true
 
-  - source: ${HOME}/bin
-    target: ${HOME}/bin
-    type: ro-bind
-
+  # change this to match your workspace / git folder
   - source: ${HOME}/git
     target: ${HOME}/git
     type: bind
