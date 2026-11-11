@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -158,13 +159,55 @@ def test_runner(
     print(f"INFO: Installed agent-nook from wheel: {built_wheel}")
 
     def run_command(*args: str, **kwargs) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            ["agent-nook"] + list(args),
-            capture_output=True,
-            text=True,
-            env=env,
-            **kwargs,
-        )
+        """Run the installed agent-nook and capture its output.
+
+        Output is redirected to temporary files instead of pipes. With
+        pipes, waiting for the output would block until every write end
+        is closed — including ones inherited by sandboxed grandchild
+        processes that outlive agent-nook (bwrap's --die-with-parent
+        does not reliably cover the full process tree on all
+        bwrap/distro combinations). With files, only the child's exit is
+        awaited; agent-nook flushes stdout/stderr before exiting, so the
+        files are complete once the child has been reaped.
+
+        Args:
+            *args: Arguments passed to the agent-nook executable.
+            **kwargs: ``timeout`` (seconds) bounds how long agent-nook
+                itself may run; any other keyword is forwarded to
+                ``subprocess.Popen``.
+
+        Returns:
+            CompletedProcess with the command, return code, and decoded
+            stdout/stderr.
+
+        Raises:
+            subprocess.TimeoutExpired: If agent-nook does not exit within
+                ``timeout`` seconds. The child is killed before raising.
+        """
+        timeout = kwargs.pop("timeout", None)
+        cmd = ["agent-nook", *args]
+
+        with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+            process = subprocess.Popen(
+                cmd,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                env=env,
+                **kwargs,
+            )
+            try:
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+                raise
+
+            stdout_file.seek(0)
+            stdout_text = stdout_file.read().decode("utf-8", "replace")
+            stderr_file.seek(0)
+            stderr_text = stderr_file.read().decode("utf-8", "replace")
+
+        return subprocess.CompletedProcess(cmd, process.returncode, stdout_text, stderr_text)
 
     return run_command
 

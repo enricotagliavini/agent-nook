@@ -329,9 +329,9 @@ Edit `~/.config/agent-nook/sandbox.yaml` to customize:
 - **`capabilities`**: Linux capabilities to drop (`drop: ["ALL"]`) or keep (`keep: ["CAP_CHOWN"]`)
 - **`unshare`**: Which namespaces to unshare (isolate) — `pid`, `uts`, `ipc`, `cgroup`, `user`, `network`
 - **`hostname`**: Sandbox hostname (implies UTS namespace unshare)
-- **`die_with_parent`**: Kill sandbox children when parent exits (default: `true`)
+- **`die_with_parent`**: Kill sandbox children when parent exits (default: `true`). Relies on the kernel's `PDEATHSIG` (bwrap's `--die-with-parent`); on systems where that mechanism is restricted or ignored (some containerized/CI environments), sandboxed processes may outlive agent-nook.
 - **`new_session`**: Create a new session (prevents TIOCSTI attacks, default: `true`)
-- **`timeout`**: Maximum execution time in seconds (`null` = no timeout)
+- **`timeout`**: Maximum execution time in seconds (`null` = no timeout). On timeout, agent-nook exits non-zero and kills the bwrap process; the sandboxed command itself is terminated via `die_with_parent`, so it carries the same platform caveat — on systems that ignore `PDEATHSIG`, the command may keep running until it finishes on its own.
 - **`env_vars`**: Environment variables to set (YAML map: `KEY: value`)
 - **`unset_vars`**: Environment variables to unset as a space-separated string, or `ALL` to clear all env vars (e.g. `unset_vars: "PATH HOME"` or `unset_vars: ALL`)
 
