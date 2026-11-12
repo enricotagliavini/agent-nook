@@ -20,12 +20,14 @@ try:
     from agent_nook.config.config import ConfigValidationError
     from agent_nook.config.config import Mount
     from agent_nook.config.config import NamespaceSet
+    from agent_nook.config.config import OrchestrationEntry
     from agent_nook.config.config import SandboxConfig
 except ImportError:
     from ..config.config import CapabilitySet
     from ..config.config import ConfigValidationError
     from ..config.config import Mount
     from ..config.config import NamespaceSet
+    from ..config.config import OrchestrationEntry
     from ..config.config import SandboxConfig
 
 logger = logging.getLogger(__name__)
@@ -71,7 +73,12 @@ def get_config_path() -> str:
 #            → Ensures namespace keys are strings, values are booleans
 #            → Prevents namespace injection via malformed dicts
 #
-#   Layer 5: SandboxConfig.__post_init__() — Dataclass construction
+#   Layer 5: _parse_orchestration()     — Dict list → OrchestrationEntry list
+#            → Validates per-entry command (non-empty list of non-empty strings),
+#              socket (non-empty str, udp: rejected), wait-timeout (positive
+#              number), keep (bool); rejects unknown per-entry keys
+#
+#   Layer 6: SandboxConfig.__post_init__() — Dataclass construction
 #            → Enforces the invariant: at least one mount point is required
 #            → The LAST line of defense before the config is used
 #
@@ -100,6 +107,7 @@ class ConfigLoader:
         "mounts": "list[dict]",
         "capabilities": "dict",
         "unshare": "dict",
+        "orchestration": "list[dict]",
         "die_with_parent": "bool",
         "new_session": "bool",
         "hostname": "str | None",
@@ -332,7 +340,7 @@ class ConfigLoader:
         The parsing pipeline:
           1. Expand environment variables (${VAR}, ${VAR:-default})
           2. Validate structure against canonical schema
-          3. Parse mounts, capabilities, unshare settings into dataclasses
+          3. Parse mounts, capabilities, unshare, orchestration into dataclasses
           4. Return fully-validated SandboxConfig
 
         Raises:
@@ -349,6 +357,7 @@ class ConfigLoader:
         mounts = self._parse_mounts(data.get("mounts", []))
         capabilities = self._parse_capabilities(data.get("capabilities", {}))
         unshare = self._parse_unshare(data.get("unshare", {}))
+        orchestration = self._parse_orchestration(data.get("orchestration", []))
         env_vars = data.get("env_vars", {})
         unset_vars = self._parse_unset_vars(data.get("unset_vars"))
         hostname = data.get("hostname")
@@ -360,6 +369,7 @@ class ConfigLoader:
             mounts=mounts,
             capabilities=capabilities,
             unshare=unshare,
+            orchestration=orchestration,
             die_with_parent=data.get("die_with_parent", True),
             new_session=data.get("new_session", True),
             hostname=hostname,
@@ -416,8 +426,8 @@ class ConfigLoader:
             elif field_name == "unset_vars":
                 # unset_vars is an optional string (can be empty or None)
                 value = data.get(field_name)
-            elif field_name == "mounts":
-                # mounts defaults to an empty list when not present
+            elif field_name in ("mounts", "orchestration"):
+                # These default to an empty list when not present
                 value = data.get(field_name, [])
             elif field_name == "hostname":
                 value = data.get("hostname")
@@ -443,7 +453,7 @@ class ConfigLoader:
                     raise ConfigValidationError(f"Field '{field_name}' must be a list of dicts, got {type(value).__name__}")
                 for i, m in enumerate(value):
                     if not isinstance(m, dict):
-                        raise ConfigValidationError(f"mount[{i}] must be a dict, got {type(m).__name__}")
+                        raise ConfigValidationError(f"{field_name}[{i}] must be a dict, got {type(m).__name__}")
             elif expected_type == "dict":
                 if not isinstance(value, dict):
                     raise ConfigValidationError(f"Field '{field_name}' must be a dict, got {type(value).__name__}")
@@ -703,6 +713,88 @@ class ConfigLoader:
             namespace_dict[key] = bool(value)
 
         return NamespaceSet(**namespace_dict)
+
+    def _parse_orchestration(self, entries: list[dict]) -> list[OrchestrationEntry]:
+        """Parse orchestration entries into OrchestrationEntry dataclasses.
+
+        This is **Layer 5** of the validation pipeline. It validates and
+        transforms the `orchestration` field:
+
+          ```yaml
+          orchestration:
+            - command: [python3, stdio_bridge.py, --listen, /run/mcp.sock, --, node, index.js]
+              socket: /run/mcp.sock
+              wait-timeout: 30
+              keep: false
+          ```
+
+        Why this is needed:
+
+          - _validate_structure() ensures the field is a list of dicts, but
+            not the content of each entry.
+          - This layer ensures per entry:
+              * `command` is a non-empty list of non-empty strings (no shell)
+              * `socket` is a non-empty string; `udp:` addresses are rejected
+                (a datagram transport has no clean session-end semantics).
+                Full address syntax (tcp:host:port, port range) is validated
+                by the bridge/stub at runtime — the shared address contract
+                lives with the standalone scripts.
+              * `wait-timeout` (optional) is a positive number (default 30)
+              * `keep` (optional) is a boolean (default false)
+              * unknown keys are rejected (strict schema, consistent with
+                the rest of the loader)
+
+        Args:
+            entries: A list of raw orchestration entry dicts (already
+                env-expanded by _expand_env_vars).
+
+        Returns:
+            A list of OrchestrationEntry dataclass instances.
+
+        Raises:
+            ConfigValidationError: If any entry is malformed.
+        """
+        parsed: list[OrchestrationEntry] = []
+        known_keys = ("command", "socket", "wait-timeout", "keep")
+
+        for i, entry in enumerate(entries):
+            for key in entry:
+                if key not in known_keys:
+                    raise ConfigValidationError(f"orchestration[{i}] has unknown key '{key}'. Known keys: {', '.join(known_keys)}")
+
+            command = entry.get("command")
+            if not isinstance(command, list) or not command:
+                raise ConfigValidationError(
+                    f"orchestration[{i}].command must be a non-empty list of strings (no shell). "
+                    f"Use: command: [python3, stdio_bridge.py, --listen, /run/mcp.sock, --, node, index.js]"
+                )
+            for j, item in enumerate(command):
+                if not isinstance(item, str) or not item:
+                    raise ConfigValidationError(
+                        f"orchestration[{i}].command[{j}] must be a non-empty string, got {type(item).__name__}: {item!r}"
+                    )
+
+            sock = entry.get("socket")
+            if not isinstance(sock, str) or not sock:
+                raise ConfigValidationError(f"orchestration[{i}].socket is required: a non-empty string (unix path or tcp:host:port)")
+            if sock.startswith("udp:"):
+                raise ConfigValidationError(
+                    f"orchestration[{i}].socket: udp: addresses are not supported (use a unix path or tcp:host:port)"
+                )
+
+            wait_timeout: int | float = 30
+            if "wait-timeout" in entry:
+                wait_timeout = entry["wait-timeout"]
+                if isinstance(wait_timeout, bool) or not isinstance(wait_timeout, (int, float)) or wait_timeout <= 0:
+                    raise ConfigValidationError(f"orchestration[{i}].wait-timeout must be a positive number, got {wait_timeout!r}")
+
+            keep = entry.get("keep", False)
+            if not isinstance(keep, bool):
+                raise ConfigValidationError(f"orchestration[{i}].keep must be a boolean, got {type(keep).__name__}: {keep!r}")
+
+            parsed.append(OrchestrationEntry(command=list(command), socket=sock, wait_timeout=wait_timeout, keep=keep))
+
+        return parsed
 
     def _expand_env_vars(self, data: dict[str, Any]) -> dict[str, Any]:
         """Expand environment variables in string values.

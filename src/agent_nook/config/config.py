@@ -28,18 +28,24 @@ The validation is layered across modules:
     → Ensures namespace keys are valid and values are booleans.
     → Transforms into NamespaceSet dataclass.
 
-  **Layer 5 (config.py, SandboxConfig.__post_init__()):**
+  **Layer 5 (loader.py, ConfigLoader._parse_orchestration()):**
+    → Validates orchestration entries: command (non-empty list of non-empty
+      strings), socket (non-empty str, udp: rejected), wait-timeout (positive
+      number), keep (bool). Unknown per-entry keys are rejected.
+    → Transforms into OrchestrationEntry dataclass instances.
+
+  **Layer 6 (config.py, SandboxConfig.__post_init__()):**
     → Enforces the dataclass invariant: at least one mount point is required.
       A config with zero mounts would create a completely empty sandbox.
     → This is the **last line of defense** before the config is used:
       every construction path (file, dict, programmatic) passes through it.
 
-  **Layer 6 (sandbox/builder.py, BwrapBuilder.build()):**
+  **Layer 7 (sandbox/builder.py, BwrapBuilder.build()):**
     → Pure consumer: assumes config is already valid.
     → Does NOT repeat validation — it uses the validated config directly.
     → Errors here indicate a programming error (e.g., wrong type passed).
 
-  **Layer 7 (sandbox/bwrap_sandbox.py, BwrapSandbox.run):**
+  **Layer 8 (sandbox/bwrap_sandbox.py, BwrapSandbox.run):**
     → Creates missing mount sources (create-source option) before execution.
     → Executes the command; handles runtime bwrap errors.
     → Does NOT repeat validation.
@@ -51,7 +57,7 @@ Each layer has a distinct purpose:
 - Mount.build() / CapabilitySet / SandboxConfig.__post_init__:
   semantic validation that the dataclass invariants hold.
 - No layer is truly redundant; each catches a different class of errors.
-  Without Layer 1, raw dicts could slip through. Without Layer 5,
+  Without Layer 1, raw dicts could slip through. Without Layer 6,
   semantically incorrect dataclass values could cause runtime failures.
 """
 
@@ -101,14 +107,14 @@ class Mount:
         `overlay_src` layer. `source`/`workdir` are forbidden for ro-overlay and
         tmp-overlay, and `overlay_src`/`workdir` for all non-overlay types.
 
-    build() is invoked by the builder (Layer 6, build_mounts_order()) when the
+    build() is invoked by the builder (Layer 7, build_mounts_order()) when the
     bwrap command line is constructed. It is a defensive boundary that catches
     malformed Mount objects created or mutated programmatically. The
     config-level invariant (at least one mount point) is enforced earlier, at
-    Layer 5, by SandboxConfig.__post_init__().
+    Layer 6, by SandboxConfig.__post_init__().
 
     The `create_source`/`create_as` options do NOT affect the bwrap command
-    line: they are handled by the executor (Layer 7, BwrapSandbox.run()),
+    line: they are handled by the executor (Layer 8, BwrapSandbox.run()),
     which creates the missing host source path before bwrap starts.
 
     Args:
@@ -148,7 +154,7 @@ class Mount:
     def build(self) -> list[str]:
         """Build the bwrap arguments for this mount.
 
-        build() is invoked by the builder (Layer 6, build_mounts_order())
+        build() is invoked by the builder (Layer 7, build_mounts_order())
         when the bwrap command line is constructed. It validates that the
         Mount's type and fields are semantically consistent.
 
@@ -374,7 +380,7 @@ class Mount:
 class CapabilitySet:
     """Capability drop/add configuration.
 
-    This is **Layer 5** of the validation pipeline. The ConfigLoader
+    This is **Layer 6** of the validation pipeline. The ConfigLoader
     (Layer 3) validates that "drop" and "keep" are lists of strings,
     then stores the validated data here. This class does not re-validate;
     it is a pure container for the already-validated capability sets.
@@ -433,7 +439,7 @@ class CapabilitySet:
 class NamespaceSet:
     """Namespaces to unshare.
 
-    This is **Layer 5** of the validation pipeline. The ConfigLoader
+    This is **Layer 6** of the validation pipeline. The ConfigLoader
     (Layer 4) validates that namespace keys are valid and values are
     booleans, then stores the validated data here. This class does not
     re-validate; it is a pure container for the already-validated
@@ -486,6 +492,45 @@ class NamespaceSet:
         )
 
 
+@dataclass(frozen=True)
+class OrchestrationEntry:
+    """An external command started on the host before the sandbox.
+
+    This is a **Layer 6** container in the validation pipeline. The
+    ConfigLoader (Layer 5, `_parse_orchestration`) validates the raw YAML
+    entries, then stores the validated data here. This class does not
+    re-validate; it is a pure value object.
+
+    The orchestrator (sandbox runtime) starts every entry's command before
+    the sandbox, waits until its socket is listening (up to
+    ``wait_timeout`` seconds), and — unless ``keep`` is set — stops the
+    command after the sandbox exits (SIGTERM, then SIGKILL after 5 s).
+
+    The ``socket`` value uses the shared address format (see
+    ``stdio_bridge.py`` / ``stdio_stub.py``): a unix path or
+    ``tcp:host:port``. ``udp:`` addresses are rejected by the loader.
+
+    Example:
+        OrchestrationEntry(
+            command=["python3", "stdio_bridge.py", "--listen", "/run/mcp.sock",
+                     "--", "node", "index.js"],
+            socket="/run/mcp.sock",
+        )
+
+    Attributes:
+        command: Command to start as a list of arguments (no shell; >=1).
+        socket: Socket the command must be listening on (unix path or
+            tcp:host:port).
+        wait_timeout: Seconds to wait for the socket before failing (default 30).
+        keep: Leave the command running after the sandbox exits (default False).
+    """
+
+    command: list[str]
+    socket: str
+    wait_timeout: int | float = 30
+    keep: bool = False
+
+
 @dataclass
 class SandboxConfig:
     """Complete sandbox configuration.
@@ -503,6 +548,12 @@ class SandboxConfig:
         - timeout: int, float or None (default) → No timeout
         - timeout: 60                    → Command fails after 60s
         - timeout: 0.5                   → Command fails after half a second
+
+    Orchestration:
+        - orchestration: list of OrchestrationEntry (default: empty)
+        - Commands started on the host just before the sandbox; agent-nook
+          waits for each entry's socket to be listening before starting the
+          sandbox, and stops non-kept entries after the sandbox exits.
 
     ## Validation Pipeline
 
@@ -537,6 +588,7 @@ class SandboxConfig:
     mounts: list[Mount] = field(default_factory=list)
     capabilities: CapabilitySet = field(default_factory=CapabilitySet)
     unshare: NamespaceSet = field(default_factory=NamespaceSet)
+    orchestration: list[OrchestrationEntry] = field(default_factory=list)
     die_with_parent: bool = True
     new_session: bool = True
     hostname: str | None = None
@@ -546,7 +598,7 @@ class SandboxConfig:
     _raw_config: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
-        """Enforce dataclass invariants on construction (Layer 5 of the pipeline).
+        """Enforce dataclass invariants on construction (Layer 6 of the pipeline).
 
         This is the **last line of defense**: every SandboxConfig — whether
         loaded from a file, parsed from a dict with CLI overrides, or
@@ -587,5 +639,6 @@ __all__ = [
     "ConfigValidationError",
     "Mount",
     "NamespaceSet",
+    "OrchestrationEntry",
     "SandboxConfig",
 ]

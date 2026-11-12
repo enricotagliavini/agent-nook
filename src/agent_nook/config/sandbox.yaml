@@ -197,6 +197,43 @@ die_with_parent: true
 new_session: true
 hostname: "agent-sandbox"
 
+# === Orchestration ===
+# Optional: commands started on the host (outside the sandbox) just before
+# the sandbox. agent-nook waits until each entry's socket is listening,
+# then starts the sandbox. After the sandbox exits, entries without
+# keep: true are stopped (SIGTERM, then SIGKILL after 5 s).
+#
+# Per entry (unknown keys are rejected):
+#   command:      required. Command to start, as a list of arguments
+#                 (no shell is involved).
+#   socket:       required. Socket the command must be listening on:
+#                 a unix path or tcp:host:port (udp: is not supported).
+#   wait-timeout: optional. Seconds to wait for the socket (default: 30).
+#   keep:         optional. Leave the command running after the sandbox
+#                 exits (default: false).
+#
+# Typical setup: the host-side bridge helper (stdio_bridge.py, ships with
+# agent-nook) listens on the socket and starts your external application;
+# inside the sandbox, the stub helper bridges plain stdio to the same
+# socket (python3 -m agent_nook.stdio_stub --socket <same address>).
+# Remember to add a mount for the socket (or its parent directory) under
+# mounts: so the sandbox can reach it. See the README for the full example.
+#
+# Example:
+# orchestration:
+#   - command:
+#       - python3
+#       - /opt/stdio_bridge.py
+#       - --listen
+#       - /run/mcp.sock
+#       - --
+#       - node
+#       - /opt/mcp-server/index.js
+#     socket: /run/mcp.sock
+#     wait-timeout: 30
+#     keep: false
+#
+
 # === Environment ===
 # env_vars: environment variables to set (key-value pairs, as a dict)
 #

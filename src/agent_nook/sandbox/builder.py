@@ -14,13 +14,14 @@ Layer 1: ConfigLoader._validate_structure()      → schema check
 Layer 2: ConfigLoader._parse_mounts()            → mount type/fields check
 Layer 3: ConfigLoader._parse_capabilities()      → cap list-of-strings check
 Layer 4: ConfigLoader._parse_unshare()           → ns key/type check
-Layer 5: SandboxConfig.__post_init__() → non-empty mounts gate
-Layer 6: BwrapBuilder.build()                    → uses validated config
+Layer 5: ConfigLoader._parse_orchestration()     → orchestration entry check
+Layer 6: SandboxConfig.__post_init__() → non-empty mounts gate
+Layer 7: BwrapBuilder.build()                    → uses validated config
 ```
 
 The builder is a **pure consumer** — it transforms validated data into
 a bwrap command line. It does not repeat validation because:
-  - The config is guaranteed valid by Layer 5 (__post_init__).
+  - The config is guaranteed valid by Layer 6 (__post_init__).
   - Re-validating here would be redundant and error-prone.
   - If an error occurs, the config has already failed validation upstream.
 

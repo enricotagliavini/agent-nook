@@ -69,7 +69,6 @@ def test_load_yaml_list_of_mounts():
     assert config.mounts[4].type == "bind"
     assert config.mounts[5].type == "ro-bind"
 
-
     loader = ConfigLoader()
     data = {
         "name": "test",
@@ -124,6 +123,7 @@ def test_load_yaml_override():
     config = loader.load_from_dict(data)
     assert config.hostname is None
 
+
 def test_load_yaml_unknown_key_errors():
     """Test that unknown top-level keys raise ConfigValidationError."""
     loader = ConfigLoader()
@@ -154,6 +154,7 @@ def test_load_yaml_unknown_mount_type_errors():
     with pytest.raises(ConfigValidationError, match="unknown mount type 'invalid-type'"):
         loader.load_from_dict(data)
 
+
 def test_load_from_dict_malformed_mount_entry_without_chdir_errors():
     """Test that non-dict mount entries are rejected even when chdir is absent.
 
@@ -169,7 +170,7 @@ def test_load_from_dict_malformed_mount_entry_without_chdir_errors():
         "name": "test",
         "mounts": ["not-a-dict"],
     }
-    with pytest.raises(ConfigValidationError, match=r"mount\[0\] must be a dict"):
+    with pytest.raises(ConfigValidationError, match=r"mounts\[0\] must be a dict"):
         loader.load_from_dict(data)
 
     # chdir set — control case, validated before the fix as well
@@ -178,7 +179,7 @@ def test_load_from_dict_malformed_mount_entry_without_chdir_errors():
         "chdir": "/tmp",
         "mounts": ["not-a-dict"],
     }
-    with pytest.raises(ConfigValidationError, match=r"mount\[0\] must be a dict"):
+    with pytest.raises(ConfigValidationError, match=r"mounts\[0\] must be a dict"):
         loader.load_from_dict(data)
 
 
@@ -403,9 +404,7 @@ def test_load_from_dict_overlay_src_on_non_overlay_mount_errors():
 def test_load_from_dict_workdir_on_non_overlay_mount_errors():
     """workdir on a non-overlay mount type (tmpfs) is rejected."""
     with pytest.raises(ConfigValidationError, match="only valid for overlay"):
-        ConfigLoader().load_from_dict(
-            {"name": "test", "mounts": [{"target": "/t", "type": "tmpfs", "workdir": "/wd"}]}
-        )
+        ConfigLoader().load_from_dict({"name": "test", "mounts": [{"target": "/t", "type": "tmpfs", "workdir": "/wd"}]})
 
 
 def test_load_from_dict_source_on_ro_overlay_errors():
@@ -422,13 +421,9 @@ def test_load_from_dict_source_on_ro_overlay_errors():
 def test_load_from_dict_overlay_src_wrong_type_errors():
     """overlay-src must be a list of non-empty strings."""
     with pytest.raises(ConfigValidationError, match="list of non-empty strings"):
-        ConfigLoader().load_from_dict(
-            {"name": "test", "mounts": [{"target": "/d", "type": "ro-overlay", "overlay-src": "/a"}]}
-        )
+        ConfigLoader().load_from_dict({"name": "test", "mounts": [{"target": "/d", "type": "ro-overlay", "overlay-src": "/a"}]})
     with pytest.raises(ConfigValidationError, match="list of non-empty strings"):
-        ConfigLoader().load_from_dict(
-            {"name": "test", "mounts": [{"target": "/d", "type": "ro-overlay", "overlay-src": ["/a", ""]}]}
-        )
+        ConfigLoader().load_from_dict({"name": "test", "mounts": [{"target": "/d", "type": "ro-overlay", "overlay-src": ["/a", ""]}]})
 
 
 def test_load_from_dict_workdir_wrong_type_errors():
