@@ -21,6 +21,7 @@ from pathlib import Path
 
 from agent_nook.config.config import Mount
 from agent_nook.config.config import SandboxConfig
+from agent_nook.orchestrator import Orchestrator
 from agent_nook.sandbox.builder import BwrapBuilder
 from agent_nook.utils.logger import main_logger
 
@@ -190,8 +191,11 @@ class BwrapSandbox:
       1. Holds the SandboxConfig
       2. Ensures mount sources exist (create-source option)
       3. Prepares overlay mounts (workdir, layer checks)
-      4. Builds the bwrap command line via BwrapBuilder
-      5. Executes the command
+      4. Starts orchestration commands (host side) and waits for their
+         sockets (no-op when the config has none)
+      5. Builds the bwrap command line via BwrapBuilder
+      6. Executes the command
+      7. Stops the orchestration commands (unless keep: true)
     """
 
     def __init__(
@@ -241,9 +245,13 @@ class BwrapSandbox:
 
         Raises:
             RuntimeError: If a mount source that must be created
-                (create-source: true) cannot be created, or if an overlay
+                (create-source: true) cannot be created, if an overlay
                 workdir cannot be prepared (missing source, different
-                filesystem, overlapping layers).
+                filesystem, overlapping layers), or if an orchestration
+                command cannot be started, has a malformed socket
+                address, or its socket is not ready within
+                wait-timeout (started commands are stopped; the sandbox
+                never starts).
 
         Example:
             result = BwrapSandbox(config).run(["/bin/echo", "hello"])
@@ -264,12 +272,23 @@ class BwrapSandbox:
 
         _logger.info("Full bwrap command: %s", " ".join(bwrap_cmd), extra={"command_only": True})
 
-        # Run without capturing output - stdout/stderr go directly to console
-        result = subprocess.run(
-            bwrap_cmd,
-            timeout=self._config.timeout,
-            check=False,
-        )
+        # Start the orchestration commands (host side, outside the
+        # sandbox) and wait for their sockets before the sandbox starts.
+        # They are stopped after the sandbox exits (unless keep: true),
+        # on success, non-zero exit, timeout, and exception alike.
+        orchestrator = Orchestrator(self._config.orchestration)
+        orchestrator.start()
+        orchestrator.wait_ready()
+
+        try:
+            # Run without capturing output - stdout/stderr go directly to console
+            result = subprocess.run(
+                bwrap_cmd,
+                timeout=self._config.timeout,
+                check=False,
+            )
+        finally:
+            orchestrator.stop()
 
         return SandboxResult(
             success=result.returncode == 0,

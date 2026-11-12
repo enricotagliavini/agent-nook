@@ -256,7 +256,8 @@ def write_all(fd: int, data: bytes) -> None:
 def terminate_process(proc: subprocess.Popen) -> None:
     """Terminate the child: SIGTERM, wait up to 5 s, then SIGKILL.
 
-    Also closes the pipes so no file descriptors leak.
+    Also closes any stdio pipes so no file descriptors leak (processes
+    spawned without pipes are unaffected).
     """
     if proc.poll() is None:
         proc.terminate()
@@ -266,8 +267,9 @@ def terminate_process(proc: subprocess.Popen) -> None:
             proc.kill()
             proc.wait()
     for pipe in (proc.stdin, proc.stdout):
-        with contextlib.suppress(OSError):
-            pipe.close()
+        if pipe is not None:
+            with contextlib.suppress(OSError):
+                pipe.close()
 
 
 def graceful_close(conn: socket.socket) -> None:
