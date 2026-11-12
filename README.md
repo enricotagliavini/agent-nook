@@ -334,6 +334,7 @@ Edit `~/.config/agent-nook/sandbox.yaml` to customize:
 - **`timeout`**: Maximum execution time in seconds (`null` = no timeout). On timeout, agent-nook exits non-zero and kills the bwrap process; the sandboxed command itself is terminated via `die_with_parent`, so it carries the same platform caveat — on systems that ignore `PDEATHSIG`, the command may keep running until it finishes on its own.
 - **`env_vars`**: Environment variables to set (YAML map: `KEY: value`)
 - **`unset_vars`**: Environment variables to unset as a space-separated string, or `ALL` to clear all env vars (e.g. `unset_vars: "PATH HOME"` or `unset_vars: ALL`)
+- **`orchestration`**: Host-side commands to start before the sandbox (e.g. a stdio→socket bridge) and stop after it exits — see [Orchestration](#orchestration)
 
 ### Supported mount types
 
@@ -500,6 +501,82 @@ agent-nook run \
   --env PATH=/usr/bin:/bin \
   python3 safe_agent.py
 ```
+
+## Orchestration
+
+Some agents need helper processes that must be alive while the sandbox runs — typically a bridge that exposes a stdio MCP server over a socket. The `orchestration:` key declares host-side commands that agent-nook starts **before** the sandbox and stops again after the sandbox exits.
+
+```yaml
+orchestration:
+  - command:
+      - python3
+      - /path/to/agent_nook/stdio_bridge.py
+      - --listen
+      - /run/mcp.sock
+      - --
+      - node
+      - /opt/mcp/index.js
+    socket: /run/mcp.sock
+```
+
+### Entry fields
+
+| Field | Required | Description |
+|---|---|---|
+| `command` | yes | Command to run on the host (no shell; argv list) |
+| `socket` | yes | Address agent-nook waits for before starting the sandbox: a unix path (`/run/mcp.sock`) or `tcp:host:port`. `udp:` is rejected — a UDP socket has no readiness to wait for |
+| `wait-timeout` | no | Seconds to wait for the socket to become ready (default: `30`). On timeout agent-nook exits non-zero and stops every orchestration command — the sandbox never starts |
+| `keep` | no | If `true`, the command is not stopped when the sandbox exits (default: `false`). Use for processes you manage yourself |
+
+Unknown keys are rejected; `command` must be a non-empty list of non-empty strings.
+
+### Socket mount
+
+The socket must be reachable from inside the sandbox, so mount its parent directory (or the socket file itself):
+
+```yaml
+mounts:
+  - source: /run
+    target: /run
+    type: bind
+```
+
+### Worked example: bridging a stdio MCP server
+
+agent-nook ships two standalone, stdlib-only helper scripts (no agent-nook imports — they are safe to copy into a container image):
+
+- `stdio_bridge.py` — runs a stdio MCP server on the host and exposes it over a unix/TCP socket. Each client connection gets its own server child process; the child is terminated when the client disconnects.
+- `stdio_stub.py` — runs **inside** the sandbox: bridges the sandboxed command's stdio to the socket, so the agent can talk to the MCP server as if it were a local stdio process.
+
+Host side, in the config:
+
+```yaml
+orchestration:
+  - command:
+      - python3
+      - /path/to/agent_nook/stdio_bridge.py
+      - --listen
+      - /run/mcp.sock
+      - --
+      - node
+      - /opt/mcp/index.js
+    socket: /run/mcp.sock
+```
+
+Inside the sandbox, run the stub in place of the server:
+
+```bash
+agent-nook run python3 /path/to/stdio_stub.py --socket /run/mcp.sock
+```
+
+### Lifecycle
+
+1. agent-nook starts every orchestration command on the host (they inherit agent-nook's stdio, so e.g. bridge logs appear in agent-nook's output and log file).
+2. It waits for each `socket` to become ready (unix: the file exists and is a socket; TCP: a connection succeeds), up to each entry's `wait-timeout`.
+3. The sandbox starts.
+4. When the sandbox command exits, agent-nook stops every non-`keep` entry: SIGTERM, then SIGKILL after 5 seconds if still running. A bridge that stopped cleanly also unlinks its unix socket file.
+
+If a socket never becomes ready (or an address is malformed), agent-nook exits non-zero **without starting the sandbox** and stops every orchestration command.
 
 ## Technical Details
 
