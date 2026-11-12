@@ -179,7 +179,21 @@ def create_listener(kind: str, host: str, port: int, mode: int | None) -> socket
 
 
 def _validate_command(command: list[str]) -> None:
-    """Fail fast when the command to spawn is not available.
+    """Fail fast at startup when the command to spawn is not available.
+
+    This is a convenience check, not a guarantee: the command is spawned
+    per connection, later, and availability can change in between (the
+    binary is removed or replaced). The authoritative error handling is
+    the spawn itself — spawn_command() catches the same failure per
+    session (log + graceful close + keep listening). Checking up front
+    matters because a misconfigured bridge must not advertise a socket it
+    cannot serve: without it, a typo in the command would pass the
+    orchestrator's socket readiness check, the sandbox would start, and
+    the first session would die at connect time — instead of the bridge
+    exiting 2 with a clear message before it binds.
+
+    Note the check is necessarily weaker than the spawn: it cannot verify
+    executability (a non-executable file passes here and fails at spawn).
 
     Args:
         command: The command list (program plus arguments).
