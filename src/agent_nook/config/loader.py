@@ -184,6 +184,10 @@ class ConfigLoader:
         if hasattr(args, "hostname") and args.hostname:
             result["hostname"] = args.hostname
 
+        # Override timeout
+        if getattr(args, "timeout", None) is not None:
+            result["timeout"] = args.timeout
+
         # Override mounts from --bind / --ro-bind
         for bind in getattr(args, "bind", []):
             parts = bind.split(":")

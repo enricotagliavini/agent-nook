@@ -219,7 +219,7 @@ def test_load_from_dict_empty_mounts_errors():
         loader.load_from_dict(data)
 
 
-def _make_run_args(bind: list[str]) -> argparse.Namespace:
+def _make_run_args(bind: list[str], timeout: float | None = None) -> argparse.Namespace:
     """Build a minimal argparse.Namespace mimicking `agent-nook run` flags."""
     return argparse.Namespace(
         config=None,
@@ -227,6 +227,7 @@ def _make_run_args(bind: list[str]) -> argparse.Namespace:
         die_with_parent=True,
         new_session=True,
         hostname=None,
+        timeout=timeout,
         bind=bind,
         ro_bind=[],
         cap_add=[],
@@ -235,6 +236,40 @@ def _make_run_args(bind: list[str]) -> argparse.Namespace:
         env=[],
         unset_env=[],
     )
+
+
+def test_load_with_overrides_timeout_cli_flag_overrides_config(tmp_path):
+    """The --timeout CLI flag overrides the config file timeout."""
+    config_file = tmp_path / "sandbox.yaml"
+    config_file.write_text(
+        "name: test\n"
+        "mounts:\n"
+        "  - target: /tmp\n"
+        "    type: tmpfs\n"
+        "timeout: 60\n",
+        encoding="utf-8",
+    )
+
+    config = ConfigLoader().load_with_overrides(_make_run_args([], timeout=5.5), path=str(config_file))
+
+    assert config.timeout == 5.5
+
+
+def test_load_with_overrides_no_timeout_flag_keeps_config(tmp_path):
+    """Without --timeout, the config file timeout is unchanged."""
+    config_file = tmp_path / "sandbox.yaml"
+    config_file.write_text(
+        "name: test\n"
+        "mounts:\n"
+        "  - target: /tmp\n"
+        "    type: tmpfs\n"
+        "timeout: 60\n",
+        encoding="utf-8",
+    )
+
+    config = ConfigLoader().load_with_overrides(_make_run_args([]), path=str(config_file))
+
+    assert config.timeout == 60
 
 
 def test_load_with_overrides_empty_mounts_with_cli_bind_succeeds(tmp_path):

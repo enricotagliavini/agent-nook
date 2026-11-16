@@ -126,6 +126,13 @@ def main() -> int:
     )
     run_parser.add_argument("--chdir", metavar="DIR", help="Change working directory in sandbox (overrides config)")
     run_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Maximum execution time in seconds (overrides config)",
+    )
+    run_parser.add_argument(
         "--cap-add",
         action="append",
         default=[],

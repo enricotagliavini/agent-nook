@@ -10,10 +10,10 @@ executes successfully and produces the expected output.
 """
 
 
+import re
 from pathlib import Path
 
 import pytest
-import re
 
 
 @pytest.fixture(scope="function")
@@ -310,6 +310,64 @@ def test_timeout_with_busy_command(test_sandbox_run, tmp_path) -> None:
         f"  stderr: {result.stderr!r}"
     )
     assert "timed out" in output.lower(), f"Expected a timeout error message, got:\n  {output!r}"
+
+
+@pytest.mark.integration
+def test_timeout_cli_flag_overrides_config(test_sandbox_run, tmp_path) -> None:
+    """Test that the --timeout CLI flag overrides the config file timeout.
+
+    The config sets a generous timeout: 60, but the CLI flag sets
+    --timeout 0.1, far below the 30-second sleep, so agent-nook must
+    terminate the sandbox, report the CLI timeout value, and exit
+    non-zero — well within the generous 10s outer timeout, which must
+    never trigger.
+
+    Args:
+        test_sandbox_run: Fixture that returns a subprocess runner.
+        tmp_path: Temp directory for the timeout config.
+
+    Raises:
+        AssertionError: If agent-nook does not report the CLI timeout.
+    """
+    run_command = test_sandbox_run
+
+    config_file = tmp_path / "timeout_override.yaml"
+    config_file.write_text(
+        "name: test-timeout-override\n"
+        "chdir: \"/tmp\"\n"
+        "mounts:\n"
+        "  - source: /\n"
+        "    target: /\n"
+        "    type: bind\n"
+        "  - target: /tmp\n"
+        "    type: tmpfs\n"
+        "timeout: 60\n"
+        "die_with_parent: true\n"
+        "new_session: true\n",
+        encoding="utf-8",
+    )
+
+    result = run_command(
+        "run",
+        "--config",
+        str(config_file),
+        "--timeout",
+        "0.1",
+        "sleep",
+        "30",
+        timeout=10,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, (
+        f"Command should fail on timeout, got return code {result.returncode}:\n"
+        f"  stdout: {result.stdout!r}\n"
+        f"  stderr: {result.stderr!r}"
+    )
+    assert "timed out" in output.lower(), f"Expected a timeout error message, got:\n  {output!r}"
+    # The error message prints the effective timeout: the CLI value (0.1),
+    # not the config file value (60) — proving the override was applied.
+    assert "0.1" in output, f"Expected the CLI timeout value 0.1 in the error, got:\n  {output!r}"
 
 
 @pytest.mark.integration

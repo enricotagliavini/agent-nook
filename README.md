@@ -222,6 +222,9 @@ agent-nook run --unset-env PATH --unset-env HOME python3 script.py
 # Custom hostname
 agent-nook run --hostname my-agent python3 script.py
 
+# Override the timeout (seconds)
+agent-nook run --timeout 60 python3 my_script.py
+
 # Work in specific directory
 agent-nook run --chdir /home/enrico python3 my_script.py
 
@@ -269,6 +272,7 @@ agent-nook logs -F -n 100
 | `--env KEY=VALUE` | Set environment variable (repeat for multiple) |
 | `--unset-env KEY` | Unset environment variable (repeat for multiple) |
 | `--hostname HOSTNAME` | Set sandbox hostname |
+| `--timeout SECONDS` | Maximum execution time in seconds (overrides config) |
 | `--new-session` | Create new session (prevents TIOCSTI attacks, **default: on**) |
 | `--no-new-session` | Don't create new session (allows TIOCSTI) |
 | `--version` | Print version and exit |
@@ -331,7 +335,7 @@ Edit `~/.config/agent-nook/sandbox.yaml` to customize:
 - **`hostname`**: Sandbox hostname (implies UTS namespace unshare)
 - **`die_with_parent`**: Kill sandbox children when parent exits (default: `true`). Relies on the kernel's `PDEATHSIG` (bwrap's `--die-with-parent`); on systems where that mechanism is restricted or ignored (some containerized/CI environments), sandboxed processes may outlive agent-nook.
 - **`new_session`**: Create a new session (prevents TIOCSTI attacks, default: `true`)
-- **`timeout`**: Maximum execution time in seconds (`null` = no timeout). On timeout, agent-nook exits non-zero and kills the bwrap process; the sandboxed command itself is terminated via `die_with_parent`, so it carries the same platform caveat — on systems that ignore `PDEATHSIG`, the command may keep running until it finishes on its own.
+- **`timeout`**: Maximum execution time in seconds (`null` = no timeout). Can be overridden at runtime with `--timeout SECONDS`. On timeout, agent-nook exits non-zero and kills the bwrap process; the sandboxed command itself is terminated via `die_with_parent`, so it carries the same platform caveat — on systems that ignore `PDEATHSIG`, the command may keep running until it finishes on its own.
 - **`env_vars`**: Environment variables to set (YAML map: `KEY: value`)
 - **`unset_vars`**: Environment variables to unset as a space-separated string, or `ALL` to clear all env vars (e.g. `unset_vars: "PATH HOME"` or `unset_vars: ALL`)
 - **`orchestration`**: Host-side commands to start before the sandbox (e.g. a stdio→socket bridge) and stop after it exits — see [Orchestration](#orchestration)
