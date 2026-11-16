@@ -508,14 +508,7 @@ Some agents need helper processes that must be alive while the sandbox runs — 
 
 ```yaml
 orchestration:
-  - command:
-      - python3
-      - /path/to/agent_nook/stdio_bridge.py
-      - --listen
-      - /run/mcp.sock
-      - --
-      - node
-      - /opt/mcp/index.js
+  - command: "python3 /path/to/agent_nook/stdio_bridge.py --listen /run/mcp.sock -- node /opt/mcp/index.js"
     socket: /run/mcp.sock
 ```
 
@@ -523,12 +516,12 @@ orchestration:
 
 | Field | Required | Description |
 |---|---|---|
-| `command` | yes | Command to run on the host (no shell; argv list) |
+| `command` | yes | Command to run on the host as a **single string** (no shell; tokenized into arguments with `shlex` — e.g. `"python3 stdio_bridge.py --listen /run/mcp.sock -- node index.js"`). Wrap arguments that contain spaces or shell metacharacters in quotes |
 | `socket` | yes | Address agent-nook waits for before starting the sandbox: a unix path (`/run/mcp.sock`) or `tcp:host:port`. `udp:` is rejected — a UDP socket has no readiness to wait for |
 | `wait-timeout` | no | Seconds to wait for the socket to become ready (default: `30`). On timeout agent-nook exits non-zero and stops every orchestration command — the sandbox never starts |
 | `keep` | no | If `true`, the command is not stopped when the sandbox exits (default: `false`). Use for processes you manage yourself |
 
-Unknown keys are rejected; `command` must be a non-empty list of non-empty strings.
+Unknown keys are rejected; `command` must be a non-empty string (tokenized with `shlex`, so arguments with spaces or shell metacharacters are wrapped in quotes).
 
 ### Socket mount
 
@@ -552,14 +545,7 @@ Host side, in the config:
 
 ```yaml
 orchestration:
-  - command:
-      - python3
-      - /path/to/agent_nook/stdio_bridge.py
-      - --listen
-      - /run/mcp.sock
-      - --
-      - node
-      - /opt/mcp/index.js
+  - command: "python3 /path/to/agent_nook/stdio_bridge.py --listen /run/mcp.sock -- node /opt/mcp/index.js"
     socket: /run/mcp.sock
 ```
 

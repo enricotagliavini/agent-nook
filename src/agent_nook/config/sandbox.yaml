@@ -204,8 +204,12 @@ hostname: "agent-sandbox"
 # keep: true are stopped (SIGTERM, then SIGKILL after 5 s).
 #
 # Per entry (unknown keys are rejected):
-#   command:      required. Command to start, as a list of arguments
-#                 (no shell is involved).
+#   command:      required. Command to start, as a single string
+#                 (no shell is involved; tokenized into arguments with
+#                 shlex). Arguments with spaces or shell metacharacters are
+#                 wrapped in quotes, e.g.
+#                 "python3 /opt/stdio_bridge.py --listen /run/mcp.sock --
+#                  /opt/mcp-server/index.js"
 #   socket:       required. Socket the command must be listening on:
 #                 a unix path or tcp:host:port (udp: is not supported).
 #   wait-timeout: optional. Seconds to wait for the socket (default: 30).
@@ -221,14 +225,7 @@ hostname: "agent-sandbox"
 #
 # Example:
 # orchestration:
-#   - command:
-#       - python3
-#       - /opt/stdio_bridge.py
-#       - --listen
-#       - /run/mcp.sock
-#       - --
-#       - node
-#       - /opt/mcp-server/index.js
+#   - command: "python3 /opt/stdio_bridge.py --listen /run/mcp.sock -- node /opt/mcp-server/index.js"
 #     socket: /run/mcp.sock
 #     wait-timeout: 30
 #     keep: false

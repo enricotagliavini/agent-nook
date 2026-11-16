@@ -83,21 +83,14 @@ mounts:
     source: {sock_dir}
     target: {sock_dir}
 orchestration:
-  - command:
-      - python3
-      - {BRIDGE}
-      - --listen
-      - {sock}
-      - --
-      - python3
-      - -c
-      - |
-        import os
-        while True:
-            d = os.read(0, 4096)
-            if not d:
-                break
-            os.write(1, b'ECHO:' + d)
+  - command: |
+      python3 {BRIDGE} --listen {sock} -- python3 -c "import os
+      while True:
+          d = os.read(0, 4096)
+          if not d:
+              break
+          os.write(1, b'ECHO:' + d)
+      "
     socket: {sock}
     wait-timeout: 30
 """
@@ -149,10 +142,7 @@ mounts:
     source: {tmp_path}
     target: /sandbox-tmp
 orchestration:
-  - command:
-      - python3
-      - -c
-      - "{sleeper}"
+  - command: 'python3 -c "{sleeper}"'
     socket: {tmp_path / "never.sock"}
     wait-timeout: 1
 """

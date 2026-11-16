@@ -510,15 +510,22 @@ class OrchestrationEntry:
     ``stdio_bridge.py`` / ``stdio_stub.py``): a unix path or
     ``tcp:host:port``. ``udp:`` addresses are rejected by the loader.
 
-    Example:
+    The ``command`` is configured in the sandbox YAML as a **single command
+    string**; the ConfigLoader normalizes it into the argument list shown
+    here with ``shlex.split`` (no shell is involved — the orchestrator
+    passes this list straight to ``subprocess.Popen``).
+
+    Example (the YAML stores the single string; the loader normalizes it):
         OrchestrationEntry(
-            command=["python3", "stdio_bridge.py", "--listen", "/run/mcp.sock",
-                     "--", "node", "index.js"],
+            command=["python3", "stdio_bridge.py", "--listen", "/run/mcp.sock", "--",
+                     "node", "index.js"],
             socket="/run/mcp.sock",
         )
 
     Attributes:
-        command: Command to start as a list of arguments (no shell; >=1).
+        command: The argv list the orchestrator passes to
+            ``subprocess.Popen`` (no shell); always >= 1 element. Configured
+            as a single string in the YAML and normalized by the loader.
         socket: Socket the command must be listening on (unix path or
             tcp:host:port).
         wait_timeout: Seconds to wait for the socket before failing (default 30).

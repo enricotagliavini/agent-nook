@@ -309,7 +309,7 @@ def test_run_starts_and_stops_orchestration(tmp_path, monkeypatch):
     calls = _mock_bwrap(monkeypatch)
     config = _hook_config(
         tmp_path,
-        [{"command": [sys.executable, "-c", PID_UNIX_BRIDGE, str(sock), str(pidfile)], "socket": str(sock)}],
+        [{"command": f"{sys.executable} -c \"{PID_UNIX_BRIDGE}\" {sock} {pidfile}", "socket": str(sock)}],
     )
     result = BwrapSandbox(config).run(["echo", "hi"])
     assert result.success
@@ -323,7 +323,7 @@ def test_run_stops_orchestration_when_sandbox_fails(tmp_path, monkeypatch):
     _mock_bwrap(monkeypatch, returncode=3)
     config = _hook_config(
         tmp_path,
-        [{"command": [sys.executable, "-c", PID_UNIX_BRIDGE, str(sock), str(pidfile)], "socket": str(sock)}],
+        [{"command": f"{sys.executable} -c \"{PID_UNIX_BRIDGE}\" {sock} {pidfile}", "socket": str(sock)}],
     )
     result = BwrapSandbox(config).run(["echo", "hi"])
     assert result.return_code == 3 and not result.success
@@ -340,7 +340,7 @@ def test_run_stops_orchestration_on_bwrap_timeout(tmp_path, monkeypatch):
     monkeypatch.setattr("agent_nook.sandbox.bwrap_sandbox.subprocess.run", fake_run)
     config = _hook_config(
         tmp_path,
-        [{"command": [sys.executable, "-c", PID_UNIX_BRIDGE, str(sock), str(pidfile)], "socket": str(sock)}],
+        [{"command": f"{sys.executable} -c \"{PID_UNIX_BRIDGE}\" {sock} {pidfile}", "socket": str(sock)}],
     )
     with pytest.raises(subprocess.TimeoutExpired):
         BwrapSandbox(config).run(["sleep", "10"])
@@ -355,7 +355,7 @@ def test_run_never_starts_sandbox_when_socket_never_ready(tmp_path, monkeypatch)
         tmp_path,
         [
             {
-                "command": [sys.executable, "-c", NO_SOCKET, str(pidfile)],
+                "command": f"{sys.executable} -c \"{NO_SOCKET}\" {pidfile}",
                 "socket": str(sock),
                 "wait-timeout": 1,
             }

@@ -28,8 +28,10 @@ def _base(orchestration: list | None = None) -> dict:
 
 def _entry(**overrides) -> dict:
     """Minimal valid orchestration entry, with per-test overrides."""
+    # `command` is a single string (the documented format); the loader
+    # tokenizes it into an argv list with shlex.split.
     entry = {
-        "command": ["python3", "/opt/stdio_bridge.py", "--listen", "/run/mcp.sock", "--", "node", "index.js"],
+        "command": "python3 /opt/stdio_bridge.py --listen /run/mcp.sock -- node index.js",
         "socket": "/run/mcp.sock",
     }
     entry.update(overrides)
@@ -63,7 +65,7 @@ def test_sandbox_config_defaults_to_no_orchestration():
 
 
 def test_load_valid_unix_entry():
-    """A single valid unix-socket entry parses into an OrchestrationEntry."""
+    """A single valid command string parses into an OrchestrationEntry (tokenized to argv)."""
     config = ConfigLoader().load_from_dict(_base([_entry()]))
     assert len(config.orchestration) == 1
     entry = config.orchestration[0]
@@ -72,6 +74,12 @@ def test_load_valid_unix_entry():
     assert entry.socket == "/run/mcp.sock"
     assert entry.wait_timeout == 30
     assert entry.keep is False
+
+
+def test_command_string_with_spaces_is_tokenized_by_shlex():
+    """A single string with multiple spaces around an argument is one argv element (shlex, not literal)."""
+    config = ConfigLoader().load_from_dict(_base([_entry(command="python3 -c 'a   b c'")]))
+    assert config.orchestration[0].command == ["python3", "-c", "a   b c"]
 
 
 def test_load_valid_tcp_entry():
@@ -101,10 +109,10 @@ def test_absent_section_defaults_to_empty_list():
 
 
 def test_env_expansion_inside_command(monkeypatch):
-    """${VAR} expansion recurses into orchestration command lists."""
+    """${VAR} expansion recurses into orchestration command strings."""
     monkeypatch.setenv("MCP_SOCK", "/run/mcp.sock")
     data = _base(
-        [_entry(command=["python3", "stdio_bridge.py", "--listen", "${MCP_SOCK}", "--", "node", "index.js"], socket="${MCP_SOCK}")]
+        [_entry(command="python3 stdio_bridge.py --listen ${MCP_SOCK} -- node index.js", socket="${MCP_SOCK}")]
     )
     config = ConfigLoader().load_from_dict(data)
     entry = config.orchestration[0]
@@ -126,34 +134,41 @@ def test_entry_must_be_a_dict():
         ConfigLoader().load_from_dict(_base(["not-a-dict"]))
 
 
-def test_command_required():
-    with pytest.raises(ConfigValidationError, match=r"orchestration\[0\]\.command must be a non-empty list"):
-        ConfigLoader().load_from_dict(_base([{"socket": "/run/mcp.sock"}]))
+def test_command_must_be_a_string():
+    """A command given as a list (old format) is rejected: it is a single string now."""
+    for bad in (["sleep", "30"], 42, {"x": 1}):
+        with pytest.raises(ConfigValidationError, match=r"orchestration\[0\]\.command must be a non-empty string"):
+            ConfigLoader().load_from_dict(_base([_entry(command=bad)]))
 
 
 def test_command_must_be_nonempty():
-    with pytest.raises(ConfigValidationError, match=r"orchestration\[0\]\.command must be a non-empty list"):
-        ConfigLoader().load_from_dict(_base([_entry(command=[])]))
+    """A missing command is rejected."""
+    with pytest.raises(ConfigValidationError, match=r"orchestration\[0\]\.command must be a non-empty string"):
+        ConfigLoader().load_from_dict(_base([{"socket": "/run/mcp.sock"}]))
 
 
-def test_command_must_be_a_list():
-    with pytest.raises(ConfigValidationError, match=r"orchestration\[0\]\.command must be a non-empty list"):
-        ConfigLoader().load_from_dict(_base([_entry(command="python3 --listen /run/mcp.sock")]))
+def test_command_empty_string_rejected():
+    """An empty string tokenizes into no arguments and is rejected."""
+    with pytest.raises(ConfigValidationError, match=r"orchestration\[0\]\.command must be a non-empty string"):
+        ConfigLoader().load_from_dict(_base([_entry(command="")]))
 
 
-def test_command_elements_must_be_nonempty_strings():
-    with pytest.raises(ConfigValidationError, match=r"orchestration\[0\]\.command\[1\] must be a non-empty string"):
-        ConfigLoader().load_from_dict(_base([_entry(command=["python3", "", "node"])]))
+def test_command_whitespace_only_rejected():
+    """A whitespace-only string tokenizes into no arguments and is rejected."""
+    for bad in ("   ", "\t", "\n"):
+        with pytest.raises(ConfigValidationError, match=r"orchestration\[0\]\.command must be a non-empty string"):
+            ConfigLoader().load_from_dict(_base([_entry(command=bad)]))
 
 
-def test_command_elements_must_be_strings():
-    with pytest.raises(ConfigValidationError, match=r"orchestration\[0\]\.command\[0\] must be a non-empty string"):
-        ConfigLoader().load_from_dict(_base([_entry(command=[42, "node"])]))
+def test_command_unterminated_quote_rejected():
+    """A shell tokenization error (e.g. unterminated quote) is surfaced as a config error."""
+    with pytest.raises(ConfigValidationError, match=r"orchestration\[0\]\.command could not be parsed as a shell command"):
+        ConfigLoader().load_from_dict(_base([_entry(command='"unterminated')]))
 
 
 def test_socket_required():
     with pytest.raises(ConfigValidationError, match=r"orchestration\[0\]\.socket is required"):
-        ConfigLoader().load_from_dict(_base([{"command": ["sleep", "30"]}]))
+        ConfigLoader().load_from_dict(_base([{"command": "sleep 30"}]))
 
 
 def test_socket_must_be_nonempty_string():

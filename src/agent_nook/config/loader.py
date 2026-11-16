@@ -10,6 +10,7 @@ import argparse
 import logging
 import os
 import re
+import shlex
 from typing import Any
 
 import yaml
@@ -722,7 +723,7 @@ class ConfigLoader:
 
           ```yaml
           orchestration:
-            - command: [python3, stdio_bridge.py, --listen, /run/mcp.sock, --, node, index.js]
+            - command: "python3 stdio_bridge.py --listen /run/mcp.sock -- node index.js"
               socket: /run/mcp.sock
               wait-timeout: 30
               keep: false
@@ -733,7 +734,10 @@ class ConfigLoader:
           - _validate_structure() ensures the field is a list of dicts, but
             not the content of each entry.
           - This layer ensures per entry:
-              * `command` is a non-empty list of non-empty strings (no shell)
+              * `command` is a non-empty string that tokenizes (with
+                `shlex.split`, so quoting and arguments can be written
+                naturally in the YAML) into a non-empty argv list (no shell
+                is involved at execution time).
               * `socket` is a non-empty string; `udp:` addresses are rejected
                 (a datagram transport has no clean session-end semantics).
                 Full address syntax (tcp:host:port, port range) is validated
@@ -746,7 +750,9 @@ class ConfigLoader:
 
         Args:
             entries: A list of raw orchestration entry dicts (already
-                env-expanded by _expand_env_vars).
+                env-expanded by _expand_env_vars). Each entry's `command`
+                is a non-empty string that is tokenized into an argv list
+                with `shlex.split`.
 
         Returns:
             A list of OrchestrationEntry dataclass instances.
@@ -763,16 +769,7 @@ class ConfigLoader:
                     raise ConfigValidationError(f"orchestration[{i}] has unknown key '{key}'. Known keys: {', '.join(known_keys)}")
 
             command = entry.get("command")
-            if not isinstance(command, list) or not command:
-                raise ConfigValidationError(
-                    f"orchestration[{i}].command must be a non-empty list of strings (no shell). "
-                    f"Use: command: [python3, stdio_bridge.py, --listen, /run/mcp.sock, --, node, index.js]"
-                )
-            for j, item in enumerate(command):
-                if not isinstance(item, str) or not item:
-                    raise ConfigValidationError(
-                        f"orchestration[{i}].command[{j}] must be a non-empty string, got {type(item).__name__}: {item!r}"
-                    )
+            argv = self._parse_command(command, i)
 
             sock = entry.get("socket")
             if not isinstance(sock, str) or not sock:
@@ -792,9 +789,48 @@ class ConfigLoader:
             if not isinstance(keep, bool):
                 raise ConfigValidationError(f"orchestration[{i}].keep must be a boolean, got {type(keep).__name__}: {keep!r}")
 
-            parsed.append(OrchestrationEntry(command=list(command), socket=sock, wait_timeout=wait_timeout, keep=keep))
+            parsed.append(OrchestrationEntry(command=argv, socket=sock, wait_timeout=wait_timeout, keep=keep))
 
         return parsed
+
+    @staticmethod
+    def _parse_command(command: Any, index: int) -> list[str]:
+        """Tokenize the orchestration `command` string into an argv list.
+
+        This is the single source of truth for turning the config's single
+        command string into the argument list the orchestrator passes to
+        ``subprocess.Popen`` (which does not invoke a shell). It validates
+        that the command is a non-empty string and that it tokenizes into
+        at least one non-empty argument; a malformed shell tokenization
+        (e.g. an unterminated quote) surfaces as a ``ConfigValidationError``.
+
+        Args:
+            command: The raw `command` value of ``orchestration[index]``
+                (already env-expanded by _expand_env_vars).
+            index: The entry index, for the error message.
+
+        Returns:
+            A non-empty list of argument strings.
+
+        Raises:
+            ConfigValidationError: If `command` is not a non-empty string,
+                tokenizes into no arguments, or raises a shell error.
+        """
+        if not isinstance(command, str) or not command:
+            raise ConfigValidationError(
+                f"orchestration[{index}].command must be a non-empty string (no shell). "
+                f'Use: command: "python3 stdio_bridge.py --listen /run/mcp.sock -- node index.js"'
+            )
+        try:
+            argv = shlex.split(command)
+        except ValueError as e:
+            raise ConfigValidationError(f"orchestration[{index}].command could not be parsed as a shell command: {e}") from e
+        if not argv:
+            raise ConfigValidationError(
+                f"orchestration[{index}].command must be a non-empty string (no shell). "
+                f'Use: command: "python3 stdio_bridge.py --listen /run/mcp.sock -- node index.js"'
+            )
+        return argv
 
     def _expand_env_vars(self, data: dict[str, Any]) -> dict[str, Any]:
         """Expand environment variables in string values.
