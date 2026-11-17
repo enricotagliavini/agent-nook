@@ -152,7 +152,7 @@ class Orchestrator:
                     self.stop()
                     raise RuntimeError(f"failed to start orchestration command {' '.join(argv)}: {e}") from e
                 self._procs.append((entry, proc))
-                _logger.info(
+                _logger.debug(
                     "orchestration: started pid=%s socket=%s command=%s",
                     proc.pid,
                     self._mounts.get(id(entry), SocketMount("<none>", "<none>", "<none>")),
@@ -187,7 +187,7 @@ class Orchestrator:
             still_pending: list[tuple[OrchestrationEntry, float, subprocess.Popen, SocketMount]] = []
             for entry, deadline, proc, mount in pending:
                 if self._is_ready(mount.host_path):
-                    _logger.info("orchestration: socket %s ready", mount.host_path)
+                    _logger.debug("orchestration: socket %s ready", mount.host_path)
                 elif now >= deadline:
                     self.stop()
                     raise RuntimeError(
@@ -238,9 +238,9 @@ class Orchestrator:
         self._stopped = True
         for entry, proc in self._procs:
             if entry.keep:
-                _logger.info("orchestration: leaving pid=%s running (keep: true)", proc.pid)
+                _logger.debug("orchestration: leaving pid=%s running (keep: true)", proc.pid)
                 continue
-            _logger.info("orchestration: stopping pid=%s", proc.pid)
+            _logger.debug("orchestration: stopping pid=%s", proc.pid)
             terminate_process(proc)
         for entry, _ in self._procs:
             if entry.keep:
