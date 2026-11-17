@@ -10,7 +10,9 @@ executes successfully and produces the expected output.
 """
 
 
+import os
 import re
+import shutil
 from pathlib import Path
 
 import pytest
@@ -1057,3 +1059,34 @@ mounts:
         f"CLI overlay run failed:\n  stdout: {result3.stdout!r}\n  stderr: {result3.stderr!r}"
     )
     assert _command_output(result3) == ["mid"]
+
+    # The writable-overlay workdirs retain kernel overlayfs state after every
+    # run -- that leftover state is exactly what makes workdir reuse work (see
+    # the run 2 assertions above). Remove the dirs now so pytest can tear down
+    # tmp_path cleanly; otherwise it fails teardown with "Directory not empty".
+    # Overlayfs gives its internal work subdirectories mode 000, so a plain
+    # shutil.rmtree cannot traverse them -- chmod first, then descend.
+    for _wd in (workdir, workdir2):
+        _chmod_remove(_wd)
+
+
+def _chmod_remove(dirpath: Path) -> None:
+    """Recursively remove ``dirpath``, chmod-ing each dir before descending.
+
+    Overlayfs creates its internal overlay work subdirectories with mode 000
+    (no read/write/execute). A plain ``shutil.rmtree(..., ignore_errors=True)``
+    cannot traverse such a dir and silently stops, leaving garbage behind that
+    makes pytest's own tmp_path teardown report "Directory not empty". chmod-ing
+    each directory to 0o700 before listing it lets rmtree remove everything.
+    """
+    try:
+        os.chmod(dirpath, 0o700)
+    except OSError:
+        return
+    try:
+        entries = list(os.scandir(dirpath))
+    except OSError:
+        return
+    for entry in entries:
+        _chmod_remove(Path(entry.path))
+    shutil.rmtree(dirpath, ignore_errors=True)
