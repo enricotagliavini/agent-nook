@@ -528,7 +528,8 @@ def test_command_not_found_error(test_sandbox_run) -> None:
     """Test that non-existent commands produce a proper error.
 
     Verifies that the sandbox correctly reports missing commands
-    rather than silently failing.
+    rather than silently failing. bwrap surfaces the execvp failure on
+    stderr (e.g. ``bwrap: execvp <cmd>: No such file or directory``).
 
     Args:
         test_sandbox_run: Fixture that returns a subprocess runner.
@@ -549,10 +550,11 @@ def test_command_not_found_error(test_sandbox_run) -> None:
         "Non-existent command should have failed but didn't"
     )
 
-    assert "nonexistent_command_xyz_123" in result.stdout or (
-        "No such file" in result.stdout
+    assert "nonexistent_command_xyz_123" in result.stderr or (
+        "No such file" in result.stderr
     ), (
-        f"Expected error message about missing command, got: {result.stdout!r}"
+        f"Expected error message about missing command on stderr, "
+        f"got: {result.stderr!r}"
     )
 
 

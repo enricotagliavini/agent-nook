@@ -270,7 +270,7 @@ class BwrapSandbox:
 
         bwrap_cmd = self.build(command)
 
-        _logger.info("Full bwrap command: %s", " ".join(bwrap_cmd), extra={"command_only": True})
+        _logger.debug("Full bwrap command: %s", " ".join(bwrap_cmd), extra={"command_only": True})
 
         # Start the orchestration commands (host side, outside the
         # sandbox) and wait for their sockets before the sandbox starts.
