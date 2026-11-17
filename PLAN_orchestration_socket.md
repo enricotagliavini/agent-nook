@@ -52,12 +52,15 @@ Orchestration command is a frozen `list[str]` produced at parse time
 those already-tokenized elements — never re-tokenize a string.**
 
 ## NOTE: loader env expansion
-`_expand_env_vars` runs at config-load time and leaves **undefined** `${VAR}`
-as-is ("Undefined variables are left as-is"), so `${STDIO_SOCKET_PATH}` survives
-load time as long as it is **not** set in the host environment. If
-`STDIO_SOCKET_PATH` *is* present in the host env, it would be expanded early —
-document this and, if it bites, scope the loader expansion to skip
-`STDIO_SOCKET_NAME`/`STDIO_SOCKET_PATH` (or add a dedicated runtime-expand path).
+`_expand_env_vars` runs at config-load time. `${STDIO_SOCKET_PATH}` (and the
+related `${STDIO_SOCKET_NAME}` / `${STDIO_SOCKET_DIR}` placeholders) are left
+**always** literal, regardless of whether they are set in the host environment —
+the loader skips any variable whose name starts with `STDIO_SOCKET_`. This keeps
+config parsing unaffected by the sandbox's `STDIO_SOCKET_*` vars, so the
+orchestrator can fill them with the real path at run time.
+DONE (2026-11-17): implemented as a `STDIO_SOCKET_*` prefix skip in
+`loader._custom_expand_env_vars`; covered by
+`tests/config/test_orchestration.py::test_socket_placeholders_preserved_even_when_set_in_host_env`.
 
 ## Phases (checkpoint = run `./run_tests.sh` + `ruff check src/ --fix` + `ruff format src/`)
 

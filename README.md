@@ -525,7 +525,7 @@ When an entry sets `track-socket: true`, agent-nook **generates a unique socket 
 - The sandbox receives the same path as the `STDIO_SOCKET_PATH` environment variable, and the socket is bind-mounted inside the sandbox at `/run/<name>` (the default config mounts `/run` as a tmpfs, so this works without extra setup). Inside the sandbox, `stdio_stub.py` reads `STDIO_SOCKET_PATH` — no hard-coded path in the command.
 - For a config with a single tracked entry, the env var is `STDIO_SOCKET_PATH`. If an entry tracks multiple sockets, they are numbered `STDIO_SOCKET_PATH1`, `STDIO_SOCKET_PATH2`, … in config order.
 - The socket lives in `$XDG_RUNTIME_DIR/agent-nook` (falling back to `/tmp`), created with mode `0700` so a local user can't sniff a bridge socket.
-- `${STDIO_SOCKET_PATH}` is a **run-time** substitution: it is left as-is by config load (environment expansion only replaces variables that are actually set in the host env).
+- `${STDIO_SOCKET_PATH}` is a **run-time** substitution: it is left as-is by config load. The loader never expands it (even if `STDIO_SOCKET_PATH` happens to be set in the host environment, as it is inside the sandbox), because the orchestrator fills it with the actual path at execution time.
 - For a container command (e.g. `podman run ... -v ${STDIO_SOCKET_DIR}:/app:z --name ${STDIO_SOCKET_NAME}`), mount the **directory** `${STDIO_SOCKET_DIR}` rather than the socket itself — the socket file does not exist when the container is created, but the directory does. `${STDIO_SOCKET_NAME}` gives the socket's basename so the container can build the path inside (`/app/<name>`).
 
 ### Entry fields

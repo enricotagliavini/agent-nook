@@ -135,6 +135,23 @@ def test_env_expansion_inside_command(monkeypatch):
     assert entry.command[3] == "/run/mcp.sock"
 
 
+@pytest.mark.parametrize(
+    "placeholder", ["STDIO_SOCKET_PATH", "STDIO_SOCKET_NAME", "STDIO_SOCKET_DIR"]
+)
+def test_socket_placeholders_preserved_even_when_set_in_host_env(monkeypatch, placeholder):
+    """${STDIO_SOCKET_*} placeholders survive config parsing even when set in the
+    host environment (e.g. inside the sandbox): the orchestrator fills them at
+    runtime, so the loader must not expand them.
+
+    Regression: when STDIO_SOCKET_* are set in the env (as they are inside the
+    sandbox), the loader used to expand them to a host path, breaking the socket
+    path the orchestrator needs to wire into the sandbox."""
+    monkeypatch.setenv(placeholder, "/run/coding-nook-123-0.sock")
+    command = "python3 stdio_bridge.py --listen " + "${" + placeholder + "}" + " -- node"
+    config = ConfigLoader().load_from_dict(_base([_entry(command=command)]))
+    assert "${" + placeholder + "}" in config.orchestration[0].command
+
+
 # --- Loader: invalid configs ---
 
 

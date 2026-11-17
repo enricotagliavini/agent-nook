@@ -847,6 +847,10 @@ class ConfigLoader:
 
         Undefined variables are left as-is (literal ${VAR} remains).
 
+        As a special case, agent-nook's own STDIO_SOCKET_* placeholders are
+        always preserved verbatim (the orchestrator substitutes them at
+        runtime), regardless of any host environment value for those vars.
+
         Args:
             data: Raw configuration dictionary.
 
@@ -873,6 +877,10 @@ class ConfigLoader:
         Expands ${VAR} and ${VAR:-default} patterns in a string.
         Returns the expanded value or the original string if no matches.
 
+        Reserved placeholders named STDIO_SOCKET_* (e.g. STDIO_SOCKET_PATH) are
+        left literal here: the orchestrator substitutes them at runtime, so host
+        environment values must not leak in during config parsing.
+
         Args:
             value: Input string to expand.
 
@@ -897,6 +905,15 @@ class ConfigLoader:
 
             var_name = match.group(1)
             default_value = match.group(2)
+
+            # agent-nook's own runtime placeholders are filled by the orchestrator
+            # (orchestrator.substitute_placeholders), never by the loader. Leave
+            # them literal regardless of whether they are set in the host env, so
+            # config parsing is unaffected by the sandbox's STDIO_SOCKET_* vars.
+            if var_name.startswith("STDIO_SOCKET_"):
+                result.append(match.group(0))
+                last_end = match.end()
+                continue
 
             # Get environment variable or use default
             env_value = os.environ.get(var_name)
