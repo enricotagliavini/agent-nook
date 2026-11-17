@@ -42,10 +42,11 @@ This is a project I do during my spare time. **It may contain errors or security
 
 This project is being developed with the assistance of AI open weight models and a lot of free and open software. With all of the following (plus more) this would not have been possible. A big thank you to everybody!
 
- - [Qwen AI model](https://huggingface.co/Qwen) for providing the open weight model.
- - [Oh My Pi](https://github.com/can1357/oh-my-pi), [Qwen-code](https://github.com/qwenLM/qwen-code) and [Opencode](https://opencode.ai/) the AI coding agents I used for this project.
+ - [Qwen AI model](https://huggingface.co/Qwen) [Ornith AI](https://ornith.ai/) for providing the open weight models.
+ - [Qwen-code](https://github.com/qwenLM/qwen-code) and [Oh My Pi](https://github.com/can1357/oh-my-pi) the AI coding agents I used for this project.
  - [Lemonade AI server](https://lemonade-server.ai/) for the easy to use personal and local AI server.
  - [AMD ROCm](https://github.com/ROCm) for the great Linux support. Using ROCm on Fedora worked out of the box and it was a trouble free experience.
+ - [The Mesa 3D Graphics Library](https://mesa3d.org/) for the amazing work on the Vulkan backend.
  - [Fedora](https://fedoraproject.org/kde) [Plasma Desktop](https://kde.org/) edition, for making a great Linux distro and packaging ROCm and llama-cpp making it a trouble free installation experience.
  - [GNU](https://www.gnu.org/) for start and promoting important free software projects.
  - [Linux](https://www.kernel.org/) For providing the kernel to run all of this.
