@@ -26,8 +26,14 @@ Exit codes:
     0  clean session end (stdin EOF or socket EOF)
     1  invalid address or connect/IO failure
 
+The socket address comes from ``--socket`` if given, else the
+``STDIO_SOCKET_PATH`` environment variable (set by agent-nook's sandbox
+when a ``track-socket:`` entry is wired in). Exactly one is required.
+
 Example:
     stdio_stub.py --socket /tmp/mcp.sock
+    # or, inside a sandbox where STDIO_SOCKET_PATH is set:
+    stdio_stub.py
 """
 
 from __future__ import annotations
@@ -162,21 +168,26 @@ def main() -> int:
     )
     parser.add_argument(
         "--socket",
-        required=True,
         metavar="ADDR",
-        help="Socket to connect to: /path (unix) or tcp:host:port",
+        help="Socket to connect to: /path (unix) or tcp:host:port. Defaults to the STDIO_SOCKET_PATH environment variable.",
     )
     args = parser.parse_args()
 
+    # --socket wins if given; otherwise read STDIO_SOCKET_PATH (the path the
+    # sandbox bind-mounted into /run). Exactly one is required.
+    address = args.socket if args.socket is not None else os.environ.get("STDIO_SOCKET_PATH")
+    if not address:
+        print("stdio_stub: error: no socket address (pass --socket or set STDIO_SOCKET_PATH)", file=sys.stderr)
+        return 1
     try:
-        kind, host, port = parse_address(args.socket)
+        kind, host, port = parse_address(address)
     except ValueError as e:
         print(f"stdio_stub: error: {e}", file=sys.stderr)
         return 1
     try:
         conn = connect(kind, host, port)
     except OSError as e:
-        print(f"stdio_stub: error: cannot connect to {args.socket}: {e}", file=sys.stderr)
+        print(f"stdio_stub: error: cannot connect to {address}: {e}", file=sys.stderr)
         return 1
 
     try:

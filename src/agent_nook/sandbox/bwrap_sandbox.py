@@ -221,18 +221,23 @@ class BwrapSandbox:
         """Return the sandbox configuration."""
         return self._config
 
-    def build(self, command: list[str] | None = None) -> list[str]:
+    def build(self, command: list[str] | None = None, socket_mounts: object = None) -> list[str]:
         """Build the bwrap command line.
 
         Args:
             command: Optional command and arguments to append. When
                 omitted, the returned list contains only the sandbox
                 setup (useful for inspection or dry runs).
+            socket_mounts: Runtime socket wiring (the list of
+                ``SocketMount`` objects from
+                :meth:`Orchestrator.socket_mounts`). When provided, each
+                mount is bind-mounted into ``/run`` and its ``STDIO_SOCKET_PATH``
+                env var set.
 
         Returns:
             The complete bwrap command line.
         """
-        return self._builder.build(command or [])
+        return self._builder.build(command or [], socket_mounts=socket_mounts)
 
     def run(self, command: list[str]) -> SandboxResult:
         """Run a command inside the sandbox.
@@ -268,19 +273,21 @@ class BwrapSandbox:
         _ensure_mount_sources(self._config.mounts)
         _prepare_overlays(self._config.mounts)
 
-        bwrap_cmd = self.build(command)
-
-        _logger.debug("Full bwrap command: %s", " ".join(bwrap_cmd), extra={"command_only": True})
-
-        # Start the orchestration commands (host side, outside the
-        # sandbox) and wait for their sockets before the sandbox starts.
-        # They are stopped after the sandbox exits (unless keep: true),
-        # on success, non-zero exit, timeout, and exception alike.
-        orchestrator = Orchestrator(self._config.orchestration)
+        # Start the orchestration commands (host side, outside the sandbox)
+        # and wait for their sockets before the sandbox starts. They are
+        # stopped after the sandbox exits (unless keep: true), on success,
+        # non-zero exit, timeout, and exception alike.
+        orchestrator = Orchestrator(self._config.orchestration, name=self._config.name)
         orchestrator.start()
         orchestrator.wait_ready()
 
         try:
+            # Build the bwrap command with the runtime socket mounts (bind into
+            # /run, set STDIO_SOCKET_PATH).
+            bwrap_cmd = self.build(command, socket_mounts=orchestrator.socket_mounts())
+
+            _logger.debug("Full bwrap command: %s", " ".join(bwrap_cmd), extra={"command_only": True})
+
             # Run without capturing output - stdout/stderr go directly to console
             result = subprocess.run(
                 bwrap_cmd,

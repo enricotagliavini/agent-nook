@@ -100,3 +100,58 @@ def test_stub_roundtrip_with_manual_server(tmp_path):
     finally:
         thread.join(timeout=5)
         server.close()
+
+
+def test_stub_reads_socket_from_env(tmp_path, monkeypatch):
+    """Without --socket, the socket path comes from STDIO_SOCKET_PATH."""
+    sock = tmp_path / "nope.sock"  # nonexistent → connect fails
+    monkeypatch.setenv("STDIO_SOCKET_PATH", str(sock))
+    proc = subprocess.run([sys.executable, str(STUB)], capture_output=True, timeout=5)
+    assert proc.returncode == 1
+    assert b"cannot connect" in proc.stderr
+
+
+def test_stub_requires_address_or_env(tmp_path, monkeypatch):
+    """With neither --socket nor STDIO_SOCKET_PATH set, it exits 1."""
+    monkeypatch.delenv("STDIO_SOCKET_PATH", raising=False)
+    proc = subprocess.run([sys.executable, str(STUB)], capture_output=True, timeout=5)
+    assert proc.returncode == 1
+    assert b"no socket address" in proc.stderr
+
+
+def test_stub_socket_flag_precedes_env(tmp_path, monkeypatch):
+    """--socket takes precedence: a stale STDIO_SOCKET_PATH is ignored."""
+    sock = tmp_path / "srv.sock"
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(sock))
+    server.listen(1)
+
+    def serve() -> None:
+        conn, _ = server.accept()
+        data = conn.recv(65536)
+        conn.sendall(b"ECHO:" + data)
+        conn.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        env = dict(os.environ)
+        env["STDIO_SOCKET_PATH"] = str(tmp_path / "stale.sock")  # nonexistent
+        proc = subprocess.Popen(
+            [sys.executable, str(STUB), "--socket", str(sock)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+        try:
+            proc.stdin.write(b"abc")
+            proc.stdin.flush()
+            read_until(proc, b"ECHO:abc")
+            proc.stdin.close()
+            assert proc.wait(timeout=5) == 0
+        finally:
+            close_streams(proc)
+    finally:
+        thread.join(timeout=5)
+        server.close()

@@ -9,7 +9,6 @@ The key test verifies that the basic command:
 executes successfully and produces the expected output.
 """
 
-
 import os
 import re
 import shutil
@@ -88,14 +87,10 @@ def test_basic_hello_world(test_sandbox_run) -> None:
     )
 
     assert result.returncode == 0, (
-        f"Command failed with return code {result.returncode}:\n"
-        f"  stdout: {result.stdout!r}\n"
-        f"  stderr: {result.stderr!r}"
+        f"Command failed with return code {result.returncode}:\n  stdout: {result.stdout!r}\n  stderr: {result.stderr!r}"
     )
 
-    assert "hello world" in result.stdout, (
-        f"Expected 'hello world' in stdout, got: {result.stdout!r}"
-    )
+    assert "hello world" in result.stdout, f"Expected 'hello world' in stdout, got: {result.stdout!r}"
 
 
 @pytest.mark.integration
@@ -130,18 +125,12 @@ def test_quiet_flag_suppresses_info_output(test_sandbox_run) -> None:
     )
 
     assert result.returncode == 0, (
-        f"Command failed with return code {result.returncode}:\n"
-        f"  stdout: {result.stdout!r}\n"
-        f"  stderr: {result.stderr!r}"
+        f"Command failed with return code {result.returncode}:\n  stdout: {result.stdout!r}\n  stderr: {result.stderr!r}"
     )
 
-    assert "hello world" in result.stdout, (
-        f"Expected 'hello world' in stdout, got: {result.stdout!r}"
-    )
+    assert "hello world" in result.stdout, f"Expected 'hello world' in stdout, got: {result.stdout!r}"
 
-    assert "- INFO -" not in result.stdout, (
-        f"Expected no INFO log lines with --quiet, got: {result.stdout!r}"
-    )
+    assert "- INFO -" not in result.stdout, f"Expected no INFO log lines with --quiet, got: {result.stdout!r}"
 
     # Control: without --quiet the INFO line is emitted.
     control = run_command(
@@ -154,14 +143,10 @@ def test_quiet_flag_suppresses_info_output(test_sandbox_run) -> None:
     )
 
     assert control.returncode == 0, (
-        f"Control run failed with return code {control.returncode}:\n"
-        f"  stdout: {control.stdout!r}\n"
-        f"  stderr: {control.stderr!r}"
+        f"Control run failed with return code {control.returncode}:\n  stdout: {control.stdout!r}\n  stderr: {control.stderr!r}"
     )
 
-    assert "- INFO -" in control.stdout, (
-        f"Expected an INFO log line without --quiet, got: {control.stdout!r}"
-    )
+    assert "- INFO -" in control.stdout, f"Expected an INFO log line without --quiet, got: {control.stdout!r}"
 
 
 @pytest.mark.integration
@@ -185,16 +170,12 @@ def test_python_script_execution(test_sandbox_run) -> None:
         "src/agent_nook/config/sandbox.yaml",
         "python3",
         "-c",
-        "import sys; print(f'Python {sys.version_info.major}.{sys.version_info.minor}')"
+        "import sys; print(f'Python {sys.version_info.major}.{sys.version_info.minor}')",
     )
 
-    assert result.returncode == 0, (
-        f"Command failed: {result.stderr!r}"
-    )
+    assert result.returncode == 0, f"Command failed: {result.stderr!r}"
 
-    assert "2" in result.stdout or "3" in result.stdout, (
-        f"Expected Python version in stdout, got: {result.stdout!r}"
-    )
+    assert "2" in result.stdout or "3" in result.stdout, f"Expected Python version in stdout, got: {result.stdout!r}"
 
 
 @pytest.mark.integration
@@ -211,22 +192,11 @@ def test_bash_command_execution(test_sandbox_run) -> None:
     """
     run_command = test_sandbox_run
 
-    result = run_command(
-        "run",
-        "--config",
-        "src/agent_nook/config/sandbox.yaml",
-        "bash",
-        "-c",
-        "echo 'Hello from sandbox!'"
-    )
+    result = run_command("run", "--config", "src/agent_nook/config/sandbox.yaml", "bash", "-c", "echo 'Hello from sandbox!'")
 
-    assert result.returncode == 0, (
-        f"Command failed: {result.stderr!r}"
-    )
+    assert result.returncode == 0, f"Command failed: {result.stderr!r}"
 
-    assert "Hello from sandbox!" in result.stdout, (
-        f"Expected 'Hello from sandbox!' in stdout, got: {result.stdout!r}"
-    )
+    assert "Hello from sandbox!" in result.stdout, f"Expected 'Hello from sandbox!' in stdout, got: {result.stdout!r}"
 
 
 @pytest.mark.integration
@@ -244,22 +214,11 @@ def test_env_vars_in_sandbox(test_sandbox_run) -> None:
     """
     run_command = test_sandbox_run
 
-    result = run_command(
-        "run",
-        "--config",
-        "src/agent_nook/config/sandbox.yaml",
-        "bash",
-        "-c",
-        "echo $HOME"
-    )
+    result = run_command("run", "--config", "src/agent_nook/config/sandbox.yaml", "bash", "-c", "echo $HOME")
 
-    assert result.returncode == 0, (
-        f"Command failed: {result.stderr!r}"
-    )
+    assert result.returncode == 0, f"Command failed: {result.stderr!r}"
 
-    assert "/home" in result.stdout, (
-        f"HOME should contain '/home', got: {result.stdout!r}"
-    )
+    assert "/home" in result.stdout, f"HOME should contain '/home', got: {result.stdout!r}"
 
 
 @pytest.mark.integration
@@ -283,7 +242,7 @@ def test_timeout_with_busy_command(test_sandbox_run, tmp_path) -> None:
     config_file = tmp_path / "timeout.yaml"
     config_file.write_text(
         "name: test-timeout\n"
-        "chdir: \"/tmp\"\n"
+        'chdir: "/tmp"\n'
         "mounts:\n"
         "  - source: /\n"
         "    target: /\n"
@@ -336,7 +295,7 @@ def test_timeout_cli_flag_overrides_config(test_sandbox_run, tmp_path) -> None:
     config_file = tmp_path / "timeout_override.yaml"
     config_file.write_text(
         "name: test-timeout-override\n"
-        "chdir: \"/tmp\"\n"
+        'chdir: "/tmp"\n'
         "mounts:\n"
         "  - source: /\n"
         "    target: /\n"
@@ -399,18 +358,19 @@ def test_unset_all_env_vars(test_sandbox_run) -> None:
 
     result = run_command(
         "run",
-        "--unset-env", "ALL",
-        "--env", "PATH=${PATH}",
-        "--env", "TERM=${TERM}",
+        "--unset-env",
+        "ALL",
+        "--env",
+        "PATH=${PATH}",
+        "--env",
+        "TERM=${TERM}",
         "bash",
         "-c",
         "env",
     )
 
     assert result.returncode == 0, (
-        f"Command failed with return code {result.returncode}:\n"
-        f"  stdout: {result.stdout!r}\n"
-        f"  stderr: {result.stderr!r}"
+        f"Command failed with return code {result.returncode}:\n  stdout: {result.stdout!r}\n  stderr: {result.stderr!r}"
     )
 
     # We expect PATH and TERM to be present because they were set via --env
@@ -456,9 +416,7 @@ def test_unset_all_env_vars_from_config(test_sandbox_run, test_unset_all_env_con
     )
 
     assert result.returncode == 0, (
-        f"Command failed with return code {result.returncode}:\n"
-        f"  stdout: {result.stdout!r}\n"
-        f"  stderr: {result.stderr!r}"
+        f"Command failed with return code {result.returncode}:\n  stdout: {result.stdout!r}\n  stderr: {result.stderr!r}"
     )
 
     # We expect PATH and TERM to be present because they were set via env_vars
@@ -548,15 +506,10 @@ def test_command_not_found_error(test_sandbox_run) -> None:
         "nonexistent_command_xyz_123",
     )
 
-    assert result.returncode != 0, (
-        "Non-existent command should have failed but didn't"
-    )
+    assert result.returncode != 0, "Non-existent command should have failed but didn't"
 
-    assert "nonexistent_command_xyz_123" in result.stderr or (
-        "No such file" in result.stderr
-    ), (
-        f"Expected error message about missing command on stderr, "
-        f"got: {result.stderr!r}"
+    assert "nonexistent_command_xyz_123" in result.stderr or ("No such file" in result.stderr), (
+        f"Expected error message about missing command on stderr, got: {result.stderr!r}"
     )
 
 
@@ -631,19 +584,15 @@ def test_malformed_env_vars_as_list(test_sandbox_run, test_malformed_env_vars_as
 
     # The command should fail because the config is malformed
     assert result.returncode != 0, (
-        f"Config validation should have failed for malformed env_vars:\n"
-        f"  stdout: {result.stdout!r}\n"
-        f"  stderr: {result.stderr!r}"
+        f"Config validation should have failed for malformed env_vars:\n  stdout: {result.stdout!r}\n  stderr: {result.stderr!r}"
     )
 
     # Check that the error message mentions the type error
-    assert "env_vars" in result.stdout.lower() or "env_vars" in result.stderr.lower() or (
-        "must be a dict" in result.stdout or "must be a dict" in result.stderr
-    ), (
-        f"Expected error message about env_vars being a dict, got:\n"
-        f"  stdout: {result.stdout!r}\n"
-        f"  stderr: {result.stderr!r}"
-    )
+    assert (
+        "env_vars" in result.stdout.lower()
+        or "env_vars" in result.stderr.lower()
+        or ("must be a dict" in result.stdout or "must be a dict" in result.stderr)
+    ), f"Expected error message about env_vars being a dict, got:\n  stdout: {result.stdout!r}\n  stderr: {result.stderr!r}"
 
 
 @pytest.mark.integration
@@ -677,19 +626,15 @@ def test_malformed_unset_vars_as_list(test_sandbox_run, test_malformed_unset_var
 
     # The command should fail because the config is malformed
     assert result.returncode != 0, (
-        f"Config validation should have failed for malformed unset_vars:\n"
-        f"  stdout: {result.stdout!r}\n"
-        f"  stderr: {result.stderr!r}"
+        f"Config validation should have failed for malformed unset_vars:\n  stdout: {result.stdout!r}\n  stderr: {result.stderr!r}"
     )
 
     # Check that the error message mentions unset_vars
-    assert "unset_vars" in result.stdout.lower() or "unset_vars" in result.stderr.lower() or (
-        "must be a dict" in result.stdout or "must be a dict" in result.stderr
-    ), (
-        f"Expected error message about unset_vars being a dict, got:\n"
-        f"  stdout: {result.stdout!r}\n"
-        f"  stderr: {result.stderr!r}"
-    )
+    assert (
+        "unset_vars" in result.stdout.lower()
+        or "unset_vars" in result.stderr.lower()
+        or ("must be a dict" in result.stdout or "must be a dict" in result.stderr)
+    ), f"Expected error message about unset_vars being a dict, got:\n  stdout: {result.stdout!r}\n  stderr: {result.stderr!r}"
 
 
 @pytest.fixture(scope="function")
@@ -751,18 +696,13 @@ def test_unset_vars_multiline_format(test_sandbox_run, test_unset_vars_multiline
 
     # The command should succeed - unset_vars are properly parsed
     assert result.returncode == 0, (
-        f"Command should succeed with multiline unset_vars:\n"
-        f"  stdout: {result.stdout!r}\n"
-        f"  stderr: {result.stderr!r}"
+        f"Command should succeed with multiline unset_vars:\n  stdout: {result.stdout!r}\n  stderr: {result.stderr!r}"
     )
 
     # Filter out log lines (they contain timestamps and/or the word "bwrap")
     # The actual env output from the sandbox starts after the log entries
     lines = result.stdout.split("\n")
-    sandbox_output_lines = [
-        line for line in lines
-        if not (line.startswith("2026-09-18") or "bwrap" in line)
-    ]
+    sandbox_output_lines = [line for line in lines if not (line.startswith("2026-09-18") or "bwrap" in line)]
     sandbox_output = " ".join(sandbox_output_lines)
 
     # Verify MY_VAR1, MY_VAR2, and MY_VAR3 are NOT present in sandbox output (they were unset)
@@ -810,15 +750,12 @@ def test_config_flag_before_subcommand_rejected(test_sandbox_run) -> None:
         f"  stderr: {result.stderr!r}"
     )
 
-    assert "agent-nook: error" in result.stderr, (
-        f"Expected an argparse usage error in stderr, got: {result.stderr!r}"
-    )
+    assert "agent-nook: error" in result.stderr, f"Expected an argparse usage error in stderr, got: {result.stderr!r}"
 
     # The whole point: the flag is no longer silently ignored, so the
     # sandboxed command must not run with the default config.
     assert "should never run" not in result.stdout, (
-        f"Sandboxed command ran despite invalid flag placement:\n"
-        f"  stdout: {result.stdout!r}"
+        f"Sandboxed command ran despite invalid flag placement:\n  stdout: {result.stdout!r}"
     )
 
 
@@ -876,9 +813,7 @@ def test_create_source_creates_missing_directory(test_sandbox_run, test_create_s
     )
 
     assert result.returncode == 0, (
-        f"Command failed with return code {result.returncode}:\n"
-        f"  stdout: {result.stdout!r}\n"
-        f"  stderr: {result.stderr!r}"
+        f"Command failed with return code {result.returncode}:\n  stdout: {result.stdout!r}\n  stderr: {result.stderr!r}"
     )
 
     assert source.is_dir(), f"Expected create-source to create {source}, but it does not exist"
@@ -942,9 +877,7 @@ def _command_output(result) -> list[str]:
     The CLI logger writes INFO lines to stdout (``YYYY-MM-DD HH:MM:SS -
     agent_nook ...``); strip them so only the command's own output remains.
     """
-    return [
-        line for line in result.stdout.splitlines() if not re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} - ", line)
-    ]
+    return [line for line in result.stdout.splitlines() if not re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} - ", line)]
 
 
 @pytest.mark.integration
@@ -1017,9 +950,7 @@ mounts:
     )
     result = test_sandbox_run("run", "--config", str(config_path), "sh", "-c", script)
     assert result.returncode == 0, (
-        f"Overlay run failed with return code {result.returncode}:\n"
-        f"  stdout: {result.stdout!r}\n"
-        f"  stderr: {result.stderr!r}"
+        f"Overlay run failed with return code {result.returncode}:\n  stdout: {result.stdout!r}\n  stderr: {result.stderr!r}"
     )
     lines = _command_output(result)
     assert lines[0] == "mid", f"layer precedence wrong (last src should win): {lines!r}"
@@ -1032,9 +963,7 @@ mounts:
     # Second run: the workdir now holds the kernel's leftover state; it must
     # still work (no emptiness enforcement).
     result2 = test_sandbox_run("run", "--config", str(config_path), "sh", "-c", f"cat {dest}/new.txt")
-    assert result2.returncode == 0, (
-        f"Workdir reuse run failed:\n  stdout: {result2.stdout!r}\n  stderr: {result2.stderr!r}"
-    )
+    assert result2.returncode == 0, f"Workdir reuse run failed:\n  stdout: {result2.stdout!r}\n  stderr: {result2.stderr!r}"
     assert _command_output(result2) == ["written"]
 
     # tmp-overlay writes are not persisted anywhere on the host
@@ -1055,9 +984,7 @@ mounts:
         "-c",
         f"cat {dest_cli}/f.txt",
     )
-    assert result3.returncode == 0, (
-        f"CLI overlay run failed:\n  stdout: {result3.stdout!r}\n  stderr: {result3.stderr!r}"
-    )
+    assert result3.returncode == 0, f"CLI overlay run failed:\n  stdout: {result3.stdout!r}\n  stderr: {result3.stderr!r}"
     assert _command_output(result3) == ["mid"]
 
     # The writable-overlay workdirs retain kernel overlayfs state after every

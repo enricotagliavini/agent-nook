@@ -27,14 +27,22 @@ def _base(orchestration: list | None = None) -> dict:
 
 
 def _entry(**overrides) -> dict:
-    """Minimal valid orchestration entry, with per-test overrides."""
-    # `command` is a single string (the documented format); the loader
-    # tokenizes it into an argv list with shlex.split.
+    """Minimal valid orchestration entry, with per-test overrides.
+
+    `command` is a single string (the documented format); the loader
+    tokenizes it into an argv list with shlex.split. The socket path is no
+    longer config — `track-socket: true` asks agent-nook to generate a
+    unique name at run time and wire it into the command + sandbox.
+
+    Overrides accept Python-friendly underscore keys (e.g. `track_socket`);
+    they are normalized to the YAML hyphen keys the loader expects.
+    """
     entry = {
-        "command": "python3 /opt/stdio_bridge.py --listen /run/mcp.sock -- node index.js",
-        "socket": "/run/mcp.sock",
+        "command": "python3 /opt/stdio_bridge.py --listen ${STDIO_SOCKET_PATH} -- node index.js",
+        "track-socket": True,
     }
-    entry.update(overrides)
+    for key, value in overrides.items():
+        entry[key.replace("_", "-")] = value
     return entry
 
 
@@ -42,15 +50,22 @@ def _entry(**overrides) -> dict:
 
 
 def test_entry_defaults():
-    """wait_timeout defaults to 30, keep defaults to False."""
-    entry = OrchestrationEntry(command=["sleep", "30"], socket="/run/x.sock")
+    """wait_timeout defaults to 30, keep defaults to False, track_socket to False."""
+    entry = OrchestrationEntry(command=["sleep", "30"], track_socket=True)
     assert entry.wait_timeout == 30
     assert entry.keep is False
+    assert entry.track_socket is True
+
+
+def test_track_socket_defaults_false():
+    """track_socket defaults to False: without it, no runtime socket is generated."""
+    entry = OrchestrationEntry(command=["sleep", "30"])
+    assert entry.track_socket is False
 
 
 def test_entry_is_frozen():
     """Entries are immutable value objects."""
-    entry = OrchestrationEntry(command=["sleep", "30"], socket="/run/x.sock")
+    entry = OrchestrationEntry(command=["sleep", "30"], track_socket=True)
     with pytest.raises(AttributeError):
         entry.keep = True  # type: ignore[misc]
 
@@ -70,8 +85,8 @@ def test_load_valid_unix_entry():
     assert len(config.orchestration) == 1
     entry = config.orchestration[0]
     assert isinstance(entry, OrchestrationEntry)
-    assert entry.command == ["python3", "/opt/stdio_bridge.py", "--listen", "/run/mcp.sock", "--", "node", "index.js"]
-    assert entry.socket == "/run/mcp.sock"
+    assert entry.command == ["python3", "/opt/stdio_bridge.py", "--listen", "${STDIO_SOCKET_PATH}", "--", "node", "index.js"]
+    assert entry.track_socket is True
     assert entry.wait_timeout == 30
     assert entry.keep is False
 
@@ -82,10 +97,10 @@ def test_command_string_with_spaces_is_tokenized_by_shlex():
     assert config.orchestration[0].command == ["python3", "-c", "a   b c"]
 
 
-def test_load_valid_tcp_entry():
-    """tcp:host:port sockets are accepted."""
-    config = ConfigLoader().load_from_dict(_base([_entry(socket="tcp:127.0.0.1:9400")]))
-    assert config.orchestration[0].socket == "tcp:127.0.0.1:9400"
+def test_track_socket_default_false_when_absent():
+    """track-socket omitted → False, so no runtime socket is generated."""
+    config = ConfigLoader().load_from_dict(_base([{"command": "sleep 30"}]))
+    assert config.orchestration[0].track_socket is False
 
 
 def test_load_wait_timeout_and_keep():
@@ -97,9 +112,11 @@ def test_load_wait_timeout_and_keep():
 
 def test_load_multiple_entries():
     """Several entries parse independently."""
-    config = ConfigLoader().load_from_dict(_base([_entry(), _entry(socket="tcp:127.0.0.1:9401", **{"wait-timeout": 10})]))
-    assert [e.socket for e in config.orchestration] == ["/run/mcp.sock", "tcp:127.0.0.1:9401"]
-    assert [e.wait_timeout for e in config.orchestration] == [30, 10]
+    config = ConfigLoader().load_from_dict(
+        _base([_entry(), _entry(track_socket=False, **{"wait-timeout": 10}), _entry(track_socket=True, **{"keep": True})])
+    )
+    assert [e.track_socket for e in config.orchestration] == [True, False, True]
+    assert [e.wait_timeout for e in config.orchestration] == [30, 10, 30]
 
 
 def test_absent_section_defaults_to_empty_list():
@@ -109,15 +126,13 @@ def test_absent_section_defaults_to_empty_list():
 
 
 def test_env_expansion_inside_command(monkeypatch):
-    """${VAR} expansion recurses into orchestration command strings."""
+    """${VAR} expansion recurses into orchestration command strings (the ${STDIO_SOCKET_PATH}
+    placeholder is left intact unless the variable is actually set in the host env)."""
     monkeypatch.setenv("MCP_SOCK", "/run/mcp.sock")
-    data = _base(
-        [_entry(command="python3 stdio_bridge.py --listen ${MCP_SOCK} -- node index.js", socket="${MCP_SOCK}")]
-    )
+    data = _base([_entry(command="python3 stdio_bridge.py --listen ${MCP_SOCK} -- node index.js")])
     config = ConfigLoader().load_from_dict(data)
     entry = config.orchestration[0]
     assert entry.command[3] == "/run/mcp.sock"
-    assert entry.socket == "/run/mcp.sock"
 
 
 # --- Loader: invalid configs ---
@@ -125,7 +140,7 @@ def test_env_expansion_inside_command(monkeypatch):
 
 def test_orchestration_must_be_a_list():
     with pytest.raises(ConfigValidationError, match="must be a list of dicts"):
-        ConfigLoader().load_from_dict(_base({"command": ["sleep", "30"], "socket": "/run/mcp.sock"}))
+        ConfigLoader().load_from_dict(_base({"command": ["sleep", "30"], "track-socket": True}))
 
 
 def test_entry_must_be_a_dict():
@@ -142,9 +157,9 @@ def test_command_must_be_a_string():
 
 
 def test_command_must_be_nonempty():
-    """A missing command is rejected."""
+    """A missing command is rejected (the only required field)."""
     with pytest.raises(ConfigValidationError, match=r"orchestration\[0\]\.command must be a non-empty string"):
-        ConfigLoader().load_from_dict(_base([{"socket": "/run/mcp.sock"}]))
+        ConfigLoader().load_from_dict(_base([{"track-socket": True}]))
 
 
 def test_command_empty_string_rejected():
@@ -166,22 +181,18 @@ def test_command_unterminated_quote_rejected():
         ConfigLoader().load_from_dict(_base([_entry(command='"unterminated')]))
 
 
-def test_socket_required():
-    with pytest.raises(ConfigValidationError, match=r"orchestration\[0\]\.socket is required"):
-        ConfigLoader().load_from_dict(_base([{"command": "sleep 30"}]))
+def test_track_socket_must_be_boolean():
+    """track-socket must be a boolean, not a truthy string like 'true'."""
+    for bad in ("true", "yes", 1, None, [True]):
+        with pytest.raises(ConfigValidationError, match=r"orchestration\[0\]\.track-socket must be a boolean"):
+            ConfigLoader().load_from_dict(_base([_entry(track_socket=bad)]))
 
 
-def test_socket_must_be_nonempty_string():
-    with pytest.raises(ConfigValidationError, match=r"orchestration\[0\]\.socket is required"):
-        ConfigLoader().load_from_dict(_base([_entry(socket="")]))
-    with pytest.raises(ConfigValidationError, match=r"orchestration\[0\]\.socket is required"):
-        ConfigLoader().load_from_dict(_base([_entry(socket=42)]))
-
-
-def test_udp_socket_rejected():
-    """udp: addresses are rejected at config time (D4)."""
-    with pytest.raises(ConfigValidationError, match="udp: addresses are not supported"):
-        ConfigLoader().load_from_dict(_base([_entry(socket="udp:127.0.0.1:9400")]))
+def test_track_socket_truthy_string_rejected():
+    """'true' as a string is rejected (YAML strings are not booleans); the user must omit the
+    value or write an actual boolean."""
+    with pytest.raises(ConfigValidationError, match=r"orchestration\[0\]\.track-socket must be a boolean"):
+        ConfigLoader().load_from_dict(_base([_entry(**{"track-socket": "true"})]))
 
 
 @pytest.mark.parametrize(
@@ -212,6 +223,6 @@ def test_unknown_key_rejected():
 
 def test_error_message_points_at_right_entry():
     """The second bad entry is blamed by index, not the first one."""
-    data = _base([_entry(), _entry(socket="")])
-    with pytest.raises(ConfigValidationError, match=r"orchestration\[1\]\.socket is required"):
+    data = _base([_entry(), _entry(track_socket="yes")])
+    with pytest.raises(ConfigValidationError, match=r"orchestration\[1\]\.track-socket must be a boolean"):
         ConfigLoader().load_from_dict(data)

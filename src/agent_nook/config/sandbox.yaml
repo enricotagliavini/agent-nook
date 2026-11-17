@@ -208,25 +208,30 @@ hostname: "agent-sandbox"
 #                 (no shell is involved; tokenized into arguments with
 #                 shlex). Arguments with spaces or shell metacharacters are
 #                 wrapped in quotes, e.g.
-#                 "python3 /opt/stdio_bridge.py --listen /run/mcp.sock --
+#                 "python3 /opt/stdio_bridge.py --listen ${STDIO_SOCKET_PATH} --
 #                  /opt/mcp-server/index.js"
-#   socket:       required. Socket the command must be listening on:
-#                 a unix path or tcp:host:port (udp: is not supported).
+#   track-socket: optional. If true, agent-nook generates a unique socket
+#                 name at run time ({name}-{pid}-{counter}.sock) and wires
+#                 it into the command via the ${STDIO_SOCKET_PATH}
+#                 (full path) / ${STDIO_SOCKET_NAME} (basename) placeholders.
+#                 Inside the sandbox, STDIO_SOCKET_PATH points at the socket
+#                 (bind-mounted at /run/<name>) — no hard-coded path. The
+#                 socket lives in $XDG_RUNTIME_DIR/agent-nook (mode 0700).
+#                 A boolean (default false).
 #   wait-timeout: optional. Seconds to wait for the socket (default: 30).
 #   keep:         optional. Leave the command running after the sandbox
 #                 exits (default: false).
 #
 # Typical setup: the host-side bridge helper (stdio_bridge.py, ships with
-# agent-nook) listens on the socket and starts your external application;
-# inside the sandbox, the stub helper bridges plain stdio to the same
-# socket (python3 -m agent_nook.stdio_stub --socket <same address>).
-# Remember to add a mount for the socket (or its parent directory) under
-# mounts: so the sandbox can reach it. See the README for the full example.
+# agent-nook) listens on the generated socket and starts your external
+# application; inside the sandbox, the stub helper bridges plain stdio to
+# the same socket (python3 -m agent_nook.stdio_stub, which reads
+# STDIO_SOCKET_PATH). See the README for the full example.
 #
 # Example:
 # orchestration:
-#   - command: "python3 /opt/stdio_bridge.py --listen /run/mcp.sock -- node /opt/mcp-server/index.js"
-#     socket: /run/mcp.sock
+#   - command: "python3 /opt/stdio_bridge.py --listen ${STDIO_SOCKET_PATH} -- node /opt/mcp-server/index.js"
+#     track-socket: true
 #     wait-timeout: 30
 #     keep: false
 #

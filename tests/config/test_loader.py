@@ -242,11 +242,7 @@ def test_load_with_overrides_timeout_cli_flag_overrides_config(tmp_path):
     """The --timeout CLI flag overrides the config file timeout."""
     config_file = tmp_path / "sandbox.yaml"
     config_file.write_text(
-        "name: test\n"
-        "mounts:\n"
-        "  - target: /tmp\n"
-        "    type: tmpfs\n"
-        "timeout: 60\n",
+        "name: test\nmounts:\n  - target: /tmp\n    type: tmpfs\ntimeout: 60\n",
         encoding="utf-8",
     )
 
@@ -259,11 +255,7 @@ def test_load_with_overrides_no_timeout_flag_keeps_config(tmp_path):
     """Without --timeout, the config file timeout is unchanged."""
     config_file = tmp_path / "sandbox.yaml"
     config_file.write_text(
-        "name: test\n"
-        "mounts:\n"
-        "  - target: /tmp\n"
-        "    type: tmpfs\n"
-        "timeout: 60\n",
+        "name: test\nmounts:\n  - target: /tmp\n    type: tmpfs\ntimeout: 60\n",
         encoding="utf-8",
     )
 

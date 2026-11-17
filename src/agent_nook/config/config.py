@@ -506,9 +506,16 @@ class OrchestrationEntry:
     ``wait_timeout`` seconds), and — unless ``keep`` is set — stops the
     command after the sandbox exits (SIGTERM, then SIGKILL after 5 s).
 
-    The ``socket`` value uses the shared address format (see
-    ``stdio_bridge.py`` / ``stdio_stub.py``): a unix path or
-    ``tcp:host:port``. ``udp:`` addresses are rejected by the loader.
+    The socket is **not** a static path here: it is generated at run time
+    (``{name}-{pid}-{counter}.sock`` in ``$XDG_RUNTIME_DIR/agent-nook``, or
+    ``/tmp`` if that is unset). When ``track_socket`` is true, the orchestrator
+    substitutes ``${STDIO_SOCKET_PATH}`` (full host path) and
+    ``${STDIO_SOCKET_NAME}`` (basename) into this entry's argv before launching
+    it, and inside the sandbox sets ``STDIO_SOCKET_PATH`` (to the socket's
+    ``/run`` location) and bind-mounts the socket there — so the sandbox-side
+    ``stdio_stub.py`` reads the path from the environment instead of a
+    hard-coded argument. This lets parallel ``agent-nook`` runs use distinct
+    sockets instead of colliding on a shared path.
 
     The ``command`` is configured in the sandbox YAML as a **single command
     string**; the ConfigLoader normalizes it into the argument list shown
@@ -517,23 +524,25 @@ class OrchestrationEntry:
 
     Example (the YAML stores the single string; the loader normalizes it):
         OrchestrationEntry(
-            command=["python3", "stdio_bridge.py", "--listen", "/run/mcp.sock", "--",
+            command=["python3", "stdio_bridge.py", "--listen", "${STDIO_SOCKET_PATH}", "--",
                      "node", "index.js"],
-            socket="/run/mcp.sock",
+            track_socket=True,
         )
 
     Attributes:
         command: The argv list the orchestrator passes to
             ``subprocess.Popen`` (no shell); always >= 1 element. Configured
             as a single string in the YAML and normalized by the loader.
-        socket: Socket the command must be listening on (unix path or
-            tcp:host:port).
+        track_socket: If true, agent-nook generates a unique socket name for
+            this entry at run time and wires it into the command (placeholder
+            substitution) and the sandbox (env var + ``/run`` bind-mount).
+            Default False.
         wait_timeout: Seconds to wait for the socket before failing (default 30).
         keep: Leave the command running after the sandbox exits (default False).
     """
 
     command: list[str]
-    socket: str
+    track_socket: bool = False
     wait_timeout: int | float = 30
     keep: bool = False
 

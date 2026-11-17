@@ -11,6 +11,7 @@ config file is passed via --config, and tests skip cleanly when bwrap is
 not available.
 """
 
+import os
 import shutil
 import subprocess
 import time
@@ -32,6 +33,9 @@ STUB = REPO / "src" / "agent_nook" / "stdio_stub.py"
 # In-sandbox driver: feeds a request to stdio_stub, keeps the session open
 # until the echo response arrives (like a real MCP client, whose stdin stays
 # open for the whole session), then closes stdin and checks the exit code.
+# stdio_stub.py reads STDIO_SOCKET_PATH from the environment (set by the
+# sandbox bind mount), so no --socket argument is needed — matching the
+# runtime track-socket wiring.
 DRIVER = """\
 import os
 import select
@@ -40,7 +44,7 @@ import sys
 import time
 
 p = subprocess.Popen(
-    [sys.executable, sys.argv[1], "--socket", sys.argv[2]],
+    [sys.executable, sys.argv[1]],
     stdin=subprocess.PIPE,
     stdout=subprocess.PIPE,
 )
@@ -62,16 +66,11 @@ sys.exit(0 if rc == 0 and b"ECHO:hello-mcp" in buf else 1)
 
 
 @pytest.fixture()
-def sock_dir(tmp_path) -> Path:
-    d = tmp_path / "socks"
-    d.mkdir()
-    return d
-
-
-@pytest.fixture()
-def e2e_config(xdg_config_dir, sock_dir) -> Path:
-    (sock_dir / "driver.py").write_text(DRIVER)
-    sock = sock_dir / "mcp.sock"
+def e2e_config(xdg_config_dir, tmp_path) -> Path:
+    # driver.py is written to tmp_path (host /tmp), reachable inside the
+    # sandbox via the ro-bind / at / mount. The stub ships in src/ (host
+    # /home), also reachable via ro-bind / at /.
+    (tmp_path / "driver.py").write_text(DRIVER)
     config_path = xdg_config_dir / "orchestration_e2e.yaml"
     config_path.write_text(
         f"""name: orchestration-e2e
@@ -81,37 +80,51 @@ mounts:
     target: /
   - type: proc
     target: /proc
-  - type: bind
-    source: {sock_dir}
-    target: {sock_dir}
+  # A private /run for the generated socket's bind-mount target
+  # (/run/<name>). The default sandbox.yaml mounts /run as a tmpfs for
+  # exactly this reason; the track-socket wiring bind-mounts the socket
+  # there and sets STDIO_SOCKET_PATH to it.
+  - type: tmpfs
+    target: /run
 orchestration:
   - command: |
-      python3 {BRIDGE} --listen {sock} -- python3 -c "import os
+      python3 {BRIDGE} --listen ${{STDIO_SOCKET_PATH}} -- python3 -c "import os
       while True:
           d = os.read(0, 4096)
           if not d:
               break
           os.write(1, b'ECHO:' + d)
       "
-    socket: {sock}
+    track-socket: true
     wait-timeout: 30
 """
     )
     return config_path
 
 
+def _agent_nook_sock_base() -> Path:
+    """Directory ``track-socket`` sockets are generated into.
+
+    Matches :func:`agent_nook.socket_factory.generate`: ``$XDG_RUNTIME_DIR/
+    agent-nook`` when ``XDG_RUNTIME_DIR`` is set, else ``/tmp``. Reads the
+    same environment agent-nook does, so this agrees with where the sandbox
+    actually placed its generated socket.
+    """
+    xdg_runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    base = os.path.join(xdg_runtime_dir, "agent-nook") if xdg_runtime_dir else "/tmp"
+    return Path(base)
+
+
 @pytest.mark.skipif(not BWRAP, reason="bwrap not available")
-def test_orchestration_roundtrip_through_bwrap(test_sandbox_run, e2e_config, sock_dir):
+def test_orchestration_roundtrip_through_bwrap(test_sandbox_run, e2e_config, tmp_path):
     """Host bridge + in-sandbox stub: data flows both ways through bwrap."""
-    sock = sock_dir / "mcp.sock"
     result = test_sandbox_run(
         "run",
         "--config",
         str(e2e_config),
         "python3",
-        str(sock_dir / "driver.py"),
+        str(tmp_path / "driver.py"),
         str(STUB),
-        str(sock),
     )
     assert result.returncode == 0, f"agent-nook failed (rc={result.returncode}):\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     # The bridge ran on the host and served exactly one session. Its output
@@ -119,10 +132,12 @@ def test_orchestration_roundtrip_through_bwrap(test_sandbox_run, e2e_config, soc
     log_text = Path(get_log_file_path()).read_text(encoding="utf-8")
     assert "stdio_bridge: listening on" in log_text
     assert "started child pid=" in log_text
-    # The bridge was stopped cleanly by the orchestrator (SIGTERM): the unix
-    # socket file is only unlinked on a clean bridge shutdown, so its absence
-    # proves the orchestrator's stop() ran (and did not have to SIGKILL).
-    assert not sock.exists(), "bridge socket file left behind: the bridge was not stopped cleanly"
+    # The bridge was stopped cleanly by the orchestrator (SIGTERM): it unlinks
+    # the generated socket on clean shutdown, so no ``orchestration-e2e-*.sock``
+    # survives in the base dir — proving the orchestrator's stop() ran (and did
+    # not have to SIGKILL).
+    leftover = sorted(_agent_nook_sock_base().glob("orchestration-e2e-*.sock"))
+    assert not leftover, f"orchestration socket not cleaned up: {leftover}"
 
 
 @pytest.mark.skipif(not BWRAP, reason="bwrap not available")
@@ -147,7 +162,7 @@ mounts:
     target: /sandbox-tmp
 orchestration:
   - command: 'python3 -c "{sleeper}"'
-    socket: {tmp_path / "never.sock"}
+    track-socket: true
     wait-timeout: 0.01
 """
     )

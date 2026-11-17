@@ -221,7 +221,7 @@ def test_builder_mount_order_parent_before_child_same_type():
         chdir="/tmp",
         mounts=[
             Mount(type="dir", target="/agentnook/child"),  # child mount
-            Mount(type="dir", target="/agentnook"),        # parent mount
+            Mount(type="dir", target="/agentnook"),  # parent mount
         ],
         capabilities=CapabilitySet(),
         unshare=NamespaceSet(),
@@ -240,8 +240,7 @@ def test_builder_mount_order_parent_before_child_same_type():
     # The parent /agentnook must appear before the child /agentnook/child
     assert "/agentnook" in cmd[dir_indices[0] + 1]
     assert "/agentnook/child" in cmd[dir_indices[1] + 1]
-    assert dir_indices[0] < dir_indices[1], \
-        "Parent /agentnook must come before child /agentnook/child"
+    assert dir_indices[0] < dir_indices[1], "Parent /agentnook must come before child /agentnook/child"
 
 
 def test_builder_mount_order_parent_before_child_different_types():
@@ -268,8 +267,7 @@ def test_builder_mount_order_parent_before_child_different_types():
     tmpfs_idx = cmd.index("--tmpfs")
 
     # Parent /agentnook_app/data must come before child /agentnook_app/data/app
-    assert ro_bind_idx < tmpfs_idx, \
-        f"Parent --ro-bind at {ro_bind_idx} must come before --tmpfs at {tmpfs_idx}"
+    assert ro_bind_idx < tmpfs_idx, f"Parent --ro-bind at {ro_bind_idx} must come before --tmpfs at {tmpfs_idx}"
 
 
 def test_builder_mount_order_cross_type_conflict():
@@ -385,13 +383,12 @@ def test_builder_unset_vars_ALL_with_whitespace():
     assert "--unsetenv" not in cmd
 
 
-def test_builder_unset_vars_ENV_VAR_EXPANSION():
+def test_builder_unset_vars_ENV_VAR_EXPANSION(monkeypatch):
     """Test builder with env var expansion in unset_vars."""
-    import os
-
     from agent_nook.config.loader import ConfigLoader
-    os.environ["TEST_VAR"] = "testvalue"
-    os.environ["HOME"] = "/custom/home"
+
+    monkeypatch.setenv("TEST_VAR", "testvalue")
+    monkeypatch.setenv("HOME", "/custom/home")
 
     # Use ConfigLoader to expand env vars before passing to builder
     config = ConfigLoader().load_from_dict(

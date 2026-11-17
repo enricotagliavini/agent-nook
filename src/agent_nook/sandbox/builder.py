@@ -180,7 +180,7 @@ class BwrapBuilder:
         """Return the config as-is (no validation, no transformation)."""
         return self._config
 
-    def build(self, command: list[str]) -> list[str]:
+    def build(self, command: list[str], socket_mounts: object = None) -> list[str]:
         """Build the complete bwrap command line.
 
         Mounts are ordered via `build_mounts_order()` to ensure that
@@ -190,6 +190,12 @@ class BwrapBuilder:
 
         Args:
             command: The command and arguments to run inside the sandbox.
+            socket_mounts: Runtime socket wiring (the list of
+                ``SocketMount`` objects returned by
+                :meth:`agent_nook.orchestrator.Orchestrator.socket_mounts`),
+                or ``None``. Each mount is bind-mounted into ``/run`` and the
+                sandbox's ``STDIO_SOCKET_PATH`` (or numbered) env var is set to
+                that path so ``stdio_stub`` can find it.
 
         Returns:
             A list that can be passed directly to subprocess.run().
@@ -239,6 +245,12 @@ class BwrapBuilder:
         # Set environment variables
         for key, value in self._config.env_vars.items():
             args.extend(["--setenv", key, str(value)])
+
+        # Runtime socket mounts: bind each generated host socket into /run and
+        # point STDIO_SOCKET_PATH (or its numbered form) at that path.
+        for mount in socket_mounts or []:
+            args.extend(["--setenv", mount.env_var, mount.run_path])
+            args.extend(["--bind", mount.host_path, mount.run_path])
 
         # Chdir
         if self._config.chdir:

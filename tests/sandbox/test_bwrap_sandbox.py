@@ -127,6 +127,7 @@ def test_run_forwards_timeout_and_propagates(tmp_path, monkeypatch):
     bwrap is mocked so the assertion is about *our* timeout handling, not
     bwrap's behaviour (which the single real-bwrap test above already covers).
     """
+
     def _raise(*_args, **_kwargs):
         raise subprocess.TimeoutExpired(cmd="bwrap", timeout=_kwargs.get("timeout"))
 

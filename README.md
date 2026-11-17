@@ -513,61 +513,60 @@ Some agents need helper processes that must be alive while the sandbox runs — 
 
 ```yaml
 orchestration:
-  - command: "python3 /path/to/agent_nook/stdio_bridge.py --listen /run/mcp.sock -- node /opt/mcp/index.js"
-    socket: /run/mcp.sock
+  - command: "python3 /path/to/agent_nook/stdio_bridge.py --listen ${STDIO_SOCKET_PATH} -- node /opt/mcp/index.js"
+    track-socket: true
 ```
+
+### Socket naming (runtime-generated)
+
+When an entry sets `track-socket: true`, agent-nook **generates a unique socket name at run time** — `{name}-{pid}-{counter}.sock` — and wires it into both the host command and the sandbox. This makes running multiple `agent-nook` processes in parallel safe: each process gets its own socket even when the config string is identical.
+
+- The placeholder `${STDIO_SOCKET_PATH}` (the full host path, e.g. `/run/tmp/agent-nook/test-1234-0.sock`) is substituted into the command **before** it is executed. The basename `${STDIO_SOCKET_NAME}` (e.g. `test-1234-0.sock`) is available too, for cases where only the name is needed.
+- The sandbox receives the same path as the `STDIO_SOCKET_PATH` environment variable, and the socket is bind-mounted inside the sandbox at `/run/<name>` (the default config mounts `/run` as a tmpfs, so this works without extra setup). Inside the sandbox, `stdio_stub.py` reads `STDIO_SOCKET_PATH` — no hard-coded path in the command.
+- For a config with a single tracked entry, the env var is `STDIO_SOCKET_PATH`. If an entry tracks multiple sockets, they are numbered `STDIO_SOCKET_PATH1`, `STDIO_SOCKET_PATH2`, … in config order.
+- The socket lives in `$XDG_RUNTIME_DIR/agent-nook` (falling back to `/tmp`), created with mode `0700` so a local user can't sniff a bridge socket.
+- `${STDIO_SOCKET_PATH}` is a **run-time** substitution: it is left as-is by config load (environment expansion only replaces variables that are actually set in the host env).
 
 ### Entry fields
 
 | Field | Required | Description |
 |---|---|---|
-| `command` | yes | Command to run on the host as a **single string** (no shell; tokenized into arguments with `shlex` — e.g. `"python3 stdio_bridge.py --listen /run/mcp.sock -- node index.js"`). Wrap arguments that contain spaces or shell metacharacters in quotes |
-| `socket` | yes | Address agent-nook waits for before starting the sandbox: a unix path (`/run/mcp.sock`) or `tcp:host:port`. `udp:` is rejected — a UDP socket has no readiness to wait for |
-| `wait-timeout` | no | Seconds to wait for the socket to become ready (default: `30`). On timeout agent-nook exits non-zero and stops every orchestration command — the sandbox never starts |
+| `command` | yes | Command to run on the host as a **single string** (no shell; tokenized into arguments with `shlex` — e.g. `"python3 stdio_bridge.py --listen ${STDIO_SOCKET_PATH} -- node index.js"`). Wrap arguments that contain spaces or shell metacharacters in quotes |
+| `track-socket` | no | If `true`, agent-nook generates a unique socket name at run time and wires it into the command (via `${STDIO_SOCKET_PATH}` / `${STDIO_SOCKET_NAME}`) and the sandbox (as the `STDIO_SOCKET_PATH` env var + a bind-mount at `/run/<name>`). Defaults to `false` — a boolean only; `udp:` has no meaning here |
+| `wait-timeout` | no | Seconds to wait for the generated socket to become ready (default: `30`). On timeout agent-nook exits non-zero and stops every orchestration command — the sandbox never starts |
 | `keep` | no | If `true`, the command is not stopped when the sandbox exits (default: `false`). Use for processes you manage yourself |
 
 Unknown keys are rejected; `command` must be a non-empty string (tokenized with `shlex`, so arguments with spaces or shell metacharacters are wrapped in quotes).
-
-### Socket mount
-
-The socket must be reachable from inside the sandbox, so mount its parent directory (or the socket file itself):
-
-```yaml
-mounts:
-  - source: /run
-    target: /run
-    type: bind
-```
 
 ### Worked example: bridging a stdio MCP server
 
 agent-nook ships two standalone, stdlib-only helper scripts (no agent-nook imports — they are safe to copy into a container image):
 
 - `stdio_bridge.py` — runs a stdio MCP server on the host and exposes it over a unix/TCP socket. Each client connection gets its own server child process; the child is terminated when the client disconnects.
-- `stdio_stub.py` — runs **inside** the sandbox: bridges the sandboxed command's stdio to the socket, so the agent can talk to the MCP server as if it were a local stdio process.
+- `stdio_stub.py` — runs **inside** the sandbox: bridges the sandboxed command's stdio to the socket, so the agent can talk to the MCP server as if it were a local stdio process. It reads the socket path from the `STDIO_SOCKET_PATH` environment variable (or an explicit `--socket` argument, for manual runs).
 
 Host side, in the config:
 
 ```yaml
 orchestration:
-  - command: "python3 /path/to/agent_nook/stdio_bridge.py --listen /run/mcp.sock -- node /opt/mcp/index.js"
-    socket: /run/mcp.sock
+  - command: "python3 /path/to/agent_nook/stdio_bridge.py --listen ${STDIO_SOCKET_PATH} -- node /opt/mcp/index.js"
+    track-socket: true
 ```
 
-Inside the sandbox, run the stub in place of the server:
+Inside the sandbox, run the stub in place of the server (no socket path in the command — it comes from the env var):
 
 ```bash
-agent-nook run python3 /path/to/stdio_stub.py --socket /run/mcp.sock
+agent-nook run python3 /path/to/stdio_stub.py
 ```
 
 ### Lifecycle
 
 1. agent-nook starts every orchestration command on the host (they inherit agent-nook's stdio, so e.g. bridge logs appear in agent-nook's output and log file).
-2. It waits for each `socket` to become ready (unix: the file exists and is a socket; TCP: a connection succeeds), up to each entry's `wait-timeout`.
-3. The sandbox starts.
-4. When the sandbox command exits, agent-nook stops every non-`keep` entry: SIGTERM, then SIGKILL after 5 seconds if still running. A bridge that stopped cleanly also unlinks its unix socket file.
+2. It waits for each generated socket to become ready (unix: the file exists and is a socket; TCP: a connection succeeds), up to each entry's `wait-timeout`.
+3. The sandbox starts, with `STDIO_SOCKET_PATH` set and the socket bind-mounted at `/run/<name>`.
+4. When the sandbox command exits, agent-nook stops every non-`keep` entry: SIGTERM, then SIGKILL after 5 seconds if still running. A bridge that stopped cleanly also unlinks its unix socket file; agent-nook cleans up any socket that leaked (e.g. after a SIGKILL/crash).
 
-If a socket never becomes ready (or an address is malformed), agent-nook exits non-zero **without starting the sandbox** and stops every orchestration command.
+If a socket never becomes ready (or a placeholder is unresolved), agent-nook exits non-zero **without starting the sandbox** and stops every orchestration command.
 
 ## Technical Details
 

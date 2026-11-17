@@ -727,8 +727,8 @@ class ConfigLoader:
 
           ```yaml
           orchestration:
-            - command: "python3 stdio_bridge.py --listen /run/mcp.sock -- node index.js"
-              socket: /run/mcp.sock
+            - command: "python3 stdio_bridge.py --listen ${STDIO_SOCKET_PATH} -- node index.js"
+              track-socket: true
               wait-timeout: 30
               keep: false
           ```
@@ -742,11 +742,10 @@ class ConfigLoader:
                 `shlex.split`, so quoting and arguments can be written
                 naturally in the YAML) into a non-empty argv list (no shell
                 is involved at execution time).
-              * `socket` is a non-empty string; `udp:` addresses are rejected
-                (a datagram transport has no clean session-end semantics).
-                Full address syntax (tcp:host:port, port range) is validated
-                by the bridge/stub at runtime — the shared address contract
-                lives with the standalone scripts.
+              * `track-socket` (optional) is a boolean (default false); when
+                true, agent-nook generates a unique socket name at run time
+                and wires it into the command and the sandbox (see
+                OrchestrationEntry).
               * `wait-timeout` (optional) is a positive number (default 30)
               * `keep` (optional) is a boolean (default false)
               * unknown keys are rejected (strict schema, consistent with
@@ -765,7 +764,7 @@ class ConfigLoader:
             ConfigValidationError: If any entry is malformed.
         """
         parsed: list[OrchestrationEntry] = []
-        known_keys = ("command", "socket", "wait-timeout", "keep")
+        known_keys = ("command", "track-socket", "wait-timeout", "keep")
 
         for i, entry in enumerate(entries):
             for key in entry:
@@ -775,12 +774,10 @@ class ConfigLoader:
             command = entry.get("command")
             argv = self._parse_command(command, i)
 
-            sock = entry.get("socket")
-            if not isinstance(sock, str) or not sock:
-                raise ConfigValidationError(f"orchestration[{i}].socket is required: a non-empty string (unix path or tcp:host:port)")
-            if sock.startswith("udp:"):
+            track_socket = entry.get("track-socket", False)
+            if not isinstance(track_socket, bool):
                 raise ConfigValidationError(
-                    f"orchestration[{i}].socket: udp: addresses are not supported (use a unix path or tcp:host:port)"
+                    f"orchestration[{i}].track-socket must be a boolean, got {type(track_socket).__name__}: {track_socket!r}"
                 )
 
             wait_timeout: int | float = 30
@@ -793,7 +790,7 @@ class ConfigLoader:
             if not isinstance(keep, bool):
                 raise ConfigValidationError(f"orchestration[{i}].keep must be a boolean, got {type(keep).__name__}: {keep!r}")
 
-            parsed.append(OrchestrationEntry(command=argv, socket=sock, wait_timeout=wait_timeout, keep=keep))
+            parsed.append(OrchestrationEntry(command=argv, track_socket=track_socket, wait_timeout=wait_timeout, keep=keep))
 
         return parsed
 
@@ -823,7 +820,7 @@ class ConfigLoader:
         if not isinstance(command, str) or not command:
             raise ConfigValidationError(
                 f"orchestration[{index}].command must be a non-empty string (no shell). "
-                f'Use: command: "python3 stdio_bridge.py --listen /run/mcp.sock -- node index.js"'
+                f'Use: command: "python3 stdio_bridge.py --listen ${{STDIO_SOCKET_PATH}} -- node index.js"'
             )
         try:
             argv = shlex.split(command)
@@ -832,7 +829,7 @@ class ConfigLoader:
         if not argv:
             raise ConfigValidationError(
                 f"orchestration[{index}].command must be a non-empty string (no shell). "
-                f'Use: command: "python3 stdio_bridge.py --listen /run/mcp.sock -- node index.js"'
+                f'Use: command: "python3 stdio_bridge.py --listen ${{STDIO_SOCKET_PATH}} -- node index.js"'
             )
         return argv
 
