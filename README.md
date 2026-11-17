@@ -521,18 +521,19 @@ orchestration:
 
 When an entry sets `track-socket: true`, agent-nook **generates a unique socket name at run time** — `{name}-{pid}-{counter}.sock` — and wires it into both the host command and the sandbox. This makes running multiple `agent-nook` processes in parallel safe: each process gets its own socket even when the config string is identical.
 
-- The placeholder `${STDIO_SOCKET_PATH}` (the full host path, e.g. `/run/tmp/agent-nook/test-1234-0.sock`) is substituted into the command **before** it is executed. The basename `${STDIO_SOCKET_NAME}` (e.g. `test-1234-0.sock`) is available too, for cases where only the name is needed.
+- The placeholder `${STDIO_SOCKET_PATH}` (the full host path, e.g. `/tmp/agent-nook/test-1234-0.sock`) is substituted into the command **before** it is executed. The basename `${STDIO_SOCKET_NAME}` (e.g. `test-1234-0.sock`) is available too, for cases where only the name is needed. The directory `${STDIO_SOCKET_DIR}` (e.g. `/tmp/agent-nook`, the directory the socket is reserved in) is also available.
 - The sandbox receives the same path as the `STDIO_SOCKET_PATH` environment variable, and the socket is bind-mounted inside the sandbox at `/run/<name>` (the default config mounts `/run` as a tmpfs, so this works without extra setup). Inside the sandbox, `stdio_stub.py` reads `STDIO_SOCKET_PATH` — no hard-coded path in the command.
 - For a config with a single tracked entry, the env var is `STDIO_SOCKET_PATH`. If an entry tracks multiple sockets, they are numbered `STDIO_SOCKET_PATH1`, `STDIO_SOCKET_PATH2`, … in config order.
 - The socket lives in `$XDG_RUNTIME_DIR/agent-nook` (falling back to `/tmp`), created with mode `0700` so a local user can't sniff a bridge socket.
 - `${STDIO_SOCKET_PATH}` is a **run-time** substitution: it is left as-is by config load (environment expansion only replaces variables that are actually set in the host env).
+- For a container command (e.g. `podman run ... -v ${STDIO_SOCKET_DIR}:/app:z --name ${STDIO_SOCKET_NAME}`), mount the **directory** `${STDIO_SOCKET_DIR}` rather than the socket itself — the socket file does not exist when the container is created, but the directory does. `${STDIO_SOCKET_NAME}` gives the socket's basename so the container can build the path inside (`/app/<name>`).
 
 ### Entry fields
 
 | Field | Required | Description |
 |---|---|---|
 | `command` | yes | Command to run on the host as a **single string** (no shell; tokenized into arguments with `shlex` — e.g. `"python3 stdio_bridge.py --listen ${STDIO_SOCKET_PATH} -- node index.js"`). Wrap arguments that contain spaces or shell metacharacters in quotes |
-| `track-socket` | no | If `true`, agent-nook generates a unique socket name at run time and wires it into the command (via `${STDIO_SOCKET_PATH}` / `${STDIO_SOCKET_NAME}`) and the sandbox (as the `STDIO_SOCKET_PATH` env var + a bind-mount at `/run/<name>`). Defaults to `false` — a boolean only; `udp:` has no meaning here |
+| `track-socket` | no | If `true`, agent-nook generates a unique socket name at run time and wires it into the command (via `${STDIO_SOCKET_PATH}` / `${STDIO_SOCKET_NAME}` / `${STDIO_SOCKET_DIR}` placeholders) and the sandbox (as the `STDIO_SOCKET_PATH` env var + a bind-mount at `/run/<name>`). Defaults to `false` — a boolean only; `udp:` has no meaning here |
 | `wait-timeout` | no | Seconds to wait for the generated socket to become ready (default: `30`). On timeout agent-nook exits non-zero and stops every orchestration command — the sandbox never starts |
 | `keep` | no | If `true`, the command is not stopped when the sandbox exits (default: `false`). Use for processes you manage yourself |
 

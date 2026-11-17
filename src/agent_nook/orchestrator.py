@@ -4,11 +4,11 @@ For every ``orchestration:`` config entry the orchestrator:
 
 1. (for ``track-socket: true`` entries) generates a unique unix socket path
    via :func:`agent_nook.socket_factory.generate` and substitutes the
-   ``${STDIO_SOCKET_PATH}`` (full path) and ``${STDIO_SOCKET_NAME}`` (basename)
-   placeholders into the already-tokenized argv, then starts the command on the
-   host with its stdio redirected to the log file (stdin to DEVNULL, stdout and
-   stderr merged), so its output lands in agent-nook's log and never reaches the
-   terminal;
+   ``${STDIO_SOCKET_PATH}`` (full path), ``${STDIO_SOCKET_NAME}`` (basename) and
+   ``${STDIO_SOCKET_DIR}`` (containing directory) placeholders into the
+   already-tokenized argv, then starts the command on the host with its stdio
+   redirected to the log file (stdin to DEVNULL, stdout and stderr merged), so
+   its output lands in agent-nook's log and never reaches the terminal;
 2. waits — up to the entry's ``wait-timeout`` — until the generated socket is
    ready: the socket file exists and is a socket;
 3. after the sandbox exits (success, non-zero exit, timeout, or exception),
@@ -56,9 +56,13 @@ _PROGRESS_LOG_INTERVAL = 3.0  # seconds between "still waiting for socket" logs
 _SOCKET_CLEANUP_WAIT = 5.0  # seconds to wait for sockets to disappear after stop
 
 # Placeholders substituted into the (already-tokenized) host argv. Never
-# re-tokenize: operate on the list[str] produced at config parse time.
+# re-tokenize: operate on the list[str] produced at config parse time. The
+# directory placeholder lets a command bind-mount the *directory* containing
+# the socket (e.g. ``podman run -v ${STDIO_SOCKET_DIR}:/app:z``) rather than
+# the socket file, which does not exist yet when the command starts.
 _PATH_PLACEHOLDER = "${STDIO_SOCKET_PATH}"
 _NAME_PLACEHOLDER = "${STDIO_SOCKET_NAME}"
+_DIR_PLACEHOLDER = "${STDIO_SOCKET_DIR}"
 
 
 def substitute_placeholders(argv: list[str], host_path: str) -> list[str]:
@@ -70,12 +74,19 @@ def substitute_placeholders(argv: list[str], host_path: str) -> list[str]:
         host_path: The generated socket's absolute host path.
 
     Returns:
-        A new list with every ``${STDIO_SOCKET_PATH}`` replaced by ``host_path``
-        and every ``${STDIO_SOCKET_NAME}`` (the socket basename) replaced by
-        ``os.path.basename(host_path)``.
+        A new list with every ``${STDIO_SOCKET_PATH}`` replaced by ``host_path``,
+        every ``${STDIO_SOCKET_NAME}`` (the socket basename) replaced by
+        ``os.path.basename(host_path)``, and every ``${STDIO_SOCKET_DIR}``
+        replaced by ``os.path.dirname(host_path)`` (the directory the socket is
+        reserved in — which ``generate`` creates before the command starts, so
+        it can be bind-mounted even though the socket file does not exist yet).
     """
     name = os.path.basename(host_path)
-    return [elem.replace(_PATH_PLACEHOLDER, host_path).replace(_NAME_PLACEHOLDER, name) for elem in argv]
+    directory = os.path.dirname(host_path)
+    return [
+        elem.replace(_PATH_PLACEHOLDER, host_path).replace(_NAME_PLACEHOLDER, name).replace(_DIR_PLACEHOLDER, directory)
+        for elem in argv
+    ]
 
 
 class Orchestrator:

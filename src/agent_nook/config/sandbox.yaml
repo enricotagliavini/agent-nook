@@ -213,11 +213,16 @@ hostname: "agent-sandbox"
 #   track-socket: optional. If true, agent-nook generates a unique socket
 #                 name at run time ({name}-{pid}-{counter}.sock) and wires
 #                 it into the command via the ${STDIO_SOCKET_PATH}
-#                 (full path) / ${STDIO_SOCKET_NAME} (basename) placeholders.
-#                 Inside the sandbox, STDIO_SOCKET_PATH points at the socket
-#                 (bind-mounted at /run/<name>) — no hard-coded path. The
-#                 socket lives in $XDG_RUNTIME_DIR/agent-nook (mode 0700).
-#                 A boolean (default false).
+#                 (full path) / ${STDIO_SOCKET_NAME} (basename) /
+#                 ${STDIO_SOCKET_DIR} (the directory the socket is reserved
+#                 in) placeholders. The directory placeholder lets a command
+#                 bind-mount the containing directory (e.g. a container
+#                 `podman run -v ${STDIO_SOCKET_DIR}:/app:z`) even though the
+#                 socket file does not exist yet. Inside the sandbox,
+#                 STDIO_SOCKET_PATH points at the socket (bind-mounted at
+#                 /run/<name>) — no hard-coded path. The socket lives in
+#                 $XDG_RUNTIME_DIR/agent-nook (mode 0700). A boolean
+#                 (default false).
 #   wait-timeout: optional. Seconds to wait for the socket (default: 30).
 #   keep:         optional. Leave the command running after the sandbox
 #                 exits (default: false).

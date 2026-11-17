@@ -9,8 +9,8 @@ end-to-end path is covered by the S4 integration test).
 
 The orchestrator generates each tracked entry's socket path itself (via
 :func:`agent_nook.socket_factory.generate`) and substitutes the
-``${STDIO_SOCKET_PATH}`` / ``${STDIO_SOCKET_NAME}`` placeholders into the
-already-tokenized argv before starting the command. Tests patch that
+``${STDIO_SOCKET_PATH}`` / ``${STDIO_SOCKET_NAME}`` / ``${STDIO_SOCKET_DIR}``
+placeholders into the already-tokenized argv before starting the command. Tests patch that
 generation to return deterministic paths under ``tmp_path`` so they can
 assert on the socket without depending on the real XDG base dir.
 """
@@ -66,6 +66,19 @@ NO_SOCKET = "import os, sys, time\nopen(sys.argv[2], 'w').write(str(os.getpid())
 # Exits immediately without creating a socket (simulates a background command
 # like 'podman run -d' that returns right away and never exposes its socket).
 EXIT_NO_SOCKET = "import os, sys\nopen(sys.argv[2], 'w').write(str(os.getpid()))\nos._exit(0)\n"
+
+# Writes its argv (socket path, socket dir, pidfile) to the pidfile line by line,
+# then binds a unix socket immediately and stays alive — lets the test assert the
+# substituted socket path/dir actually reached the spawned command.
+ARGS_UNIX_BRIDGE = (
+    "import os, socket, sys, time\n"
+    "sock_path, dir_path, pidfile = sys.argv[1], sys.argv[2], sys.argv[3]\n"
+    "open(pidfile, 'w').write(dir_path + '\\n' + sock_path)\n"
+    "s = socket.socket(socket.AF_UNIX)\n"
+    "s.bind(sock_path)\n"
+    "s.listen(1)\n"
+    "time.sleep(30)\n"
+)
 
 # keep: true fixture: daemonizes (double fork) so the worker is reaped by
 # init after the test kills it — the orchestrator deliberately leaves
@@ -194,7 +207,41 @@ def test_substitute_placeholders_leaves_unmatched_tokens():
     assert out == ["python", "app.py", "--flag"]
 
 
+def test_substitute_placeholders_dir_placeholder():
+    """${STDIO_SOCKET_DIR} fills in the socket's base directory (dirname)."""
+    out = substitute_placeholders(
+        ["podman", "run", "-v", "${STDIO_SOCKET_DIR}:/app:z", "--name", "${STDIO_SOCKET_NAME}"],
+        "/run/agent-nook/mybox-42-0.sock",
+    )
+    assert out == ["podman", "run", "-v", "/run/agent-nook:/app:z", "--name", "mybox-42-0.sock"]
+
+
+def test_substitute_placeholders_all_three_placeholders():
+    """Path, name and dir placeholders coexist without clobbering one another."""
+    out = substitute_placeholders(
+        ["echo", "${STDIO_SOCKET_PATH}", "${STDIO_SOCKET_NAME}", "${STDIO_SOCKET_DIR}"],
+        "/run/agent-nook/mybox-42-0.sock",
+    )
+    assert out == ["echo", "/run/agent-nook/mybox-42-0.sock", "mybox-42-0.sock", "/run/agent-nook"]
+
+
 # --- start / wait_ready / stop ---
+
+
+def test_start_substitutes_socket_dir_placeholder(gen_dir):
+    """start() substitutes ${STDIO_SOCKET_DIR} into the argv; the child receives
+    the base dir the orchestrator generated before launching, plus the socket path."""
+    sock, pidfile = gen_dir / "gen0.sock", gen_dir / "args.pid"
+    orch = Orchestrator(
+        [_entry([sys.executable, "-c", ARGS_UNIX_BRIDGE, "${STDIO_SOCKET_PATH}", "${STDIO_SOCKET_DIR}", str(pidfile)])]
+    )
+    try:
+        orch.start()
+        orch.wait_ready()  # binds at the substituted path, proving PATH substitution too
+    finally:
+        orch.stop()
+    assert pidfile.read_text().splitlines() == [str(gen_dir), str(sock)]
+    _wait_gone(str(sock))  # orch.stop() terminated the spawned command
 
 
 def test_orchestration_output_goes_to_log_not_terminal(tmp_path, capsys):

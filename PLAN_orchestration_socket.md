@@ -23,7 +23,11 @@ generated and tracked by the `Orchestrator` at runtime.
   string) → `track-socket:` (bool, default `false`). Update default config +
   README. **No** migration note / backward compat.
 - **Placeholders:** `${STDIO_SOCKET_PATH}` (full host path) + `${STDIO_SOCKET_NAME}`
-  (basename, e.g. `name-pid-0.sock`).
+  (basename, e.g. `name-pid-0.sock`) + `${STDIO_SOCKET_DIR}` (the directory the
+  socket is reserved in; created before the command starts, so it can be
+  bind-mounted even though the socket file does not exist yet). The directory
+  placeholder enables container commands like
+  `podman run ... -v ${STDIO_SOCKET_DIR}:/app:z --name ${STDIO_SOCKET_NAME}`.
 - **Env var:** single `STDIO_SOCKET_PATH` for the common one-entry case;
   `STDIO_SOCKET_PATH1`, `2`, … when a config has multiple `track-socket` entries.
 - **Sandbox mount target:** `/run/<STDIO_SOCKET_NAME>` (auto bind-mounted; `/run`
@@ -84,8 +88,9 @@ document this and, if it bites, scope the loader expansion to skip
 
 ### Phase 3 — Substitution + orchestrator wiring [CHECKPOINT — DONE]
 - Substitute `${STDIO_SOCKET_PATH}` (full host path) + `${STDIO_SOCKET_NAME}`
-  (basename) into host argv `list[str]` elements (single helper, no
-  re-tokenize).
+  (basename) + `${STDIO_SOCKET_DIR}` (the reserved directory) into host argv
+  `list[str]` elements (single helper, no re-tokenize; the directory
+  placeholder is derived from `os.path.dirname(host_path)`).
 - `Orchestrator.start()`: generate path per `track_socket` entry (counter++),
   substitute, record `host_path`; keep numbered env var mapping
   (`STDIO_SOCKET_PATH1..N`).

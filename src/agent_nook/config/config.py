@@ -509,13 +509,16 @@ class OrchestrationEntry:
     The socket is **not** a static path here: it is generated at run time
     (``{name}-{pid}-{counter}.sock`` in ``$XDG_RUNTIME_DIR/agent-nook``, or
     ``/tmp`` if that is unset). When ``track_socket`` is true, the orchestrator
-    substitutes ``${STDIO_SOCKET_PATH}`` (full host path) and
-    ``${STDIO_SOCKET_NAME}`` (basename) into this entry's argv before launching
-    it, and inside the sandbox sets ``STDIO_SOCKET_PATH`` (to the socket's
-    ``/run`` location) and bind-mounts the socket there — so the sandbox-side
-    ``stdio_stub.py`` reads the path from the environment instead of a
-    hard-coded argument. This lets parallel ``agent-nook`` runs use distinct
-    sockets instead of colliding on a shared path.
+    substitutes ``${STDIO_SOCKET_PATH}`` (full host path),
+    ``${STDIO_SOCKET_NAME}`` (basename) and ``${STDIO_SOCKET_DIR}`` (the
+    directory the socket is reserved in) into this entry's argv before
+    launching it — the directory placeholder lets a command bind-mount the
+    containing directory (e.g. for a container) even though the socket file
+    does not exist yet. Inside the sandbox sets ``STDIO_SOCKET_PATH`` (to the
+    socket's ``/run`` location) and bind-mounts the socket there — so the
+    sandbox-side ``stdio_stub.py`` reads the path from the environment instead
+    of a hard-coded argument. This lets parallel ``agent-nook`` runs use
+    distinct sockets instead of colliding on a shared path.
 
     The ``command`` is configured in the sandbox YAML as a **single command
     string**; the ConfigLoader normalizes it into the argument list shown
