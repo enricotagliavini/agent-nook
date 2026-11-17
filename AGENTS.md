@@ -28,6 +28,12 @@ Run after EVERY change:
 - `ruff format src/`
 - Update tests for all behavior changes. Tests are the contract.
 
+## Testing Conventions
+Apply when writing or reviewing tests:
+- **Document purpose in two layers.** A one-line docstring states *what* the test checks. A *why* comment is added only when the rationale is non-obvious (an edge case, a trap avoided, a design constraint) — not for every test, and never to restate the function name.
+- **Test our code, not external tools.** Assert on the project's own logic and behavior. Do not assert on, or document, third-party tool/library behavior (e.g. bwrap's exit codes). One deliberate exception: a single smoke test that validates the bwrap command *we* build is accepted by a real bwrap — guard it with `shutil.which("bwrap")` and document in the docstring that it guards against regressions in our command construction, not against bwrap itself. No benchmark/timing tests unless deliberately intended.
+- **Keep the suite lean.** As code evolves, remove stale/redundant tests (and replace them). Prefer one high-value test over several thin ones. The suite should stay an essential, convenient tool, not a burden.
+
 ## Linting (Ruff)
 - **Tool**: Ruff only. Line length: 135.
 - **Action**: Auto-fix safe violations. Use `# type: ignore` for intentional type issues.
