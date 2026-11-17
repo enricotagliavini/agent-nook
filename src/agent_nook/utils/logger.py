@@ -25,6 +25,7 @@ Usage:
 
 from __future__ import annotations
 
+import io
 import logging
 import logging.handlers
 import os
@@ -37,6 +38,7 @@ __all__ = [
     "get_log_directory",
     "get_log_file_path",
     "get_state_dir",
+    "log_file_handle",
     "main_logger",
     "set_sandbox_name",
 ]
@@ -79,6 +81,24 @@ def get_log_file_path() -> str:
         (e.g., ~/.local/state/agent-nook/agent-nook.log).
     """
     return os.path.join(get_log_directory(), "agent-nook.log")
+
+
+def log_file_handle() -> io.TextIOWrapper:
+    """Open the log file for child-process stdio.
+
+    Returns a file handle in append mode that a child process — e.g. an
+    orchestration command — can inherit for its stdout/stderr. The child's
+    output is therefore appended to the log instead of reaching the
+    terminal, keeping the agent TUI clean.
+
+    The path follows the same XDG / fallback rules as the logger's own file
+    handler. The handle must be closed by the caller; closing it does not
+    stop a still-running child, which keeps its own inherited copy of the
+    file descriptor open until it exits.
+    """
+    log_file = get_log_file_path()
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    return open(log_file, "a", encoding="utf-8")
 
 
 class SandboxFormatter(logging.Formatter):

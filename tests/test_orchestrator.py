@@ -14,6 +14,7 @@ import socket
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -24,6 +25,7 @@ from agent_nook.config.config import OrchestrationEntry
 from agent_nook.config.loader import ConfigLoader
 from agent_nook.orchestrator import Orchestrator
 from agent_nook.sandbox import BwrapSandbox
+from agent_nook.utils.logger import get_log_file_path
 
 
 # Fake "bridge" that writes its own pid, binds a unix socket immediately,
@@ -139,6 +141,46 @@ def _free_tcp_port() -> int:
     port = s.getsockname()[1]
     s.close()
     return port
+
+
+# Reads one byte from stdin (b'' when stdin is detached) then writes a marker
+# to stdout via raw os.write() calls, which bypass Python's stdio buffering so
+# the output is visible in the log as soon as the child runs.
+_IO_BRIDGE = (
+    "import os\n"
+    "if os.read(0, 1) == b'':\n"
+    "    os.write(1, b'STDIN_EOF')\n"
+    "os.write(1, b'OUTPUT-GOES-TO-LOG')\n"
+)
+
+
+def _wait_for_log(needle: str, timeout: float = 5.0) -> None:
+    """Poll the log file until ``needle`` appears (or time out)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if needle in Path(get_log_file_path()).read_text(encoding="utf-8"):
+            return
+        time.sleep(0.05)
+    pytest.fail(f"{needle!r} not found in log file within {timeout}s")
+
+
+def test_orchestration_output_goes_to_log_not_terminal(tmp_path, capsys, monkeypatch):
+    """A command's stdout/stderr land in the log file, never the terminal, and
+    its stdin is detached from the terminal too."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    sock = tmp_path / "io.sock"
+    orch = Orchestrator(
+        [_entry([sys.executable, "-c", _IO_BRIDGE], str(sock))]
+    )
+    orch.start()
+    _wait_for_log("OUTPUT-GOES-TO-LOG")
+    orch.stop()
+
+    captured = capsys.readouterr()
+    assert "OUTPUT-GOES-TO-LOG" not in captured.out, "child output must not reach the terminal"
+    assert "STDIN_EOF" not in captured.out, "stdin must be detached from the terminal"
+    log_text = Path(get_log_file_path()).read_text(encoding="utf-8")
+    assert "OUTPUT-GOES-TO-LOG" in log_text, "child output must be appended to the log file"
 
 
 # --- start / wait_ready / stop ---

@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from agent_nook.utils.logger import get_log_file_path
+
 
 pytestmark = pytest.mark.integration
 
@@ -112,9 +114,11 @@ def test_orchestration_roundtrip_through_bwrap(test_sandbox_run, e2e_config, soc
         str(sock),
     )
     assert result.returncode == 0, f"agent-nook failed (rc={result.returncode}):\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-    # The bridge ran on the host and served exactly one session.
-    assert "stdio_bridge: listening on" in result.stdout
-    assert "started child pid=" in result.stdout
+    # The bridge ran on the host and served exactly one session. Its output
+    # now goes to the log file (never the terminal), so check the log.
+    log_text = Path(get_log_file_path()).read_text(encoding="utf-8")
+    assert "stdio_bridge: listening on" in log_text
+    assert "started child pid=" in log_text
     # The bridge was stopped cleanly by the orchestrator (SIGTERM): the unix
     # socket file is only unlinked on a clean bridge shutdown, so its absence
     # proves the orchestrator's stop() ran (and did not have to SIGKILL).

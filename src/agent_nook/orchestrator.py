@@ -2,8 +2,9 @@
 
 For every ``orchestration:`` config entry the orchestrator:
 
-1. starts the command on the host (outside the sandbox) with inherited
-   stdio, so its output lands in agent-nook's log;
+1. starts the command on the host (outside the sandbox) with its stdio
+   redirected to the log file (stdin to DEVNULL, stdout and stderr merged),
+   so its output lands in agent-nook's log and never reaches the terminal;
 2. waits — up to the entry's ``wait-timeout`` — until the entry's socket
    is ready: unix — the socket file exists and is a socket; tcp — a
    connection succeeds;
@@ -32,11 +33,13 @@ try:
     from agent_nook.config.config import OrchestrationEntry
     from agent_nook.stdio_bridge import parse_address
     from agent_nook.stdio_bridge import terminate_process
+    from agent_nook.utils.logger import log_file_handle
     from agent_nook.utils.logger import main_logger
 except ImportError:
     from .config.config import OrchestrationEntry
     from .stdio_bridge import parse_address
     from .stdio_bridge import terminate_process
+    from .utils.logger import log_file_handle
     from .utils.logger import main_logger
 
 
@@ -70,20 +73,28 @@ class Orchestrator:
     def start(self) -> None:
         """Start every entry's command (in parallel).
 
-        Stdio is inherited so command output lands in agent-nook's log.
+        Each command runs with its stdio redirected to the log file (stdin
+        to DEVNULL, stdout and stderr merged), so its output lands in
+        agent-nook's log and never reaches the terminal.
 
         Raises:
             RuntimeError: If a command cannot be spawned; all commands
                 started so far are stopped before re-raising.
         """
-        for entry in self._entries:
-            try:
-                proc = subprocess.Popen(entry.command)
-            except (OSError, ValueError) as e:
-                self.stop()
-                raise RuntimeError(f"failed to start orchestration command {' '.join(entry.command)}: {e}") from e
-            self._procs.append((entry, proc))
-            _logger.info("orchestration: started pid=%s socket=%s command=%s", proc.pid, entry.socket, " ".join(entry.command))
+        with log_file_handle() as log_fh:
+            for entry in self._entries:
+                try:
+                    proc = subprocess.Popen(
+                        entry.command,
+                        stdin=subprocess.DEVNULL,
+                        stdout=log_fh,
+                        stderr=subprocess.STDOUT,
+                    )
+                except (OSError, ValueError) as e:
+                    self.stop()
+                    raise RuntimeError(f"failed to start orchestration command {' '.join(entry.command)}: {e}") from e
+                self._procs.append((entry, proc))
+                _logger.info("orchestration: started pid=%s socket=%s command=%s", proc.pid, entry.socket, " ".join(entry.command))
 
     def wait_ready(self) -> None:
         """Wait until every entry's socket is ready.
