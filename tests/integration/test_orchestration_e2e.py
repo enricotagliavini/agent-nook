@@ -148,7 +148,7 @@ mounts:
 orchestration:
   - command: 'python3 -c "{sleeper}"'
     socket: {tmp_path / "never.sock"}
-    wait-timeout: 1
+    wait-timeout: 0.01
 """
     )
     result = test_sandbox_run(

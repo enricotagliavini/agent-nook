@@ -39,11 +39,11 @@ PID_UNIX_BRIDGE = (
     "time.sleep(30)\n"
 )
 
-# Same, but the socket only appears ~0.5 s after start (late readiness).
+# Same, but the socket only appears ~0.2 s after start (late readiness).
 LATE_UNIX_BRIDGE = (
     "import os, socket, sys, time\n"
     "open(sys.argv[2], 'w').write(str(os.getpid()))\n"
-    "time.sleep(0.5)\n"
+    "time.sleep(0.2)\n"
     "s = socket.socket(socket.AF_UNIX)\n"
     "s.bind(sys.argv[1])\n"
     "s.listen(1)\n"
@@ -200,7 +200,7 @@ def test_wait_ready_unix_immediate(tmp_path):
 
 
 def test_wait_ready_late_unix(tmp_path):
-    """A socket that appears ~0.5 s late is picked up by polling."""
+    """A socket that appears ~0.2 s late is picked up by polling."""
     sock, pidfile = tmp_path / "late.sock", tmp_path / "late.pid"
     orch = Orchestrator([_entry([sys.executable, "-c", LATE_UNIX_BRIDGE, str(sock), str(pidfile)], str(sock))])
     try:
@@ -208,7 +208,7 @@ def test_wait_ready_late_unix(tmp_path):
         t0 = time.monotonic()
         orch.wait_ready()
         elapsed = time.monotonic() - t0
-        assert elapsed >= 0.4, f"socket was reported ready too early ({elapsed:.2f}s)"
+        assert elapsed >= 0.15, f"socket was reported ready too early ({elapsed:.2f}s)"
         assert sock.is_socket()
     finally:
         orch.stop()
@@ -251,22 +251,22 @@ def test_parallel_entries(tmp_path):
 def test_timeout_stops_commands_and_raises(tmp_path):
     """A socket that never appears: RuntimeError after wait_timeout, command stopped."""
     sock, pidfile = tmp_path / "never.sock", tmp_path / "never.pid"
-    orch = Orchestrator([_entry([sys.executable, "-c", NO_SOCKET, str(pidfile)], str(sock), wait_timeout=1)])
+    orch = Orchestrator([_entry([sys.executable, "-c", NO_SOCKET, str(pidfile)], str(sock), wait_timeout=0.01)])
     orch.start()
     t0 = time.monotonic()
-    with pytest.raises(RuntimeError, match="not ready after 1s"):
+    with pytest.raises(RuntimeError, match=r"not ready after 0.01s"):
         orch.wait_ready()
     elapsed = time.monotonic() - t0
-    assert 0.9 <= elapsed < 5, f"timeout did not fire at the configured time (elapsed {elapsed:.2f}s)"
+    assert 0.05 <= elapsed < 1, f"timeout did not fire at the configured time (elapsed {elapsed:.2f}s)"
     _wait_dead(_read_pid(pidfile))  # wait_ready() stopped the command itself
 
 
 def test_wait_ready_logs_when_command_exits_without_socket(tmp_path, caplog):
     """A command that exits without creating its socket logs progress, then times out."""
     sock, pidfile = tmp_path / "no.sock", tmp_path / "no.pid"
-    orch = Orchestrator([_entry([sys.executable, "-c", EXIT_NO_SOCKET, str(pidfile)], str(sock), wait_timeout=2)])
+    orch = Orchestrator([_entry([sys.executable, "-c", EXIT_NO_SOCKET, str(pidfile)], str(sock), wait_timeout=0.3)])
     orch.start()
-    with pytest.raises(RuntimeError, match="not ready after 2s"):
+    with pytest.raises(RuntimeError, match=r"not ready after 0.3s"):
         orch.wait_ready()
     _wait_dead(_read_pid(pidfile))
     caplog.set_level(logging.INFO)
@@ -416,7 +416,7 @@ def test_run_never_starts_sandbox_when_socket_never_ready(tmp_path, monkeypatch)
             {
                 "command": f"{sys.executable} -c \"{NO_SOCKET}\" {pidfile}",
                 "socket": str(sock),
-                "wait-timeout": 1,
+                "wait-timeout": 0.01,
             }
         ],
     )
