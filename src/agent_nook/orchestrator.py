@@ -44,6 +44,7 @@ _logger = main_logger(__name__)
 
 _POLL_INTERVAL = 0.1  # seconds between socket readiness checks
 _TCP_CONNECT_TIMEOUT = 1.0  # seconds per tcp readiness probe
+_PROGRESS_LOG_INTERVAL = 3.0  # seconds between "still waiting for socket" logs
 
 
 class Orchestrator:
@@ -64,6 +65,7 @@ class Orchestrator:
         self._entries = entries
         self._procs: list[tuple[OrchestrationEntry, subprocess.Popen]] = []
         self._stopped = False
+        self._last_progress_logged: dict = {}  # id(entry) -> time of last "still waiting" log (OrchestrationEntry is unhashable)
 
     def start(self) -> None:
         """Start every entry's command (in parallel).
@@ -92,6 +94,11 @@ class Orchestrator:
         ``tcp:host:99999999``) — every started command is stopped and a
         RuntimeError is raised, so the sandbox never starts.
 
+        If a command has already exited without its socket becoming
+        ready (e.g. ``podman run -d`` returns immediately but the
+        container never binds), a periodic "still waiting for socket"
+        message is logged so the wait is not silent until the timeout.
+
         Raises:
             RuntimeError: If a socket is not ready in time, or an
                 address is malformed.
@@ -105,12 +112,14 @@ class Orchestrator:
                 self.stop()
                 raise RuntimeError(f"orchestration entry socket {entry.socket!r}: {e}") from e
 
-        pending: list[tuple[OrchestrationEntry, float]] = [(entry, time.monotonic() + entry.wait_timeout) for entry in self._entries]
+        pending: list[tuple[OrchestrationEntry, float, subprocess.Popen]] = [
+            (entry, time.monotonic() + entry.wait_timeout, proc) for entry, proc in self._procs
+        ]
         while pending:
             time.sleep(_POLL_INTERVAL)
             now = time.monotonic()
-            still_pending: list[tuple[OrchestrationEntry, float]] = []
-            for entry, deadline in pending:
+            still_pending: list[tuple[OrchestrationEntry, float, subprocess.Popen]] = []
+            for entry, deadline, proc in pending:
                 if self._is_ready(entry):
                     _logger.info("orchestration: socket %s ready", entry.socket)
                 elif now >= deadline:
@@ -120,8 +129,34 @@ class Orchestrator:
                         f"(command: {' '.join(entry.command)})"
                     )
                 else:
-                    still_pending.append((entry, deadline))
+                    if proc.poll() is not None:
+                        self._log_progress(entry, now)
+                    still_pending.append((entry, deadline, proc))
             pending = still_pending
+
+    def _log_progress(self, entry: OrchestrationEntry, now: float) -> None:
+        """Log a periodic "still waiting for socket" message for a command that has already exited.
+
+        For commands that return immediately (e.g. ``podman run -d``) but
+        never expose their socket, the wait would otherwise be silent until
+        the timeout. Log once when the process is first observed to have
+        exited, then every ``_PROGRESS_LOG_INTERVAL`` seconds.
+        """
+        last = self._last_progress_logged.get(id(entry))
+        if last is None or now - last >= _PROGRESS_LOG_INTERVAL:
+            _logger.info("orchestration: still waiting for socket from command %s", self._short_command(entry))
+            self._last_progress_logged[id(entry)] = now
+
+    @staticmethod
+    def _short_command(entry: OrchestrationEntry) -> str:
+        """Return a short, log-friendly form of the command (first 20 chars + '...').
+
+        Commands longer than 20 chars are truncated with an ellipsis; shorter
+        commands are shown in full. Wrapped in single quotes so the fragment
+        reads as a command in the log line.
+        """
+        cmd = " ".join(entry.command)
+        return f"'{cmd[:20]}...'" if len(cmd) > 20 else f"'{cmd}'"
 
     def stop(self) -> None:
         """Stop every started command that is not ``keep: true``.

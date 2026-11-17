@@ -7,6 +7,7 @@ same way tests/sandbox/test_bwrap_sandbox.py does (the real bwrap
 end-to-end path is covered by the S4 integration test).
 """
 
+import logging
 import os
 import signal
 import socket
@@ -60,6 +61,10 @@ TCP_BRIDGE = (
 
 # Never creates a socket (for the timeout test).
 NO_SOCKET = "import os, sys, time\nopen(sys.argv[1], 'w').write(str(os.getpid()))\ntime.sleep(30)\n"
+
+# Exits immediately without creating a socket (simulates a background command
+# like 'podman run -d' that returns right away and never exposes its socket).
+EXIT_NO_SOCKET = "import os, sys\nopen(sys.argv[1], 'w').write(str(os.getpid()))\nos._exit(0)\n"
 
 # keep: true fixture: daemonizes (double fork) so the worker is reaped by
 # init after the test kills it — the orchestrator deliberately leaves
@@ -212,6 +217,18 @@ def test_timeout_stops_commands_and_raises(tmp_path):
     elapsed = time.monotonic() - t0
     assert 0.9 <= elapsed < 5, f"timeout did not fire at the configured time (elapsed {elapsed:.2f}s)"
     _wait_dead(_read_pid(pidfile))  # wait_ready() stopped the command itself
+
+
+def test_wait_ready_logs_when_command_exits_without_socket(tmp_path, caplog):
+    """A command that exits without creating its socket logs progress, then times out."""
+    sock, pidfile = tmp_path / "no.sock", tmp_path / "no.pid"
+    orch = Orchestrator([_entry([sys.executable, "-c", EXIT_NO_SOCKET, str(pidfile)], str(sock), wait_timeout=2)])
+    orch.start()
+    with pytest.raises(RuntimeError, match="not ready after 2s"):
+        orch.wait_ready()
+    _wait_dead(_read_pid(pidfile))
+    caplog.set_level(logging.INFO)
+    assert any("still waiting for socket" in r.message for r in caplog.records), "no progress log while waiting for a dead command"
 
 
 def test_keep_entry_survives_stop(tmp_path):
