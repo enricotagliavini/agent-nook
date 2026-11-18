@@ -90,13 +90,16 @@ Bubblewrap creates a **userspace sandbox** by:
 
 ### Mount types
 
-Ten mount types are supported:
+Thirteen mount types are supported:
 
 | Type | Syntax | Description |
 |------|--------|-------------|
 | `bind` | `--bind SRC DEST` | Read-write bind mount |
 | `ro-bind` | `--ro-bind SRC DEST` | Read-only bind mount |
 | `dev-bind` | `--dev-bind SRC DEST` | Device bind mount |
+| `bind-try` | `--bind-try SRC DEST` | Like `bind`, but skipped if SRC does not exist |
+| `ro-bind-try` | `--ro-bind-try SRC DEST` | Like `ro-bind`, but skipped if SRC does not exist |
+| `dev-bind-try` | `--dev-bind-try SRC DEST` | Like `dev-bind`, but skipped if SRC does not exist |
 | `tmpfs` | `--tmpfs TARGET [SIZE]` | Temporary filesystem in memory |
 | `proc` | `--proc TARGET` | Proc filesystem |
 | `dev` | `--dev TARGET` | Dev filesystem |
@@ -202,6 +205,12 @@ agent-nook run --bind /host/data:/sandbox/data python3 script.py
 # Read-only bind mount
 agent-nook run --ro-bind /host/config:/sandbox/config python3 script.py
 
+# Bind mount that is skipped if the host source does not exist
+agent-nook run --bind-try /host/data:/sandbox/data python3 script.py
+
+# Read-only bind mount, skipped if the host source does not exist
+agent-nook run --ro-bind-try /host/config:/sandbox/config python3 script.py
+
 # Custom config file
 agent-nook run --config /path/to/config.yaml python3 script.py
 
@@ -266,6 +275,8 @@ agent-nook logs -F -n 100
 | `--unshare NS` | Unshare namespace (e.g. `pid,uts,ipc`, repeat for multiple) |
 | `--bind SRC:DEST` | Bind mount host SRC to sandbox DEST (repeat for multiple) |
 | `--ro-bind SRC:DEST` | Read-only bind mount host SRC to sandbox DEST (repeat for multiple) |
+| `--bind-try SRC:DEST` | Bind mount host SRC to sandbox DEST, skipped if SRC does not exist (repeat for multiple) |
+| `--ro-bind-try SRC:DEST` | Read-only bind mount host SRC to sandbox DEST, skipped if SRC does not exist (repeat for multiple) |
 | `--overlay SRC:WORKDIR:DEST` | Writable overlayfs mount: reads prefer SRC, then the preceding `--overlay-src` layers; writes go to SRC (repeat for multiple) |
 | `--ro-overlay DEST` | Read-only overlayfs mount from at least two preceding `--overlay-src` layers (repeat for multiple) |
 | `--tmp-overlay DEST` | Overlayfs mount from preceding `--overlay-src` layers with non-persistent writes (repeat for multiple) |
@@ -343,7 +354,7 @@ Edit `~/.config/agent-nook/sandbox.yaml` to customize:
 
 ### Supported mount types
 
-Ten mount types are supported:
+Thirteen mount types are supported:
 
 ```yaml
 # Read-write bind mount
@@ -361,6 +372,21 @@ mounts:
   - source: /dev/sda
     target: /sandbox/dev
     type: dev-bind
+
+# Bind mount skipped if the source does not exist (like `bind`, but never fails)
+  - source: /host/path
+    target: /sandbox/path
+    type: bind-try
+
+# Read-only bind mount, skipped if the source does not exist
+  - source: /host/config
+    target: /sandbox/config
+    type: ro-bind-try
+
+# Device bind mount, skipped if the source does not exist
+  - source: /dev/sda
+    target: /sandbox/dev
+    type: dev-bind-try
 
 # Temporary filesystem (in memory)
   - target: /tmp
@@ -410,6 +436,8 @@ CLI equivalents:
 - `--bind SRC:DEST` → `type: bind`
 - `--ro-bind SRC:DEST` → `type: ro-bind`
 - `--dev-bind SRC:DEST` → `type: dev-bind`
+- `--bind-try SRC:DEST` → `type: bind-try` (skipped if SRC is missing)
+- `--ro-bind-try SRC:DEST` → `type: ro-bind-try` (skipped if SRC is missing)
 - `--tmpfs TARGET [SIZE]` → `type: tmpfs` with optional `size`
 - `--proc TARGET` → `type: proc`
 - `--dev TARGET` → `type: dev`
@@ -438,6 +466,12 @@ that control how the **host source path** is handled before the sandbox starts:
 - **`create-as`** (default: `"dir"`): what `create-source` creates — `dir`
   (a directory) or `file` (an empty file; parent directories are created as
   needed). Only valid when `create-source: true`.
+
+> Prefer the `bind-try`, `ro-bind-try` and `dev-bind-try` mount types when you
+> want to tolerate a missing source instead of creating it: those variants
+> mirror bwrap's native `--bind-try`/`--ro-bind-try`/`--dev-bind-try` and are
+> silently skipped when the source does not exist. `create-source`/`create-as`
+> are **not** valid on the try variants — a try mount never creates a source.
 
 ```yaml
 # Create a missing directory (incl. parents) before the sandbox starts

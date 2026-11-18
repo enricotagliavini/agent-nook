@@ -127,8 +127,25 @@ class ConfigLoader:
 
     _OPTIONAL_TYPES = frozenset({"str | None", "int | None", "int | float | None"})
     _VALID_MOUNT_TYPES = frozenset(
-        {"bind", "ro-bind", "dev-bind", "tmpfs", "proc", "dev", "dir", "overlay", "ro-overlay", "tmp-overlay"}
+        {
+            "bind",
+            "ro-bind",
+            "dev-bind",
+            "bind-try",
+            "ro-bind-try",
+            "dev-bind-try",
+            "tmpfs",
+            "proc",
+            "dev",
+            "dir",
+            "overlay",
+            "ro-overlay",
+            "tmp-overlay",
+        }
     )
+    # Types that carry a host source. Only these accept `create-source`/
+    # `create-as`. The `*-try` variants are intentionally absent so the two are
+    # mutually exclusive for free: a try mount can never carry a source flag.
     _SOURCE_MOUNT_TYPES = frozenset({"bind", "ro-bind", "dev-bind"})
     _OVERLAY_MOUNT_TYPES = frozenset({"overlay", "ro-overlay", "tmp-overlay"})
     _VALID_CREATE_AS = frozenset({"dir", "file"})
@@ -196,7 +213,7 @@ class ConfigLoader:
         if getattr(args, "timeout", None) is not None:
             result["timeout"] = args.timeout
 
-        # Override mounts from --bind / --ro-bind
+        # Override mounts from --bind / --ro-bind / --bind-try / --ro-bind-try
         for bind in getattr(args, "bind", []):
             parts = bind.split(":")
             if len(parts) == 2:
@@ -216,6 +233,31 @@ class ConfigLoader:
                         "source": parts[0],
                         "target": parts[1],
                         "type": "ro-bind",
+                    }
+                )
+
+        # --bind-try / --ro-bind-try: same as --bind / --ro-bind but emit the
+        # bwrap *-try variants, which skip the mount when the host source is
+        # missing.
+        for bind in getattr(args, "bind_try", []):
+            parts = bind.split(":")
+            if len(parts) == 2:
+                result.setdefault("mounts", []).append(
+                    {
+                        "source": parts[0],
+                        "target": parts[1],
+                        "type": "bind-try",
+                    }
+                )
+
+        for bind in getattr(args, "ro_bind_try", []):
+            parts = bind.split(":")
+            if len(parts) == 2:
+                result.setdefault("mounts", []).append(
+                    {
+                        "source": parts[0],
+                        "target": parts[1],
+                        "type": "ro-bind-try",
                     }
                 )
 

@@ -819,6 +819,85 @@ def test_create_source_creates_missing_directory(test_sandbox_run, test_create_s
     assert source.is_dir(), f"Expected create-source to create {source}, but it does not exist"
 
 
+@pytest.mark.integration
+def test_bind_try_skips_missing_source(test_sandbox_run, tmp_path) -> None:
+    """--bind-try to a missing source: the sandbox starts and bwrap skips the mount.
+
+    Unlike create-source, a bind-try mount with a non-existent host source must
+    NOT create the source and must NOT fail. Runs the real CLI:
+        agent_nook run --config <config> python3 -c "print('bind-try ok')"
+    """
+    source = tmp_path / "agent" / "workspace"
+    config_path = tmp_path / "test_bind_try.yaml"
+    config_path.write_text(
+        f"""name: test-bind-try
+mounts:
+  - type: ro-bind
+    source: /
+    target: /
+  - type: tmpfs
+    target: /tmp
+  - type: bind-try
+    source: {source}
+    target: /tmp/agent_workspace
+"""
+    )
+    assert not source.exists(), "Precondition: source must not exist"
+
+    result = test_sandbox_run(
+        "run",
+        "--config",
+        str(config_path),
+        "python3",
+        "-c",
+        "print('bind-try ok')",
+    )
+
+    assert result.returncode == 0, (
+        f"Command failed with return code {result.returncode}:\n  stdout: {result.stdout!r}\n  stderr: {result.stderr!r}"
+    )
+    assert not source.is_dir(), f"bind-try must NOT create {source}"
+
+
+@pytest.mark.integration
+def test_ro_bind_try_existing_source(test_sandbox_run, tmp_path) -> None:
+    """--ro-bind-try to an existing source: the mount is applied (content visible).
+
+    Runs the real CLI:
+        agent_nook run --config <config> python3 -c "print(open('/tmp/flag').read())"
+    """
+    source = tmp_path / "flag.txt"
+    source.write_text("hello-from-host\n")
+    config_path = tmp_path / "test_ro_bind_try.yaml"
+    config_path.write_text(
+        f"""name: test-ro-bind-try
+mounts:
+  - type: ro-bind
+    source: /
+    target: /
+  - type: tmpfs
+    target: /tmp
+  - type: ro-bind-try
+    source: {source}
+    target: /tmp/flag
+"""
+    )
+
+    result = test_sandbox_run(
+        "run",
+        "--config",
+        str(config_path),
+        "python3",
+        "-c",
+        "print(open('/tmp/flag').read().strip())",
+    )
+
+    assert result.returncode == 0, (
+        f"Command failed with return code {result.returncode}:\n  stdout: {result.stdout!r}\n  stderr: {result.stderr!r}"
+    )
+    assert "hello-from-host" in result.stdout, f"Expected mounted content in stdout, got: {result.stdout!r}"
+
+
 _overlay_probe: bool | None = None
 
 

@@ -88,6 +88,9 @@ class Mount:
     - bind:        {"source": "/host/path", "target": "/sandbox/path"}
     - ro-bind:     {"source": "/host/path", "target": "/sandbox/path"}
     - dev-bind:    {"source": "/dev/sda", "target": "/sandbox/dev"}
+    - bind-try:     {"source": "/host/path", "target": "/sandbox/path"}  # skip mount if source missing
+    - ro-bind-try:  {"source": "/host/path", "target": "/sandbox/path"}  # skip mount if source missing
+    - dev-bind-try: {"source": "/dev/sda", "target": "/sandbox/dev"}     # skip mount if source missing
     - tmpfs:       {"target": "/tmp", "size": "100M"}
     - proc:        {"target": "/proc"}
     - dev:         {"target": "/dev"}
@@ -101,11 +104,14 @@ class Mount:
 
     The build() method enforces the semantic invariants of a single mount:
 
-      - Mount type must be one of: bind, ro-bind, dev-bind, tmpfs, proc, dev, dir,
+      - Mount type must be one of: bind, ro-bind, dev-bind, bind-try, ro-bind-try,
+        dev-bind-try, tmpfs, proc, dev, dir,
         overlay, ro-overlay, tmp-overlay.
-      - Bind/ro-bind/dev-bind require both `source` and `target` to be non-None.
+      - Bind/ro-bind/dev-bind and their *-try variants require both `source` and
+        `target` to be non-None. `*-try` mounts (and `create-source`/`create-as`)
+        are mutually exclusive: the try variants reject the source flags.
       - Dir/tmpfs require a non-None `target`.
-      - Dev-bind requires `device=True`.
+      - Dev-bind(-try) requires `device=True`.
       - `create_as` must be "dir" or "file".
       - `overlay` requires `source` (RWSRC), `workdir`, `target` and at least one
         `overlay_src` layer; `ro-overlay` requires `target` and at least two
@@ -126,7 +132,8 @@ class Mount:
     Args:
         source: The source path (required for bind, ro-bind, dev-bind types).
         target: The target path inside the sandbox (required for all types).
-        type: The mount type. Must be one of: bind, ro-bind, dev-bind, tmpfs,
+        type: The mount type. Must be one of: bind, ro-bind, dev-bind, bind-try,
+              ro-bind-try, dev-bind-try, tmpfs,
               proc, dev, dir.
         device: True for dev-bind mounts (required when type="dev-bind").
         size: Human-readable size string for tmpfs mounts (e.g., "100M").
@@ -165,11 +172,14 @@ class Mount:
         Mount's type and fields are semantically consistent.
 
         Validation performed:
-          - Mount type must be one of: bind, ro-bind, dev-bind, tmpfs, proc, dev, dir,
+          - Mount type must be one of: bind, ro-bind, dev-bind, bind-try, ro-bind-try,
+            dev-bind-try, tmpfs, proc, dev, dir,
             overlay, ro-overlay, tmp-overlay.
-          - Bind/ro-bind/dev-bind require both `source` and `target` to be non-None.
+          - Bind/ro-bind/dev-bind and their *-try variants require both `source` and
+            `target` to be non-None. `*-try` mounts (and `create-source`/`create-as`)
+            are mutually exclusive: the try variants reject the source flags.
           - Dir/tmpfs require a non-None `target`.
-          - Dev-bind requires `device=True`.
+          - Dev-bind(-try) requires `device=True`.
           - `create_as` must be "dir" or "file".
           - Size is parsed and converted to bytes for tmpfs.
           - `overlay` requires `source` (RWSRC), `workdir`, `target` and at least
@@ -198,6 +208,9 @@ class Mount:
             "bind",
             "ro-bind",
             "dev-bind",
+            "bind-try",
+            "ro-bind-try",
+            "dev-bind-try",
             "tmpfs",
             "proc",
             "dev",
@@ -208,7 +221,7 @@ class Mount:
         ):
             raise ValueError(
                 f"Unknown mount type: {self.type}. "
-                "Valid types: bind, ro-bind, dev-bind, tmpfs, proc, dev, dir, overlay, ro-overlay, tmp-overlay"
+                "Valid types: bind, ro-bind, dev-bind, bind-try, ro-bind-try, dev-bind-try, tmpfs, proc, dev, dir, overlay, ro-overlay, tmp-overlay"
             )
 
         if self.create_as not in ("dir", "file"):
@@ -223,25 +236,16 @@ class Mount:
                 "(only overlay, ro-overlay and tmp-overlay mounts do)"
             )
 
-        if mount_type in ("bind", "ro-bind", "dev-bind"):
+        if mount_type in ("bind", "ro-bind", "dev-bind", "bind-try", "ro-bind-try", "dev-bind-try"):
             if self.source is None:
                 raise ValueError(f"Mount type '{self.type}' requires a non-empty source")
             if self.target is None:
                 raise ValueError(f"Mount type '{self.type}' requires a non-empty target")
 
-            if mount_type == "ro-bind":
-                args.extend(["--ro-bind", self.source, self.target])
-            elif mount_type == "dev-bind":
-                if self.device:
-                    args.extend(["--dev-bind", self.source, self.target])
-                else:
-                    raise ValueError(
-                        f"Mount type 'dev-bind' requires device=True: "
-                        f"mount({self.source!r}, target={self.target!r}, "
-                        f"type='dev-bind', device=True)"
-                    )
-            else:
-                args.extend(["--bind", self.source, self.target])
+            # _bind_flag() is the single source of truth for the flag (and the
+            # dev-bind device check); it appends '-try' for the skip-if-missing
+            # variants so the emitted flag mirrors bwrap's --bind-try etc.
+            args.extend([self._bind_flag(), self.source, self.target])
 
         elif mount_type == "tmpfs":
             if self.target is None:
@@ -270,6 +274,39 @@ class Mount:
             args.extend(["--dir", self.target])
 
         return args
+
+    def _bind_flag(self) -> str:
+        """Return the bwrap flag for this bind-family mount.
+
+        Maps the mount type to its base flag (``--bind``/``--ro-bind``/
+        ``--dev-bind``) and appends ``-try`` for the ``*-try`` variants, so the
+        emitted flag mirrors bwrap's ``--bind-try``/``--ro-bind-try``/
+        ``--dev-bind-try``: the mount is skipped when the source does not exist.
+        This is the single source of truth for the flag, which keeps the
+        ``dev-bind`` ``device=True`` requirement validated in exactly one place.
+
+        Returns:
+            One of ``--bind``, ``--ro-bind``, ``--dev-bind`` or the matching
+            ``-try`` form.
+
+        Raises:
+            ValueError: If this is a ``dev-bind(-try)`` mount without
+                ``device=True``.
+        """
+        mount_type = self.type.lower().strip()
+        if mount_type.startswith("dev-bind"):
+            if not self.device:
+                raise ValueError(
+                    f"Mount type '{self.type}' requires device=True: "
+                    f"mount({self.source!r}, target={self.target!r}, "
+                    f"type='{self.type}', device=True)"
+                )
+            prefix = "--dev-bind"
+        elif mount_type.startswith("ro-bind"):
+            prefix = "--ro-bind"
+        else:
+            prefix = "--bind"
+        return f"{prefix}-try" if mount_type.endswith("-try") else prefix
 
     def _build_overlay_args(self, mount_type: str) -> list[str]:
         """Build the bwrap arguments for overlay, ro-overlay and tmp-overlay mounts.
@@ -561,9 +598,12 @@ class SandboxConfig:
     """Complete sandbox configuration.
 
     Mounts can use the unified type system:
-        - type: "bind"     → --bind SRC DEST
-        - type: "ro-bind"   → --ro-bind SRC DEST
-        - type: "dev-bind"  → --dev-bind SRC DEST
+        - type: "bind"       → --bind SRC DEST
+        - type: "ro-bind"    → --ro-bind SRC DEST
+        - type: "dev-bind"   → --dev-bind SRC DEST
+        - type: "bind-try"   → --bind-try SRC DEST (skipped if source missing)
+        - type: "ro-bind-try"→ --ro-bind-try SRC DEST (skipped if source missing)
+        - type: "dev-bind-try"→ --dev-bind-try SRC DEST (skipped if source missing)
         - type: "tmpfs"     → --tmpfs TARGET [SIZE]
         - type: "proc"      → --proc TARGET
         - type: "dev"       → --dev TARGET

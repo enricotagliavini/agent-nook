@@ -57,6 +57,23 @@ mounts:
   # --- Mount type: ro-bind    → --ro-bind SRC DEST ---
   # Read-only host mounts (safer for multi-tenant use).
 
+  # --- Mount type: *-try      → --bind-try / --ro-bind-try SRC DEST ---
+  # Like bind / ro-bind, but the mount is SKIPPED when the host source does
+  # not exist (bwrap's native "*-try" behavior). Perfect for broad config
+  # files where a source may or may not be present on a given machine — no
+  # need to force-create it. `dev-bind-try` is available too but not exposed
+  # on the CLI. `create-source` / `create-as` are NOT valid on try types.
+  #
+  # Examples:
+  # - source: /etc/myapp
+  #   target: /etc/myapp
+  #   type: bind-try
+  #
+  # - source: /data/agent
+  #   target: /workspace
+  #   type: ro-bind-try
+
+
   # Optional flags for bind/ro-bind/dev-bind mounts:
   #   create-source: true|false (default: false)
   #     Create the host source path before the sandbox starts, if it does
