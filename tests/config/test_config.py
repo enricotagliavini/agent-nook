@@ -148,15 +148,10 @@ def test_capability_set_build():
     assert CapabilitySet(dropped=["ALL"]).build() == ["--cap-drop", "ALL"]
 
     # Drop specific
-    assert CapabilitySet(dropped=["NET_ADMIN", "NET_RAW"]).build() == [
-        "--cap-drop", "NET_ADMIN",
-        "--cap-drop", "NET_RAW"
-    ]
+    assert CapabilitySet(dropped=["NET_ADMIN", "NET_RAW"]).build() == ["--cap-drop", "NET_ADMIN", "--cap-drop", "NET_RAW"]
 
     # Keep specific
-    assert CapabilitySet(kept=["CHOWN", "SETUID"]).build() == [
-        "--cap-add", "CHOWN", "--cap-add", "SETUID"
-    ]
+    assert CapabilitySet(kept=["CHOWN", "SETUID"]).build() == ["--cap-add", "CHOWN", "--cap-add", "SETUID"]
 
     # No constraints
     assert CapabilitySet().build() == []
@@ -227,7 +222,7 @@ def test_sandbox_config_unset_vars_mixed():
     cmd = builder.build(["echo", "hello"])
     # ALL comes first (triggers --clearenv)
     idx = cmd.index("--clearenv")
-    assert "--unsetenv" not in cmd[idx:idx+1]
+    assert "--unsetenv" not in cmd[idx : idx + 1]
     # No --unsetenv should follow since ALL clears everything
 
 

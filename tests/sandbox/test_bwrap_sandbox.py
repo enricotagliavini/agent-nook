@@ -5,10 +5,10 @@ these tests exercise BwrapSandbox.build() delegation, command
 appending, and BwrapSandbox.run() execution end-to-end.
 """
 
-import os
+import shutil
 import subprocess
 import sys
-import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +17,7 @@ sys.path.insert(0, "src")
 
 from agent_nook.config.loader import ConfigLoader
 from agent_nook.sandbox import BwrapSandbox
+from agent_nook.sandbox.bwrap_sandbox import _stdio_stub_host_path
 
 
 def test_build_command_with_ro_bind():
@@ -87,11 +88,37 @@ def test_build_command_with_command():
     assert "hello" in cmd
 
 
-def test_bwrap_sandbox_run_basic():
-    """Test basic sandbox execution via BwrapSandbox.run()."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write(
-            """name: test-sandbox
+def test_build_forwards_stdio_stub_path():
+    """BwrapSandbox.build() forwards ``stdio_stub_path`` to the builder."""
+    config = ConfigLoader().set(
+        {
+            "name": "test",
+            "mounts": [{"source": "/", "target": "/", "type": "bind"}, {"target": "/run", "type": "tmpfs"}],
+            "capabilities": {"drop": ["ALL"]},
+        }
+    )
+    cmd = BwrapSandbox(config).build(["echo"], stdio_stub_path="/host/stdio_stub.py")
+    assert ["--bind", "/host/stdio_stub.py", "/run/stdio_stub.py"] in [cmd[i : i + 3] for i in range(len(cmd) - 2)]
+
+
+def test_stdio_stub_host_path_resolves_to_installed_file():
+    """The stub path helper points at the bundled ``stdio_stub.py``."""
+    assert _stdio_stub_host_path() == str(Path(__file__).resolve().parent.parent.parent / "src" / "agent_nook" / "stdio_stub.py")
+
+
+@pytest.mark.skipif(shutil.which("bwrap") is None, reason="bwrap not installed; validates our built command")
+def test_run_bwrap_command_accepted_by_real_bwrap(tmp_path):
+    """Our built bwrap command is accepted by a real bwrap (validates command construction).
+
+    This is the only test in the suite that runs the real bwrap binary. Its
+    purpose is to catch regressions in how *we* build the bwrap command (a
+    flag bwrap no longer accepts, malformed args), not to assert anything
+    about bwrap's runtime behaviour. Guarded and skipped where bwrap is
+    unavailable; keep it minimal.
+    """
+    cfg = tmp_path / "sandbox.yaml"
+    cfg.write_text(
+        """name: test-sandbox
 chdir: "/tmp"
 mounts:
   - source: /
@@ -99,215 +126,45 @@ mounts:
     type: bind
   - target: /tmp
     type: tmpfs
-die_with_parent: true
-new_session: true
-"""
-        )
-        path = f.name
-
-    try:
-        config = ConfigLoader().load(path)
-        result = BwrapSandbox(config).run(["echo", "hello"])
-        assert result.success is True
-        assert result.return_code == 0
-    finally:
-        os.unlink(path)
-
-
-def test_bwrap_sandbox_run_with_hostname():
-    """Test BwrapSandbox.run() with custom hostname."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write(
-            """name: test-sandbox
-chdir: "/tmp"
-mounts:
-  - source: /
-    target: /
-    type: bind
-  - target: /tmp
-    type: tmpfs
+capabilities:
+  drop:
+    - ALL
 unshare:
   uts: true
-hostname: myhost
+hostname: agentnook
 die_with_parent: true
 new_session: true
 """
-        )
-        path = f.name
-
-    try:
-        config = ConfigLoader().load(path)
-        result = BwrapSandbox(config).run(["bash", "-c", "cat /proc/sys/kernel/hostname"])
-        assert result.success is True
-    finally:
-        os.unlink(path)
+    )
+    config = ConfigLoader().load(str(cfg))
+    result = BwrapSandbox(config).run(["echo", "hello"])
+    assert result.success is True
 
 
-def test_bwrap_sandbox_run_with_env_vars():
-    """Test BwrapSandbox.run() with environment variables."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write(
-            """name: test-sandbox
-chdir: "/tmp"
-mounts:
-  - source: /
-    target: /
-    type: bind
-  - target: /tmp
-    type: tmpfs
-env_vars:
-  MY_VAR: hello
-die_with_parent: true
-new_session: true
-"""
-        )
-        path = f.name
+def test_run_forwards_timeout_and_propagates(tmp_path, monkeypatch):
+    """run() forwards the configured timeout to subprocess and lets TimeoutExpired propagate.
 
-    try:
-        config = ConfigLoader().load(path)
-        result = BwrapSandbox(config).run(["echo", "hello"])
-        assert result.success is True
-    finally:
-        os.unlink(path)
-
-
-def test_bwrap_sandbox_run_unshare_namespace():
-    """Test BwrapSandbox.run() with unshare namespace."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write(
-            """name: test-sandbox
-chdir: "/tmp"
-mounts:
-  - source: /
-    target: /
-    type: bind
-  - target: /tmp
-    type: tmpfs
-unshare:
-  pid: true
-die_with_parent: true
-new_session: true
-"""
-        )
-        path = f.name
-
-    try:
-        config = ConfigLoader().load(path)
-        result = BwrapSandbox(config).run(["bash", "-c", "echo sandbox"])
-        assert result.success is True
-        assert result.return_code == 0
-    finally:
-        os.unlink(path)
-
-
-def test_bwrap_sandbox_run_path_error():
-    """Test BwrapSandbox.run() returns non-zero return code for non-existent bind source.
-
-    bwrap errors propagate directly from subprocess and produce a non-zero return code.
+    bwrap is mocked so the assertion is about *our* timeout handling, not
+    bwrap's behaviour (which the single real-bwrap test above already covers).
     """
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write(
-            """name: test-sandbox
-chdir: "/tmp"
-mounts:
-  - source: /nonexistent/path
-    target: /sandbox
-    type: bind
-  - target: /tmp
-    type: tmpfs
-die_with_parent: true
-new_session: true
-"""
-        )
-        path = f.name
 
-    try:
-        config = ConfigLoader().load(path)
-        result = BwrapSandbox(config).run(["echo", "hello"])
-        assert result.success is False
-        assert result.return_code != 0
-    finally:
-        os.unlink(path)
+    def _raise(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd="bwrap", timeout=_kwargs.get("timeout"))
 
+    monkeypatch.setattr("agent_nook.sandbox.bwrap_sandbox.subprocess.run", _raise)
 
-def test_bwrap_sandbox_run_command_not_found():
-    """Test BwrapSandbox.run() returns non-zero return code for non-existent command."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write(
-            """name: test-sandbox
-chdir: "/tmp"
-mounts:
-  - source: /
-    target: /
-    type: bind
-  - target: /tmp
-    type: tmpfs
-die_with_parent: true
-new_session: true
-"""
-        )
-        path = f.name
-
-    try:
-        config = ConfigLoader().load(path)
-        result = BwrapSandbox(config).run(["nonexistent-cmd-xyz"])
-        assert result.success is False
-        assert result.return_code != 0
-    finally:
-        os.unlink(path)
-
-
-def test_bwrap_sandbox_run_timeout():
-    """Test BwrapSandbox.run() with a timeout configured in config."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write(
-            """name: test-sandbox
-chdir: "/tmp"
-mounts:
-  - source: /
-    target: /
-    type: bind
-  - target: /tmp
-    type: tmpfs
-timeout: 0.1
-die_with_parent: true
-new_session: true
-"""
-        )
-        path = f.name
-
-    try:
-        config = ConfigLoader().load(path)
-        with pytest.raises(subprocess.TimeoutExpired, match="timed out"):
-            BwrapSandbox(config).run(["bash", "-c", "sleep 5"])
-    finally:
-        os.unlink(path)
-
-
-def test_bwrap_sandbox_run_die_with_parent_false():
-    """Test BwrapSandbox.run() with die_with_parent=False."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write(
-            """name: test-sandbox
-chdir: "/tmp"
-mounts:
-  - source: /
-    target: /
-    type: bind
-  - target: /tmp
-    type: tmpfs
-die_with_parent: false
-new_session: true
-"""
-        )
-        path = f.name
-
-    try:
-        config = ConfigLoader().load(path)
-        result = BwrapSandbox(config).run(["echo", "hello"])
-        assert result.success is True
-    finally:
-        os.unlink(path)
+    config = ConfigLoader().load_from_dict(
+        {
+            "name": "test",
+            "chdir": "/tmp",
+            "mounts": [{"source": "/", "target": "/", "type": "bind"}, {"target": "/tmp", "type": "tmpfs"}],
+            "timeout": 0.1,
+            "die_with_parent": True,
+            "new_session": True,
+        }
+    )
+    with pytest.raises(subprocess.TimeoutExpired):
+        BwrapSandbox(config).run(["sleep", "5"])
 
 
 def test_cli_command_building():

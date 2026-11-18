@@ -42,10 +42,11 @@ This is a project I do during my spare time. **It may contain errors or security
 
 This project is being developed with the assistance of AI open weight models and a lot of free and open software. With all of the following (plus more) this would not have been possible. A big thank you to everybody!
 
- - [Qwen AI model](https://huggingface.co/Qwen) for providing the open weight model.
- - [Oh My Pi](https://github.com/can1357/oh-my-pi), [Qwen-code](https://github.com/qwenLM/qwen-code) and [Opencode](https://opencode.ai/) the AI coding agents I used for this project.
+ - [Qwen AI model](https://huggingface.co/Qwen) [Ornith AI](https://ornith.ai/) for providing the open weight models.
+ - [Qwen-code](https://github.com/qwenLM/qwen-code) and [Oh My Pi](https://github.com/can1357/oh-my-pi) the AI coding agents I used for this project.
  - [Lemonade AI server](https://lemonade-server.ai/) for the easy to use personal and local AI server.
  - [AMD ROCm](https://github.com/ROCm) for the great Linux support. Using ROCm on Fedora worked out of the box and it was a trouble free experience.
+ - [The Mesa 3D Graphics Library](https://mesa3d.org/) for the amazing work on the Vulkan backend.
  - [Fedora](https://fedoraproject.org/kde) [Plasma Desktop](https://kde.org/) edition, for making a great Linux distro and packaging ROCm and llama-cpp making it a trouble free installation experience.
  - [GNU](https://www.gnu.org/) for start and promoting important free software projects.
  - [Linux](https://www.kernel.org/) For providing the kernel to run all of this.
@@ -222,6 +223,9 @@ agent-nook run --unset-env PATH --unset-env HOME python3 script.py
 # Custom hostname
 agent-nook run --hostname my-agent python3 script.py
 
+# Override the timeout (seconds)
+agent-nook run --timeout 60 python3 my_script.py
+
 # Work in specific directory
 agent-nook run --chdir /home/enrico python3 my_script.py
 
@@ -269,6 +273,7 @@ agent-nook logs -F -n 100
 | `--env KEY=VALUE` | Set environment variable (repeat for multiple) |
 | `--unset-env KEY` | Unset environment variable (repeat for multiple) |
 | `--hostname HOSTNAME` | Set sandbox hostname |
+| `--timeout SECONDS` | Maximum execution time in seconds (overrides config) |
 | `--new-session` | Create new session (prevents TIOCSTI attacks, **default: on**) |
 | `--no-new-session` | Don't create new session (allows TIOCSTI) |
 | `--version` | Print version and exit |
@@ -331,9 +336,10 @@ Edit `~/.config/agent-nook/sandbox.yaml` to customize:
 - **`hostname`**: Sandbox hostname (implies UTS namespace unshare)
 - **`die_with_parent`**: Kill sandbox children when parent exits (default: `true`). Relies on the kernel's `PDEATHSIG` (bwrap's `--die-with-parent`); on systems where that mechanism is restricted or ignored (some containerized/CI environments), sandboxed processes may outlive agent-nook.
 - **`new_session`**: Create a new session (prevents TIOCSTI attacks, default: `true`)
-- **`timeout`**: Maximum execution time in seconds (`null` = no timeout). On timeout, agent-nook exits non-zero and kills the bwrap process; the sandboxed command itself is terminated via `die_with_parent`, so it carries the same platform caveat — on systems that ignore `PDEATHSIG`, the command may keep running until it finishes on its own.
+- **`timeout`**: Maximum execution time in seconds (`null` = no timeout). Can be overridden at runtime with `--timeout SECONDS`. On timeout, agent-nook exits non-zero and kills the bwrap process; the sandboxed command itself is terminated via `die_with_parent`, so it carries the same platform caveat — on systems that ignore `PDEATHSIG`, the command may keep running until it finishes on its own.
 - **`env_vars`**: Environment variables to set (YAML map: `KEY: value`)
 - **`unset_vars`**: Environment variables to unset as a space-separated string, or `ALL` to clear all env vars (e.g. `unset_vars: "PATH HOME"` or `unset_vars: ALL`)
+- **`orchestration`**: Host-side commands to start before the sandbox (e.g. a stdio→socket bridge) and stop after it exits — see [Orchestration](#orchestration)
 
 ### Supported mount types
 
@@ -500,6 +506,69 @@ agent-nook run \
   --env PATH=/usr/bin:/bin \
   python3 safe_agent.py
 ```
+
+## Orchestration
+
+Some agents need helper processes that must be alive while the sandbox runs — typically a bridge that exposes a stdio MCP server over a socket. The `orchestration:` key declares host-side commands that agent-nook starts **before** the sandbox and stops again after the sandbox exits.
+
+```yaml
+orchestration:
+  - command: "stdio-bridge --listen ${STDIO_SOCKET_PATH} -- node /opt/mcp/index.js"
+    track-socket: true
+```
+
+### Socket naming (runtime-generated)
+
+When an entry sets `track-socket: true`, agent-nook **generates a unique socket name at run time** — `{name}-{pid}-{counter}.sock` — and wires it into both the host command and the sandbox. This makes running multiple `agent-nook` processes in parallel safe: each process gets its own socket even when the config string is identical.
+
+- The placeholder `${STDIO_SOCKET_PATH}` (the full host path, e.g. `/tmp/agent-nook/test-1234-0.sock`) is substituted into the command **before** it is executed. The basename `${STDIO_SOCKET_NAME}` (e.g. `test-1234-0.sock`) is available too, for cases where only the name is needed. The directory `${STDIO_SOCKET_DIR}` (e.g. `/tmp/agent-nook`, the directory the socket is reserved in) is also available.
+- The sandbox receives the same path as the `STDIO_SOCKET_PATH` environment variable, and the socket is bind-mounted inside the sandbox at `/run/<name>` (the default config mounts `/run` as a tmpfs, so this works without extra setup). Inside the sandbox, `stdio_stub.py` reads `STDIO_SOCKET_PATH` — no hard-coded path in the command.
+- The sandbox-side stdio stub (`stdio_stub.py`) is bind-mounted into the sandbox at `/run/stdio_stub.py` automatically — agent-nook resolves the stub's installed host path and mounts it there. The sandboxed command runs `python3 /run/stdio_stub.py`, needing no agent-nook install and importing nothing from agent-nook, so it works on any base image.
+- For a config with a single tracked entry, the env var is `STDIO_SOCKET_PATH`. If an entry tracks multiple sockets, they are numbered `STDIO_SOCKET_PATH1`, `STDIO_SOCKET_PATH2`, … in config order.
+- The socket lives in `$XDG_RUNTIME_DIR/agent-nook` (falling back to `/tmp`), created with mode `0700` so a local user can't sniff a bridge socket.
+- `${STDIO_SOCKET_PATH}` is a **run-time** substitution: it is left as-is by config load. The loader never expands it (even if `STDIO_SOCKET_PATH` happens to be set in the host environment, as it is inside the sandbox), because the orchestrator fills it with the actual path at execution time.
+- For a container command (e.g. `podman run ... -v ${STDIO_SOCKET_DIR}:/app:z --name ${STDIO_SOCKET_NAME}`), mount the **directory** `${STDIO_SOCKET_DIR}` rather than the socket itself — the socket file does not exist when the container is created, but the directory does. `${STDIO_SOCKET_NAME}` gives the socket's basename so the container can build the path inside (`/app/<name>`).
+
+### Entry fields
+
+| Field | Required | Description |
+|---|---|---|
+| `command` | yes | Command to run on the host as a **single string** (no shell; tokenized into arguments with `shlex` — e.g. `"stdio-bridge --listen ${STDIO_SOCKET_PATH} -- node index.js"`). Wrap arguments that contain spaces or shell metacharacters in quotes |
+| `track-socket` | no | If `true`, agent-nook generates a unique socket name at run time and wires it into the command (via `${STDIO_SOCKET_PATH}` / `${STDIO_SOCKET_NAME}` / `${STDIO_SOCKET_DIR}` placeholders) and the sandbox (as the `STDIO_SOCKET_PATH` env var + a bind-mount at `/run/<name>`). Defaults to `false` — a boolean only; `udp:` has no meaning here |
+| `wait-timeout` | no | Seconds to wait for the generated socket to become ready (default: `30`). On timeout agent-nook exits non-zero and stops every orchestration command — the sandbox never starts |
+| `keep` | no | If `true`, the command is not stopped when the sandbox exits (default: `false`). Use for processes you manage yourself |
+
+Unknown keys are rejected; `command` must be a non-empty string (tokenized with `shlex`, so arguments with spaces or shell metacharacters are wrapped in quotes).
+
+### Worked example: bridging a stdio MCP server
+
+agent-nook ships two standalone, stdlib-only helper scripts (no agent-nook imports — they are safe to copy into a container image):
+
+- `stdio_bridge.py` — runs a stdio MCP server on the host and exposes it over a unix/TCP socket. Each client connection gets its own server child process; the child is terminated when the client disconnects. It is installed as the `stdio-bridge` console command when agent-nook is installed.
+- `stdio_stub.py` — runs **inside** the sandbox: bridges the sandboxed command's stdio to the socket, so the agent can talk to the MCP server as if it were a local stdio process. It reads the socket path from the `STDIO_SOCKET_PATH` environment variable (or an explicit `--socket` argument, for manual runs). agent-nook bind-mounts it into the sandbox at `/run/stdio_stub.py`, so it is run there as `python3 /run/stdio_stub.py` — no agent-nook install needed on the sandbox side.
+
+Host side, in the config:
+
+```yaml
+orchestration:
+  - command: "stdio-bridge --listen ${STDIO_SOCKET_PATH} -- node /opt/mcp/index.js"
+    track-socket: true
+```
+
+Inside the sandbox, run the stub in place of the server (no socket path in the command — it comes from the env var; the stub itself is bind-mounted at `/run/stdio_stub.py`):
+
+```bash
+agent-nook run python3 /run/stdio_stub.py
+```
+
+### Lifecycle
+
+1. agent-nook starts every orchestration command on the host (they inherit agent-nook's stdio, so e.g. bridge logs appear in agent-nook's output and log file).
+2. It waits for each generated socket to become ready (unix: the file exists and is a socket; TCP: a connection succeeds), up to each entry's `wait-timeout`.
+3. The sandbox starts, with `STDIO_SOCKET_PATH` set and the socket bind-mounted at `/run/<name>`.
+4. When the sandbox command exits, agent-nook stops every non-`keep` entry: SIGTERM, then SIGKILL after 5 seconds if still running. A bridge that stopped cleanly also unlinks its unix socket file; agent-nook cleans up any socket that leaked (e.g. after a SIGKILL/crash).
+
+If a socket never becomes ready (or a placeholder is unresolved), agent-nook exits non-zero **without starting the sandbox** and stops every orchestration command.
 
 ## Technical Details
 

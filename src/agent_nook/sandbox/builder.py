@@ -14,13 +14,14 @@ Layer 1: ConfigLoader._validate_structure()      → schema check
 Layer 2: ConfigLoader._parse_mounts()            → mount type/fields check
 Layer 3: ConfigLoader._parse_capabilities()      → cap list-of-strings check
 Layer 4: ConfigLoader._parse_unshare()           → ns key/type check
-Layer 5: SandboxConfig.__post_init__() → non-empty mounts gate
-Layer 6: BwrapBuilder.build()                    → uses validated config
+Layer 5: ConfigLoader._parse_orchestration()     → orchestration entry check
+Layer 6: SandboxConfig.__post_init__() → non-empty mounts gate
+Layer 7: BwrapBuilder.build()                    → uses validated config
 ```
 
 The builder is a **pure consumer** — it transforms validated data into
 a bwrap command line. It does not repeat validation because:
-  - The config is guaranteed valid by Layer 5 (__post_init__).
+  - The config is guaranteed valid by Layer 6 (__post_init__).
   - Re-validating here would be redundant and error-prone.
   - If an error occurs, the config has already failed validation upstream.
 
@@ -179,7 +180,12 @@ class BwrapBuilder:
         """Return the config as-is (no validation, no transformation)."""
         return self._config
 
-    def build(self, command: list[str]) -> list[str]:
+    def build(
+        self,
+        command: list[str],
+        socket_mounts: object = None,
+        stdio_stub_path: str | None = None,
+    ) -> list[str]:
         """Build the complete bwrap command line.
 
         Mounts are ordered via `build_mounts_order()` to ensure that
@@ -189,6 +195,18 @@ class BwrapBuilder:
 
         Args:
             command: The command and arguments to run inside the sandbox.
+            socket_mounts: Runtime socket wiring (the list of
+                ``SocketMount`` objects returned by
+                :meth:`agent_nook.orchestrator.Orchestrator.socket_mounts`),
+                or ``None``. Each mount is bind-mounted into ``/run`` and the
+                sandbox's ``STDIO_SOCKET_PATH`` (or numbered) env var is set to
+                that path so ``stdio_stub`` can find it.
+            stdio_stub_path: Absolute host path to the bundled sandbox-side
+                stdio stub, or ``None`` (no bind-mount). When provided, the
+                file is bind-mounted at ``/run/stdio_stub.py`` so the
+                sandboxed command can run it without knowing where agent-nook
+                is installed (the sandbox imports nothing from agent-nook, so
+                there is no entry point to resolve).
 
         Returns:
             A list that can be passed directly to subprocess.run().
@@ -238,6 +256,19 @@ class BwrapBuilder:
         # Set environment variables
         for key, value in self._config.env_vars.items():
             args.extend(["--setenv", key, str(value)])
+
+        # Runtime socket mounts: bind each generated host socket into /run and
+        # point STDIO_SOCKET_PATH (or its numbered form) at that path.
+        for mount in socket_mounts or []:
+            args.extend(["--setenv", mount.env_var, mount.run_path])
+            args.extend(["--bind", mount.host_path, mount.run_path])
+
+        # Sandbox-side stdio stub: bind the bundled stub into /run so the
+        # sandboxed command can run it. The sandbox imports nothing from
+        # agent-nook, so there is no entry point to resolve — the plain
+        # stdlib file simply travels with the mount.
+        if stdio_stub_path:
+            args.extend(["--bind", stdio_stub_path, "/run/stdio_stub.py"])
 
         # Chdir
         if self._config.chdir:

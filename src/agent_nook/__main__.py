@@ -126,6 +126,13 @@ def main() -> int:
     )
     run_parser.add_argument("--chdir", metavar="DIR", help="Change working directory in sandbox (overrides config)")
     run_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Maximum execution time in seconds (overrides config)",
+    )
+    run_parser.add_argument(
         "--cap-add",
         action="append",
         default=[],
@@ -264,12 +271,15 @@ def _cmd_run(args: argparse.Namespace) -> int:
     from agent_nook.config.loader import ConfigLoader
     from agent_nook.config.loader import ConfigValidationError
     from agent_nook.sandbox import BwrapSandbox
+    from agent_nook.utils.commands import short_command
 
     # Logging is already initialized by _setup_logging()
     logger = logging.getLogger("agent_nook")
-    logger.info("Agent Nook v%s — Running command", __version__)
 
-    # Unified config loading: handles file resolution, validation, overrides, and construction
+    # Unified config loading: handles file resolution, validation, overrides, and construction.
+    # This must run before the "Running command" line so the sandbox name (from the config's
+    # `name` field) is available: set_sandbox_name tags the logger with it, and short_command
+    # renders the command for the line.
     try:
         config_loader = ConfigLoader(None)  # Let load_with_overrides resolve the path
         config = config_loader.load_with_overrides(args)
@@ -291,6 +301,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if not command:
         print("error: no command specified. Use 'agent-nook run <command>'", file=sys.stderr)
         return 1
+
+    logger.info("Agent Nook v%s — Running command %s", __version__, short_command(command))
 
     logger.debug("Executing: %s", " ".join(command))
 

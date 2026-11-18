@@ -21,12 +21,25 @@ from pathlib import Path
 
 from agent_nook.config.config import Mount
 from agent_nook.config.config import SandboxConfig
+from agent_nook.orchestrator import Orchestrator
 from agent_nook.sandbox.builder import BwrapBuilder
 from agent_nook.utils.logger import main_logger
 
 
 # Module-level logger — uses centralized main_logger
 _logger = main_logger(__name__)
+
+
+def _stdio_stub_host_path() -> str:
+    """Absolute host path to the bundled sandbox-side stdio stub.
+
+    The stub ships alongside this module in the installed package. It is
+    bind-mounted into the sandbox at ``/run/stdio_stub.py``, so the
+    sandboxed command can run it without knowing where agent-nook was
+    installed — and without importing anything from agent-nook (which the
+    sandbox environment never has).
+    """
+    return str(Path(__file__).resolve().parent.parent / "stdio_stub.py")
 
 
 def _ensure_mount_sources(mounts: list[Mount]) -> None:
@@ -190,8 +203,11 @@ class BwrapSandbox:
       1. Holds the SandboxConfig
       2. Ensures mount sources exist (create-source option)
       3. Prepares overlay mounts (workdir, layer checks)
-      4. Builds the bwrap command line via BwrapBuilder
-      5. Executes the command
+      4. Starts orchestration commands (host side) and waits for their
+         sockets (no-op when the config has none)
+      5. Builds the bwrap command line via BwrapBuilder
+      6. Executes the command
+      7. Stops the orchestration commands (unless keep: true)
     """
 
     def __init__(
@@ -217,18 +233,31 @@ class BwrapSandbox:
         """Return the sandbox configuration."""
         return self._config
 
-    def build(self, command: list[str] | None = None) -> list[str]:
+    def build(
+        self,
+        command: list[str] | None = None,
+        socket_mounts: object = None,
+        stdio_stub_path: str | None = None,
+    ) -> list[str]:
         """Build the bwrap command line.
 
         Args:
             command: Optional command and arguments to append. When
                 omitted, the returned list contains only the sandbox
                 setup (useful for inspection or dry runs).
+            socket_mounts: Runtime socket wiring (the list of
+                ``SocketMount`` objects from
+                :meth:`Orchestrator.socket_mounts`). When provided, each
+                mount is bind-mounted into ``/run`` and its ``STDIO_SOCKET_PATH``
+                env var set.
+            stdio_stub_path: Absolute host path to the bundled stdio stub.
+                When provided, it is bind-mounted into ``/run/stdio_stub.py``
+                so the sandboxed command can run it.
 
         Returns:
             The complete bwrap command line.
         """
-        return self._builder.build(command or [])
+        return self._builder.build(command or [], socket_mounts=socket_mounts, stdio_stub_path=stdio_stub_path)
 
     def run(self, command: list[str]) -> SandboxResult:
         """Run a command inside the sandbox.
@@ -241,9 +270,13 @@ class BwrapSandbox:
 
         Raises:
             RuntimeError: If a mount source that must be created
-                (create-source: true) cannot be created, or if an overlay
+                (create-source: true) cannot be created, if an overlay
                 workdir cannot be prepared (missing source, different
-                filesystem, overlapping layers).
+                filesystem, overlapping layers), or if an orchestration
+                command cannot be started, has a malformed socket
+                address, or its socket is not ready within
+                wait-timeout (started commands are stopped; the sandbox
+                never starts).
 
         Example:
             result = BwrapSandbox(config).run(["/bin/echo", "hello"])
@@ -260,16 +293,34 @@ class BwrapSandbox:
         _ensure_mount_sources(self._config.mounts)
         _prepare_overlays(self._config.mounts)
 
-        bwrap_cmd = self.build(command)
+        # Start the orchestration commands (host side, outside the sandbox)
+        # and wait for their sockets before the sandbox starts. They are
+        # stopped after the sandbox exits (unless keep: true), on success,
+        # non-zero exit, timeout, and exception alike.
+        orchestrator = Orchestrator(self._config.orchestration, name=self._config.name)
+        orchestrator.start()
+        orchestrator.wait_ready()
 
-        _logger.info("Full bwrap command: %s", " ".join(bwrap_cmd), extra={"command_only": True})
+        try:
+            # Build the bwrap command with the runtime socket mounts (bind into
+            # /run, set STDIO_SOCKET_PATH) and the stdio stub (bind into
+            # /run/stdio_stub.py so the sandboxed command can run it).
+            bwrap_cmd = self.build(
+                command,
+                socket_mounts=orchestrator.socket_mounts(),
+                stdio_stub_path=_stdio_stub_host_path(),
+            )
 
-        # Run without capturing output - stdout/stderr go directly to console
-        result = subprocess.run(
-            bwrap_cmd,
-            timeout=self._config.timeout,
-            check=False,
-        )
+            _logger.debug("Full bwrap command: %s", " ".join(bwrap_cmd), extra={"command_only": True})
+
+            # Run without capturing output - stdout/stderr go directly to console
+            result = subprocess.run(
+                bwrap_cmd,
+                timeout=self._config.timeout,
+                check=False,
+            )
+        finally:
+            orchestrator.stop()
 
         return SandboxResult(
             success=result.returncode == 0,

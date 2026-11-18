@@ -10,6 +10,7 @@ import argparse
 import logging
 import os
 import re
+import shlex
 from typing import Any
 
 import yaml
@@ -20,12 +21,14 @@ try:
     from agent_nook.config.config import ConfigValidationError
     from agent_nook.config.config import Mount
     from agent_nook.config.config import NamespaceSet
+    from agent_nook.config.config import OrchestrationEntry
     from agent_nook.config.config import SandboxConfig
 except ImportError:
     from ..config.config import CapabilitySet
     from ..config.config import ConfigValidationError
     from ..config.config import Mount
     from ..config.config import NamespaceSet
+    from ..config.config import OrchestrationEntry
     from ..config.config import SandboxConfig
 
 logger = logging.getLogger(__name__)
@@ -63,6 +66,14 @@ def get_config_path() -> str:
 #            → Validates overlay-src (list) / workdir (str) options for overlay mounts
 #            → Transforms user-friendly YAML format into internal Mount objects
 #
+#   Layer 2b: _ensure_run_mount()       — Post-mount enforcement of a writable /run
+#            → Inserts a tmpfs /run (appended after user mounts) when absent,
+#               so the topological sort keeps it after `/`; honors an explicit
+#               tmpfs /run (size only); rejects any non-tmpfs /run.
+#            → /run must be writable: bwrap creates the stdio socket bind-mount
+#               target (/run/<name>) and bind-mounts the stdio stub at
+#               /run/stdio_stub.py on every run; --ro-bind / / makes /run EROFS.
+#
 #   Layer 3: _parse_capabilities()      — Dict → CapabilitySet dataclass
 #            → Ensures drop/keep are lists of strings (not dicts, ints, etc.)
 #            → Prevents malformed capability specifications
@@ -71,7 +82,12 @@ def get_config_path() -> str:
 #            → Ensures namespace keys are strings, values are booleans
 #            → Prevents namespace injection via malformed dicts
 #
-#   Layer 5: SandboxConfig.__post_init__() — Dataclass construction
+#   Layer 5: _parse_orchestration()     — Dict list → OrchestrationEntry list
+#            → Validates per-entry command (non-empty list of non-empty strings),
+#              socket (non-empty str, udp: rejected), wait-timeout (positive
+#              number), keep (bool); rejects unknown per-entry keys
+#
+#   Layer 6: SandboxConfig.__post_init__() — Dataclass construction
 #            → Enforces the invariant: at least one mount point is required
 #            → The LAST line of defense before the config is used
 #
@@ -100,6 +116,7 @@ class ConfigLoader:
         "mounts": "list[dict]",
         "capabilities": "dict",
         "unshare": "dict",
+        "orchestration": "list[dict]",
         "die_with_parent": "bool",
         "new_session": "bool",
         "hostname": "str | None",
@@ -174,6 +191,10 @@ class ConfigLoader:
         # Override hostname
         if hasattr(args, "hostname") and args.hostname:
             result["hostname"] = args.hostname
+
+        # Override timeout
+        if getattr(args, "timeout", None) is not None:
+            result["timeout"] = args.timeout
 
         # Override mounts from --bind / --ro-bind
         for bind in getattr(args, "bind", []):
@@ -332,7 +353,7 @@ class ConfigLoader:
         The parsing pipeline:
           1. Expand environment variables (${VAR}, ${VAR:-default})
           2. Validate structure against canonical schema
-          3. Parse mounts, capabilities, unshare settings into dataclasses
+          3. Parse mounts, capabilities, unshare, orchestration into dataclasses
           4. Return fully-validated SandboxConfig
 
         Raises:
@@ -347,8 +368,10 @@ class ConfigLoader:
 
         # Build dataclasses from validated data
         mounts = self._parse_mounts(data.get("mounts", []))
+        mounts = self._ensure_run_mount(mounts)
         capabilities = self._parse_capabilities(data.get("capabilities", {}))
         unshare = self._parse_unshare(data.get("unshare", {}))
+        orchestration = self._parse_orchestration(data.get("orchestration", []))
         env_vars = data.get("env_vars", {})
         unset_vars = self._parse_unset_vars(data.get("unset_vars"))
         hostname = data.get("hostname")
@@ -360,6 +383,7 @@ class ConfigLoader:
             mounts=mounts,
             capabilities=capabilities,
             unshare=unshare,
+            orchestration=orchestration,
             die_with_parent=data.get("die_with_parent", True),
             new_session=data.get("new_session", True),
             hostname=hostname,
@@ -416,8 +440,8 @@ class ConfigLoader:
             elif field_name == "unset_vars":
                 # unset_vars is an optional string (can be empty or None)
                 value = data.get(field_name)
-            elif field_name == "mounts":
-                # mounts defaults to an empty list when not present
+            elif field_name in ("mounts", "orchestration"):
+                # These default to an empty list when not present
                 value = data.get(field_name, [])
             elif field_name == "hostname":
                 value = data.get("hostname")
@@ -443,7 +467,7 @@ class ConfigLoader:
                     raise ConfigValidationError(f"Field '{field_name}' must be a list of dicts, got {type(value).__name__}")
                 for i, m in enumerate(value):
                     if not isinstance(m, dict):
-                        raise ConfigValidationError(f"mount[{i}] must be a dict, got {type(m).__name__}")
+                        raise ConfigValidationError(f"{field_name}[{i}] must be a dict, got {type(m).__name__}")
             elif expected_type == "dict":
                 if not isinstance(value, dict):
                     raise ConfigValidationError(f"Field '{field_name}' must be a dict, got {type(value).__name__}")
@@ -571,6 +595,76 @@ class ConfigLoader:
 
             validated_mounts.append(Mount(**mount))
         return validated_mounts
+
+    def _ensure_run_mount(self, mounts: list[Mount]) -> list[Mount]:
+        """Ensure a writable tmpfs /run exists for the stdio socket/stub wiring.
+
+        This is a **post-Layer-2 enforcement step**. It runs after
+        :meth:`_parse_mounts`, before Layer 3, on the parsed mount list.
+
+        Why this is needed:
+
+          bwrap *creates* its bind-mount targets itself. The runtime wiring
+          (``BwrapBuilder.build``) bind-mounts every generated track-socket
+          into ``/run`` and unconditionally bind-mounts the sandbox-side stub
+          at ``/run/stdio_stub.py`` on **every** run. bwrap must be able to
+          create those targets, so ``/run`` has to be writable inside the
+          sandbox. A ``--ro-bind / /`` (the common "reuse the host image"
+          mount) recursively makes the whole ``/`` subtree — including
+          ``/run`` — read-only inside the sandbox, so target creation fails
+          with EROFS ("Read-only file system"). The socket's *data* is
+          created on the host and bind-mounted in: ``/run`` is not where the
+          socket data is written, it just has to be a writable mount point to
+          receive the bind. A writable sub-path alternative does not help:
+          every bind-mount target needs a writable parent, and ``/`` is
+          read-only, so a tmpfs ``/run`` is required.
+
+        Design: a writable tmpfs ``/run`` is non-optional infrastructure, not
+        a user-facing option. The user's only allowed tweak to a ``/run``
+        mount is its ``size``:
+
+          - ``/run`` absent (and the user gave >= 1 mount) -> append a
+            tmpfs ``/run`` *after* the user's mounts, so the topological
+            sort (parents before children) still places it after ``/``.
+          - ``/run`` present as tmpfs -> kept as-is; any user-set ``size`` is
+            honored.
+          - ``/run`` present as any non-tmpfs type (bind / ro-bind /
+            ro-overlay / dir / ...) -> rejected with ``ConfigValidationError``.
+          - ``/run`` absent and the user gave zero mounts -> returned
+            unchanged, so the Layer-6 gate (at least one mount) still rejects
+            the config.
+
+        Args:
+            mounts: The parsed mount list (possibly empty; already env- and
+                hyphenated-key-normalized by :meth:`_parse_mounts`).
+
+        Returns:
+            The same list (mutated copy) with a tmpfs ``/run`` ensured.
+
+        Raises:
+            ConfigValidationError: If a user-provided ``/run`` mount is not a
+                tmpfs mount.
+        """
+        if not mounts:
+            # No mounts at all: leave the list empty so the Layer-6 gate
+            # (at least one mount) rejects the config, not this step.
+            return mounts
+
+        run_mount = next((m for m in mounts if m.target == "/run"), None)
+        if run_mount is not None:
+            if run_mount.type != "tmpfs":
+                raise ConfigValidationError(
+                    f"mount: /run must be a tmpfs mount (got type '{run_mount.type}'); "
+                    "/run must be writable so bwrap can create the stdio socket "
+                    "and stdio stub bind-mount targets. Only a tmpfs type is "
+                    "accepted — you may still set its 'size'."
+                )
+            # tmpfs /run is correct; honor any user-set size.
+            return mounts
+
+        # /run absent: append a tmpfs /run after the user's mounts so it ends
+        # up after / in the topologically-sorted bwrap command line.
+        return [*mounts, Mount(type="tmpfs", target="/run")]
 
     def _parse_capabilities(self, caps: dict[str, Any]) -> CapabilitySet:
         """Parse capabilities from a dict into a CapabilitySet dataclass.
@@ -704,6 +798,120 @@ class ConfigLoader:
 
         return NamespaceSet(**namespace_dict)
 
+    def _parse_orchestration(self, entries: list[dict]) -> list[OrchestrationEntry]:
+        """Parse orchestration entries into OrchestrationEntry dataclasses.
+
+        This is **Layer 5** of the validation pipeline. It validates and
+        transforms the `orchestration` field:
+
+          ```yaml
+          orchestration:
+            - command: "stdio-bridge --listen ${STDIO_SOCKET_PATH} -- node index.js"
+              track-socket: true
+              wait-timeout: 30
+              keep: false
+          ```
+
+        Why this is needed:
+
+          - _validate_structure() ensures the field is a list of dicts, but
+            not the content of each entry.
+          - This layer ensures per entry:
+              * `command` is a non-empty string that tokenizes (with
+                `shlex.split`, so quoting and arguments can be written
+                naturally in the YAML) into a non-empty argv list (no shell
+                is involved at execution time).
+              * `track-socket` (optional) is a boolean (default false); when
+                true, agent-nook generates a unique socket name at run time
+                and wires it into the command and the sandbox (see
+                OrchestrationEntry).
+              * `wait-timeout` (optional) is a positive number (default 30)
+              * `keep` (optional) is a boolean (default false)
+              * unknown keys are rejected (strict schema, consistent with
+                the rest of the loader)
+
+        Args:
+            entries: A list of raw orchestration entry dicts (already
+                env-expanded by _expand_env_vars). Each entry's `command`
+                is a non-empty string that is tokenized into an argv list
+                with `shlex.split`.
+
+        Returns:
+            A list of OrchestrationEntry dataclass instances.
+
+        Raises:
+            ConfigValidationError: If any entry is malformed.
+        """
+        parsed: list[OrchestrationEntry] = []
+        known_keys = ("command", "track-socket", "wait-timeout", "keep")
+
+        for i, entry in enumerate(entries):
+            for key in entry:
+                if key not in known_keys:
+                    raise ConfigValidationError(f"orchestration[{i}] has unknown key '{key}'. Known keys: {', '.join(known_keys)}")
+
+            command = entry.get("command")
+            argv = self._parse_command(command, i)
+
+            track_socket = entry.get("track-socket", False)
+            if not isinstance(track_socket, bool):
+                raise ConfigValidationError(
+                    f"orchestration[{i}].track-socket must be a boolean, got {type(track_socket).__name__}: {track_socket!r}"
+                )
+
+            wait_timeout: int | float = 30
+            if "wait-timeout" in entry:
+                wait_timeout = entry["wait-timeout"]
+                if isinstance(wait_timeout, bool) or not isinstance(wait_timeout, (int, float)) or wait_timeout <= 0:
+                    raise ConfigValidationError(f"orchestration[{i}].wait-timeout must be a positive number, got {wait_timeout!r}")
+
+            keep = entry.get("keep", False)
+            if not isinstance(keep, bool):
+                raise ConfigValidationError(f"orchestration[{i}].keep must be a boolean, got {type(keep).__name__}: {keep!r}")
+
+            parsed.append(OrchestrationEntry(command=argv, track_socket=track_socket, wait_timeout=wait_timeout, keep=keep))
+
+        return parsed
+
+    @staticmethod
+    def _parse_command(command: Any, index: int) -> list[str]:
+        """Tokenize the orchestration `command` string into an argv list.
+
+        This is the single source of truth for turning the config's single
+        command string into the argument list the orchestrator passes to
+        ``subprocess.Popen`` (which does not invoke a shell). It validates
+        that the command is a non-empty string and that it tokenizes into
+        at least one non-empty argument; a malformed shell tokenization
+        (e.g. an unterminated quote) surfaces as a ``ConfigValidationError``.
+
+        Args:
+            command: The raw `command` value of ``orchestration[index]``
+                (already env-expanded by _expand_env_vars).
+            index: The entry index, for the error message.
+
+        Returns:
+            A non-empty list of argument strings.
+
+        Raises:
+            ConfigValidationError: If `command` is not a non-empty string,
+                tokenizes into no arguments, or raises a shell error.
+        """
+        if not isinstance(command, str) or not command:
+            raise ConfigValidationError(
+                f"orchestration[{index}].command must be a non-empty string (no shell). "
+                f'Use: command: "stdio-bridge --listen ${{STDIO_SOCKET_PATH}} -- node index.js"'
+            )
+        try:
+            argv = shlex.split(command)
+        except ValueError as e:
+            raise ConfigValidationError(f"orchestration[{index}].command could not be parsed as a shell command: {e}") from e
+        if not argv:
+            raise ConfigValidationError(
+                f"orchestration[{index}].command must be a non-empty string (no shell). "
+                f'Use: command: "stdio-bridge --listen ${{STDIO_SOCKET_PATH}} -- node index.js"'
+            )
+        return argv
+
     def _expand_env_vars(self, data: dict[str, Any]) -> dict[str, Any]:
         """Expand environment variables in string values.
 
@@ -717,6 +925,10 @@ class ConfigLoader:
         fields are expanded automatically.
 
         Undefined variables are left as-is (literal ${VAR} remains).
+
+        As a special case, agent-nook's own STDIO_SOCKET_* placeholders are
+        always preserved verbatim (the orchestrator substitutes them at
+        runtime), regardless of any host environment value for those vars.
 
         Args:
             data: Raw configuration dictionary.
@@ -744,6 +956,10 @@ class ConfigLoader:
         Expands ${VAR} and ${VAR:-default} patterns in a string.
         Returns the expanded value or the original string if no matches.
 
+        Reserved placeholders named STDIO_SOCKET_* (e.g. STDIO_SOCKET_PATH) are
+        left literal here: the orchestrator substitutes them at runtime, so host
+        environment values must not leak in during config parsing.
+
         Args:
             value: Input string to expand.
 
@@ -768,6 +984,15 @@ class ConfigLoader:
 
             var_name = match.group(1)
             default_value = match.group(2)
+
+            # agent-nook's own runtime placeholders are filled by the orchestrator
+            # (orchestrator.substitute_placeholders), never by the loader. Leave
+            # them literal regardless of whether they are set in the host env, so
+            # config parsing is unaffected by the sandbox's STDIO_SOCKET_* vars.
+            if var_name.startswith("STDIO_SOCKET_"):
+                result.append(match.group(0))
+                last_end = match.end()
+                continue
 
             # Get environment variable or use default
             env_value = os.environ.get(var_name)

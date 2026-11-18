@@ -135,12 +135,8 @@ def test_runner(
     pipx_home, pipx_bin, env = pipx_test_env
 
     # Verify directories are empty before install
-    assert not list(pipx_home.glob("venvs")), (
-        f"pipx home already contains venvs: {list(pipx_home.glob('venvs'))}"
-    )
-    assert not list(pipx_bin.glob("*")), (
-        f"pipx bin already contains files: {list(pipx_bin.glob('*'))}"
-    )
+    assert not list(pipx_home.glob("venvs")), f"pipx home already contains venvs: {list(pipx_home.glob('venvs'))}"
+    assert not list(pipx_bin.glob("*")), f"pipx bin already contains files: {list(pipx_bin.glob('*'))}"
 
     # Run pipx install once for the entire session
     result = subprocess.run(
@@ -152,10 +148,8 @@ def test_runner(
     )
 
     # Should succeed (return code 0)
-    assert result.returncode == 0, (
-        f"pipx install failed:\n  stdout: {result.stdout}\n  stderr: {result.stderr}"
-    )
-    
+    assert result.returncode == 0, f"pipx install failed:\n  stdout: {result.stdout}\n  stderr: {result.stderr}"
+
     print(f"INFO: Installed agent-nook from wheel: {built_wheel}")
 
     def run_command(*args: str, **kwargs) -> subprocess.CompletedProcess:

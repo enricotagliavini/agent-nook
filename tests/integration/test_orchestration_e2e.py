@@ -1,0 +1,184 @@
+"""End-to-end test for the orchestration: feature through a real bwrap sandbox.
+
+The orchestration entry starts the host-side stdio bridge (stdio_bridge.py)
+on the host; the sandboxed command runs the sandbox-side stub (stdio_stub.py)
+and feeds a request through it. Data flows both ways: test process ->
+sandboxed stub -> socket -> bridge -> echo "MCP" child -> back.
+
+Follows the integration-test conventions: agent-nook is installed from the
+freshly built wheel via pipx (shared session fixtures in conftest.py), the
+config file is passed via --config, and tests skip cleanly when bwrap is
+not available.
+"""
+
+import os
+import shutil
+import subprocess
+import time
+from pathlib import Path
+
+import pytest
+
+from agent_nook.utils.logger import get_log_file_path
+
+
+pytestmark = pytest.mark.integration
+
+BWRAP = shutil.which("bwrap") is not None
+
+REPO = Path(__file__).resolve().parent.parent.parent
+BRIDGE = REPO / "src" / "agent_nook" / "stdio_bridge.py"
+
+# In-sandbox driver: feeds a request to stdio_stub, keeps the session open
+# until the echo response arrives (like a real MCP client, whose stdin stays
+# open for the whole session), then closes stdin and checks the exit code.
+# The stub runs at /run/stdio_stub.py: agent-nook resolves its installed host
+# path and bind-mounts it there, so the sandbox command needs no agent-nook
+# install and imports nothing from it. It reads STDIO_SOCKET_PATH from the
+# environment (set by the socket bind mount), so no --socket argument is
+# needed — matching the runtime track-socket wiring.
+DRIVER = """\
+import os
+import select
+import subprocess
+import sys
+import time
+
+p = subprocess.Popen(
+    [sys.executable, sys.argv[1]],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+)
+p.stdin.write(b"hello-mcp")
+p.stdin.flush()
+buf = b""
+deadline = time.monotonic() + 10
+while b"ECHO:hello-mcp" not in buf and time.monotonic() < deadline:
+    r, _, _ = select.select([p.stdout], [], [], 0.1)
+    if r:
+        d = os.read(p.stdout.fileno(), 4096)
+        if not d:
+            break
+        buf += d
+p.stdin.close()
+rc = p.wait(timeout=10)
+sys.exit(0 if rc == 0 and b"ECHO:hello-mcp" in buf else 1)
+"""
+
+
+@pytest.fixture()
+def e2e_config(xdg_config_dir, tmp_path) -> Path:
+    # driver.py is written to tmp_path (host /tmp), reachable inside the
+    # sandbox via the ro-bind / at / mount. The stub is bind-mounted into the
+    # sandbox at /run/stdio_stub.py by agent-nook's runtime wiring (see
+    # BwrapBuilder), so the sandboxed command runs it there.
+    (tmp_path / "driver.py").write_text(DRIVER)
+    config_path = xdg_config_dir / "orchestration_e2e.yaml"
+    config_path.write_text(
+        f"""name: orchestration-e2e
+mounts:
+  - type: ro-bind
+    source: /
+    target: /
+  - type: proc
+    target: /proc
+orchestration:
+  - command: |
+      python3 {BRIDGE} --listen ${{STDIO_SOCKET_PATH}} -- python3 -c "import os
+      while True:
+          d = os.read(0, 4096)
+          if not d:
+              break
+          os.write(1, b'ECHO:' + d)
+      "
+    track-socket: true
+    wait-timeout: 30
+"""
+    )
+    return config_path
+
+
+def _agent_nook_sock_base() -> Path:
+    """Directory ``track-socket`` sockets are generated into.
+
+    Matches :func:`agent_nook.socket_factory.generate`: ``$XDG_RUNTIME_DIR/
+    agent-nook`` when ``XDG_RUNTIME_DIR`` is set, else ``/tmp``. Reads the
+    same environment agent-nook does, so this agrees with where the sandbox
+    actually placed its generated socket.
+    """
+    xdg_runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    base = os.path.join(xdg_runtime_dir, "agent-nook") if xdg_runtime_dir else "/tmp"
+    return Path(base)
+
+
+@pytest.mark.skipif(not BWRAP, reason="bwrap not available")
+def test_orchestration_roundtrip_through_bwrap(test_sandbox_run, e2e_config, tmp_path):
+    """Host bridge + in-sandbox stub: data flows both ways through bwrap."""
+    result = test_sandbox_run(
+        "run",
+        "--config",
+        str(e2e_config),
+        "python3",
+        str(tmp_path / "driver.py"),
+        "/run/stdio_stub.py",
+    )
+    assert result.returncode == 0, f"agent-nook failed (rc={result.returncode}):\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    # The bridge ran on the host and served exactly one session. Its output
+    # now goes to the log file (never the terminal), so check the log.
+    log_text = Path(get_log_file_path()).read_text(encoding="utf-8")
+    assert "stdio_bridge: listening on" in log_text
+    assert "started child pid=" in log_text
+    # The bridge was stopped cleanly by the orchestrator (SIGTERM): it unlinks
+    # the generated socket on clean shutdown, so no ``orchestration-e2e-*.sock``
+    # survives in the base dir — proving the orchestrator's stop() ran (and did
+    # not have to SIGKILL).
+    leftover = sorted(_agent_nook_sock_base().glob("orchestration-e2e-*.sock"))
+    assert not leftover, f"orchestration socket not cleaned up: {leftover}"
+
+
+@pytest.mark.skipif(not BWRAP, reason="bwrap not available")
+def test_orchestration_never_ready_blocks_sandbox(test_sandbox_run, xdg_config_dir, tmp_path):
+    """Socket never appears: agent-nook fails before starting the sandbox,
+    and the orchestration command is cleaned up."""
+    marker = tmp_path / "sandbox_ran"
+    sleeper = "import time; time.sleep(30)  # e2e-fail-sleeper"
+    config_path = xdg_config_dir / "orchestration_e2e_fail.yaml"
+    config_path.write_text(
+        f"""name: orchestration-e2e-fail
+mounts:
+  - type: ro-bind
+    source: /
+    target: /
+  - type: proc
+    target: /proc
+  - type: tmpfs
+    target: /tmp
+  - type: bind
+    source: {tmp_path}
+    target: /sandbox-tmp
+orchestration:
+  - command: 'python3 -c "{sleeper}"'
+    track-socket: true
+    wait-timeout: 0.01
+"""
+    )
+    result = test_sandbox_run(
+        "run",
+        "--config",
+        str(config_path),
+        "/bin/sh",
+        "-c",
+        f"touch {marker}",
+    )
+    assert result.returncode != 0, f"agent-nook should fail when the socket never becomes ready:\n{result.stdout}\n{result.stderr}"
+    assert "not ready after" in result.stdout + result.stderr
+    assert not marker.exists(), "the sandbox must not start when an orchestration socket never becomes ready"
+    # The orchestration command was stopped (SIGTERM -> reaped).
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        r = subprocess.run(["pgrep", "-f", "e2e-fail-sleeper"], check=False, capture_output=True)
+        if r.returncode != 0:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("the never-ready orchestration command was not stopped")

@@ -20,6 +20,15 @@ tests/
 └── README.md                   # This file
 ```
 
+## Test Conventions
+
+The conventions for writing and maintaining tests — document purpose in
+two layers, test our own code rather than third-party tools, keep the
+suite lean — live in [`AGENTS.md`](../AGENTS.md) under "Testing
+Conventions". That section is authoritative for both humans and AI
+agents; consult it rather than duplicating the rules here. This README
+covers structure, fixtures, and running tests.
+
 ## XDG Configuration Setup
 
 ### Overview
