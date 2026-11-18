@@ -35,12 +35,13 @@ def test_load_yaml_basic():
 
     assert config.name == "test-sandbox"
     assert config.chdir == "/tmp"
-    assert len(config.mounts) == 4
+    assert len(config.mounts) == 5
     assert config.mounts[0].type == "proc"
     assert config.mounts[1].type == "dev"
     assert config.mounts[2].type == "tmpfs"
     assert config.mounts[2].size == "100M"
     assert config.mounts[2]._parse_size(config.mounts[2].size) == 104857600
+    assert config.mounts[4].type == "tmpfs" and config.mounts[4].target == "/run"
 
 
 def test_load_yaml_list_of_mounts():
@@ -60,7 +61,7 @@ def test_load_yaml_list_of_mounts():
     }
     config = loader.load_from_dict(data)
 
-    assert len(config.mounts) == 6
+    assert len(config.mounts) == 7
     assert config.mounts[0].type == "proc"
     assert config.mounts[1].type == "dev"
     assert config.mounts[2].type == "tmpfs"
@@ -68,6 +69,7 @@ def test_load_yaml_list_of_mounts():
     assert config.mounts[3].size == "500M"
     assert config.mounts[4].type == "bind"
     assert config.mounts[5].type == "ro-bind"
+    assert config.mounts[6].type == "tmpfs" and config.mounts[6].target == "/run"
 
     loader = ConfigLoader()
     data = {
@@ -200,10 +202,11 @@ def test_load_from_dict():
     config = loader.load_from_dict(data)
     assert isinstance(config, SandboxConfig)
     assert config.name == "test"
-    assert len(config.mounts) == 3
+    assert len(config.mounts) == 4
     assert config.mounts[0].type == "proc"
     assert config.mounts[1].type == "dev"
     assert config.mounts[2].type == "tmpfs"
+    assert config.mounts[3].type == "tmpfs" and config.mounts[3].target == "/run"
     assert config.capabilities.dropped == ["ALL"]
 
 
@@ -271,10 +274,11 @@ def test_load_with_overrides_empty_mounts_with_cli_bind_succeeds(tmp_path):
 
     config = ConfigLoader().load_with_overrides(_make_run_args(["/host/src:/sandbox/src"]), path=str(config_file))
 
-    assert len(config.mounts) == 1
+    assert len(config.mounts) == 2
     assert config.mounts[0].source == "/host/src"
     assert config.mounts[0].target == "/sandbox/src"
     assert config.mounts[0].type == "bind"
+    assert config.mounts[1].type == "tmpfs" and config.mounts[1].target == "/run"
 
 
 def test_load_with_overrides_empty_mounts_without_cli_bind_errors(tmp_path):
@@ -502,8 +506,9 @@ def test_load_with_overrides_overlay_cli_flags(tmp_path):
     )
     config = ConfigLoader().load_with_overrides(args, path=str(config_file))
 
-    assert [m.type for m in config.mounts] == ["overlay", "ro-overlay"]
-    overlay, ro = config.mounts
+    assert [m.type for m in config.mounts] == ["overlay", "ro-overlay", "tmpfs"]
+    overlay, ro, run_mount = config.mounts
+    assert run_mount.type == "tmpfs" and run_mount.target == "/run"
     assert (overlay.source, overlay.workdir, overlay.target) == ("/rw", "/wd", "/d")
     assert overlay.overlay_src == ["/a", "/b"]
     assert (ro.source, ro.workdir) == (None, None)
@@ -539,3 +544,71 @@ def test_load_with_overrides_malformed_tmp_overlay_value_errors(tmp_path):
     args = _make_overlay_run_args([("tmp-overlay", "/a:/b")])
     with pytest.raises(ConfigValidationError, match="expects DEST"):
         ConfigLoader().load_with_overrides(args, path=str(config_file))
+
+
+def test_load_from_dict_auto_inserts_tmpfs_run():
+    """A config without a /run mount gets a tmpfs /run appended by the loader."""
+    loader = ConfigLoader()
+    data = {
+        "name": "test",
+        "mounts": [
+            {"source": "/", "target": "/", "type": "ro-bind"},
+            {"target": "/proc", "type": "proc"},
+        ],
+    }
+    config = loader.load_from_dict(data)
+    assert [m.target for m in config.mounts] == ["/", "/proc", "/run"]
+    run_mount = config.mounts[-1]
+    assert run_mount.type == "tmpfs"
+    assert run_mount.size == ""
+    # Auto-inserted /run has no size, so it builds a size-less --tmpfs.
+    assert run_mount.build() == ["--tmpfs", "/run"]
+
+
+def test_load_from_dict_tmpfs_run_keeps_user_size():
+    """A user-provided tmpfs /run is kept and its size honored."""
+    loader = ConfigLoader()
+    data = {
+        "name": "test",
+        "mounts": [
+            {"source": "/", "target": "/", "type": "ro-bind"},
+            {"target": "/run", "type": "tmpfs", "size": "256M"},
+        ],
+    }
+    config = loader.load_from_dict(data)
+    run_mount = next(m for m in config.mounts if m.target == "/run")
+    assert run_mount.type == "tmpfs"
+    assert run_mount.size == "256M"
+    # 256M = 268435456 bytes.
+    assert run_mount.build() == ["--tmpfs", "/run", "268435456"]
+
+
+def test_load_from_dict_non_tmpfs_run_rejected():
+    """A non-tmpfs /run (e.g. ro-bind) is rejected: /run must be writable tmpfs."""
+    loader = ConfigLoader()
+    data = {
+        "name": "test",
+        "mounts": [
+            {"source": "/", "target": "/", "type": "ro-bind"},
+            {"source": "/run", "target": "/run", "type": "ro-bind"},
+        ],
+    }
+    with pytest.raises(ConfigValidationError, match="/run must be a tmpfs mount"):
+        loader.load_from_dict(data)
+
+
+def test_load_from_dict_run_as_dir_rejected():
+    """Even a benign mount type like 'dir' on /run is rejected."""
+    loader = ConfigLoader()
+    data = {"name": "test", "mounts": [{"source": "/", "target": "/", "type": "ro-bind"}, {"target": "/run", "type": "dir"}]}
+    with pytest.raises(ConfigValidationError, match="/run must be a tmpfs mount"):
+        loader.load_from_dict(data)
+
+
+def test_load_from_dict_empty_mounts_still_rejected_after_run_check():
+    """_ensure_run_mount does not inject /run into an empty mount list, so the
+    at-least-one-mount gate still rejects the config."""
+    loader = ConfigLoader()
+    data = {"name": "test", "mounts": []}
+    with pytest.raises(ConfigValidationError, match="at least one mount point"):
+        loader.load_from_dict(data)

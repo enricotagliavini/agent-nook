@@ -20,6 +20,12 @@ The validation is layered across modules:
     → Validates overlay-src (list) / workdir (str) options for overlay mounts.
     → Transforms dicts into Mount dataclass instances.
 
+  **Layer 2b (loader.py, ConfigLoader._ensure_run_mount()):**
+    → Enforces a writable tmpfs `/run` by design. Inserts a tmpfs `/run`
+      (appended after the user's mounts) when absent; honors an explicit
+      tmpfs `/run` (size only); rejects any non-tmpfs `/run`. See the method
+      docstring for the EROFS root-cause rationale.
+
   **Layer 3 (loader.py, ConfigLoader._parse_capabilities()):**
     → Ensures "drop" and "keep" are lists of strings (not dicts, ints, etc.).
     → Transforms into CapabilitySet dataclass.

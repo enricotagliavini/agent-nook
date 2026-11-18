@@ -82,12 +82,6 @@ mounts:
     target: /
   - type: proc
     target: /proc
-  # A private /run for the generated socket's bind-mount target
-  # (/run/<name>). The default sandbox.yaml mounts /run as a tmpfs for
-  # exactly this reason; the track-socket wiring bind-mounts the socket
-  # there and sets STDIO_SOCKET_PATH to it.
-  - type: tmpfs
-    target: /run
 orchestration:
   - command: |
       python3 {BRIDGE} --listen ${{STDIO_SOCKET_PATH}} -- python3 -c "import os

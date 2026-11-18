@@ -66,6 +66,14 @@ def get_config_path() -> str:
 #            → Validates overlay-src (list) / workdir (str) options for overlay mounts
 #            → Transforms user-friendly YAML format into internal Mount objects
 #
+#   Layer 2b: _ensure_run_mount()       — Post-mount enforcement of a writable /run
+#            → Inserts a tmpfs /run (appended after user mounts) when absent,
+#               so the topological sort keeps it after `/`; honors an explicit
+#               tmpfs /run (size only); rejects any non-tmpfs /run.
+#            → /run must be writable: bwrap creates the stdio socket bind-mount
+#               target (/run/<name>) and bind-mounts the stdio stub at
+#               /run/stdio_stub.py on every run; --ro-bind / / makes /run EROFS.
+#
 #   Layer 3: _parse_capabilities()      — Dict → CapabilitySet dataclass
 #            → Ensures drop/keep are lists of strings (not dicts, ints, etc.)
 #            → Prevents malformed capability specifications
@@ -360,6 +368,7 @@ class ConfigLoader:
 
         # Build dataclasses from validated data
         mounts = self._parse_mounts(data.get("mounts", []))
+        mounts = self._ensure_run_mount(mounts)
         capabilities = self._parse_capabilities(data.get("capabilities", {}))
         unshare = self._parse_unshare(data.get("unshare", {}))
         orchestration = self._parse_orchestration(data.get("orchestration", []))
@@ -586,6 +595,76 @@ class ConfigLoader:
 
             validated_mounts.append(Mount(**mount))
         return validated_mounts
+
+    def _ensure_run_mount(self, mounts: list[Mount]) -> list[Mount]:
+        """Ensure a writable tmpfs /run exists for the stdio socket/stub wiring.
+
+        This is a **post-Layer-2 enforcement step**. It runs after
+        :meth:`_parse_mounts`, before Layer 3, on the parsed mount list.
+
+        Why this is needed:
+
+          bwrap *creates* its bind-mount targets itself. The runtime wiring
+          (``BwrapBuilder.build``) bind-mounts every generated track-socket
+          into ``/run`` and unconditionally bind-mounts the sandbox-side stub
+          at ``/run/stdio_stub.py`` on **every** run. bwrap must be able to
+          create those targets, so ``/run`` has to be writable inside the
+          sandbox. A ``--ro-bind / /`` (the common "reuse the host image"
+          mount) recursively makes the whole ``/`` subtree — including
+          ``/run`` — read-only inside the sandbox, so target creation fails
+          with EROFS ("Read-only file system"). The socket's *data* is
+          created on the host and bind-mounted in: ``/run`` is not where the
+          socket data is written, it just has to be a writable mount point to
+          receive the bind. A writable sub-path alternative does not help:
+          every bind-mount target needs a writable parent, and ``/`` is
+          read-only, so a tmpfs ``/run`` is required.
+
+        Design: a writable tmpfs ``/run`` is non-optional infrastructure, not
+        a user-facing option. The user's only allowed tweak to a ``/run``
+        mount is its ``size``:
+
+          - ``/run`` absent (and the user gave >= 1 mount) -> append a
+            tmpfs ``/run`` *after* the user's mounts, so the topological
+            sort (parents before children) still places it after ``/``.
+          - ``/run`` present as tmpfs -> kept as-is; any user-set ``size`` is
+            honored.
+          - ``/run`` present as any non-tmpfs type (bind / ro-bind /
+            ro-overlay / dir / ...) -> rejected with ``ConfigValidationError``.
+          - ``/run`` absent and the user gave zero mounts -> returned
+            unchanged, so the Layer-6 gate (at least one mount) still rejects
+            the config.
+
+        Args:
+            mounts: The parsed mount list (possibly empty; already env- and
+                hyphenated-key-normalized by :meth:`_parse_mounts`).
+
+        Returns:
+            The same list (mutated copy) with a tmpfs ``/run`` ensured.
+
+        Raises:
+            ConfigValidationError: If a user-provided ``/run`` mount is not a
+                tmpfs mount.
+        """
+        if not mounts:
+            # No mounts at all: leave the list empty so the Layer-6 gate
+            # (at least one mount) rejects the config, not this step.
+            return mounts
+
+        run_mount = next((m for m in mounts if m.target == "/run"), None)
+        if run_mount is not None:
+            if run_mount.type != "tmpfs":
+                raise ConfigValidationError(
+                    f"mount: /run must be a tmpfs mount (got type '{run_mount.type}'); "
+                    "/run must be writable so bwrap can create the stdio socket "
+                    "and stdio stub bind-mount targets. Only a tmpfs type is "
+                    "accepted — you may still set its 'size'."
+                )
+            # tmpfs /run is correct; honor any user-set size.
+            return mounts
+
+        # /run absent: append a tmpfs /run after the user's mounts so it ends
+        # up after / in the topologically-sorted bwrap command line.
+        return [*mounts, Mount(type="tmpfs", target="/run")]
 
     def _parse_capabilities(self, caps: dict[str, Any]) -> CapabilitySet:
         """Parse capabilities from a dict into a CapabilitySet dataclass.
