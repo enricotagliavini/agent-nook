@@ -63,12 +63,19 @@ def pipx_test_env(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path,
     return pipx_home, pipx_bin, env
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 def xdg_config_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Return the XDG config directory path for tests.
 
-    This fixture creates temporary XDG directories under /tmp to avoid
-    polluting the git repository with test artifacts.
+    This fixture is autouse so that every test — including each
+    pytest-xdist worker — gets a writable XDG state under /tmp. The
+    application's own ``log_file_handle`` has no ``/tmp`` fallback, so a
+    run mode that leaves XDG pointing at the read-only ``~/.local`` tree
+    (a subset run, an xdist unit run) would fail with ``OSError`` when an
+    orchestrator or sandbox redirects child output to the log. Setting the
+    environment once per process is what makes isolated/parallel runs safe;
+    integration tests already request this fixture explicitly, so their
+    behavior is unchanged.
 
     The directory is created at: /tmp/pytest-of-<user>/pytest-<id>/xdg_config/config
 
@@ -216,3 +223,35 @@ def test_sandbox_run(
     runner function, while sharing the pre-installed agent-nook binary.
     """
     return test_runner
+
+
+# Fixtures that trigger heavy, session-wide setup (a wheel build in the
+# shared dist/ and a pipx install). run_tests.sh runs the non-integration
+# group in parallel with pytest-xdist, where each worker rebuilds session
+# fixtures independently. A test that is not marked integration but pulls
+# in one of these would silently be dispatched to the parallel phase and
+# rebuilt once per worker (wasted work plus a shared dist/ race). Guard
+# against that at collection so the routing invariant stays correct.
+_SESSION_SCOPED_INTEGRATION_FIXTURES = frozenset(
+    {"built_wheel", "pipx_test_env", "test_runner"}
+)
+
+
+def pytest_collection_modifyitems(config, items):
+    offenders_by_item: dict[str, list[str]] = {}
+    for item in items:
+        if item.get_closest_marker("integration") is not None:
+            continue
+        offenders = _SESSION_SCOPED_INTEGRATION_FIXTURES & set(item.fixturenames)
+        if offenders:
+            offenders_by_item[item.nodeid] = sorted(offenders)
+
+    if offenders_by_item:
+        details = "\n".join(f"  - {nid}: {fixs}" for nid, fixs in offenders_by_item.items())
+        raise pytest.UsageError(
+            "Non-integration tests pulled into the parallel unit phase depend "
+            "on session-scoped integration fixtures:\n"
+            f"{details}\n"
+            "Mark each of these 'integration' so they run serial alongside the "
+            "bwrap/pipx tests (a per-xdist-worker rebuild races on dist/)."
+        )
