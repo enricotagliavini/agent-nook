@@ -8,6 +8,7 @@ appending, and BwrapSandbox.run() execution end-to-end.
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +17,7 @@ sys.path.insert(0, "src")
 
 from agent_nook.config.loader import ConfigLoader
 from agent_nook.sandbox import BwrapSandbox
+from agent_nook.sandbox.bwrap_sandbox import _stdio_stub_host_path
 
 
 def test_build_command_with_ro_bind():
@@ -84,6 +86,24 @@ def test_build_command_with_command():
     assert cmd[0] == "bwrap"
     assert "echo" in cmd
     assert "hello" in cmd
+
+
+def test_build_forwards_stdio_stub_path():
+    """BwrapSandbox.build() forwards ``stdio_stub_path`` to the builder."""
+    config = ConfigLoader().set(
+        {
+            "name": "test",
+            "mounts": [{"source": "/", "target": "/", "type": "bind"}, {"target": "/run", "type": "tmpfs"}],
+            "capabilities": {"drop": ["ALL"]},
+        }
+    )
+    cmd = BwrapSandbox(config).build(["echo"], stdio_stub_path="/host/stdio_stub.py")
+    assert ["--bind", "/host/stdio_stub.py", "/run/stdio_stub.py"] in [cmd[i : i + 3] for i in range(len(cmd) - 2)]
+
+
+def test_stdio_stub_host_path_resolves_to_installed_file():
+    """The stub path helper points at the bundled ``stdio_stub.py``."""
+    assert _stdio_stub_host_path() == str(Path(__file__).resolve().parent.parent.parent / "src" / "agent_nook" / "stdio_stub.py")
 
 
 @pytest.mark.skipif(shutil.which("bwrap") is None, reason="bwrap not installed; validates our built command")

@@ -10,6 +10,7 @@ from agent_nook.config.config import Mount
 from agent_nook.config.config import NamespaceSet
 from agent_nook.config.config import SandboxConfig
 from agent_nook.sandbox.builder import BwrapBuilder
+from agent_nook.socket_factory import SocketMount
 
 
 def test_builder_basic():
@@ -441,3 +442,30 @@ def test_builder_overlay_contiguous_block():
     assert ["--overlay-src", "/l1", "--overlay-src", "/l2", "--overlay", "/rw", "/wd", "/a/ovl"] in [
         cmd[i : i + 8] for i in range(len(cmd) - 8 + 1)
     ]
+
+
+def test_builder_stdio_stub_bind():
+    """Passing ``stdio_stub_path`` bind-mounts the stub into ``/run``."""
+    config = SandboxConfig(name="test", mounts=[Mount(target="/run", type="tmpfs")])
+    cmd = BwrapBuilder(config).build(["echo"], stdio_stub_path="/host/agent_nook/stdio_stub.py")
+    assert ["--bind", "/host/agent_nook/stdio_stub.py", "/run/stdio_stub.py"] in [cmd[i : i + 3] for i in range(len(cmd) - 2)]
+
+
+def test_builder_no_stdio_stub_by_default():
+    """Without ``stdio_stub_path`` nothing is bound into ``/run/stdio_stub.py``."""
+    config = SandboxConfig(name="test", mounts=[Mount(target="/run", type="tmpfs")])
+    cmd = BwrapBuilder(config).build(["echo"])
+    assert "/run/stdio_stub.py" not in cmd
+
+
+def test_builder_socket_and_stub_wiring():
+    """Socket mounts come before the stub bind, each wired into ``/run``."""
+    config = SandboxConfig(name="test", mounts=[Mount(target="/run", type="tmpfs")])
+    mount = SocketMount(host_path="/tmp/agent-nook/s-0.sock", run_path="/run/s-0.sock", env_var="STDIO_SOCKET_PATH")
+    cmd = BwrapBuilder(config).build(["python3", "/run/stdio_stub.py"], socket_mounts=[mount], stdio_stub_path="/host/stdio_stub.py")
+    socket_wiring = ["--setenv", "STDIO_SOCKET_PATH", "/run/s-0.sock", "--bind", "/tmp/agent-nook/s-0.sock", "/run/s-0.sock"]
+    stub_wiring = ["--bind", "/host/stdio_stub.py", "/run/stdio_stub.py"]
+    socket_idx = next(i for i in range(len(cmd) - len(socket_wiring) + 1) if cmd[i : i + len(socket_wiring)] == socket_wiring)
+    stub_idx = next(i for i in range(len(cmd) - len(stub_wiring) + 1) if cmd[i : i + len(stub_wiring)] == stub_wiring)
+    assert socket_idx < stub_idx, "socket mounts must be wired before the stub bind-mount"
+    assert cmd[stub_idx + len(stub_wiring) :] == ["python3", "/run/stdio_stub.py"]

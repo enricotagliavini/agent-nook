@@ -28,14 +28,15 @@ BWRAP = shutil.which("bwrap") is not None
 
 REPO = Path(__file__).resolve().parent.parent.parent
 BRIDGE = REPO / "src" / "agent_nook" / "stdio_bridge.py"
-STUB = REPO / "src" / "agent_nook" / "stdio_stub.py"
 
 # In-sandbox driver: feeds a request to stdio_stub, keeps the session open
 # until the echo response arrives (like a real MCP client, whose stdin stays
 # open for the whole session), then closes stdin and checks the exit code.
-# stdio_stub.py reads STDIO_SOCKET_PATH from the environment (set by the
-# sandbox bind mount), so no --socket argument is needed — matching the
-# runtime track-socket wiring.
+# The stub runs at /run/stdio_stub.py: agent-nook resolves its installed host
+# path and bind-mounts it there, so the sandbox command needs no agent-nook
+# install and imports nothing from it. It reads STDIO_SOCKET_PATH from the
+# environment (set by the socket bind mount), so no --socket argument is
+# needed — matching the runtime track-socket wiring.
 DRIVER = """\
 import os
 import select
@@ -68,8 +69,9 @@ sys.exit(0 if rc == 0 and b"ECHO:hello-mcp" in buf else 1)
 @pytest.fixture()
 def e2e_config(xdg_config_dir, tmp_path) -> Path:
     # driver.py is written to tmp_path (host /tmp), reachable inside the
-    # sandbox via the ro-bind / at / mount. The stub ships in src/ (host
-    # /home), also reachable via ro-bind / at /.
+    # sandbox via the ro-bind / at / mount. The stub is bind-mounted into the
+    # sandbox at /run/stdio_stub.py by agent-nook's runtime wiring (see
+    # BwrapBuilder), so the sandboxed command runs it there.
     (tmp_path / "driver.py").write_text(DRIVER)
     config_path = xdg_config_dir / "orchestration_e2e.yaml"
     config_path.write_text(
@@ -124,7 +126,7 @@ def test_orchestration_roundtrip_through_bwrap(test_sandbox_run, e2e_config, tmp
         str(e2e_config),
         "python3",
         str(tmp_path / "driver.py"),
-        str(STUB),
+        "/run/stdio_stub.py",
     )
     assert result.returncode == 0, f"agent-nook failed (rc={result.returncode}):\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     # The bridge ran on the host and served exactly one session. Its output

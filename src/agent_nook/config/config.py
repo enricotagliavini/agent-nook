@@ -527,7 +527,7 @@ class OrchestrationEntry:
 
     Example (the YAML stores the single string; the loader normalizes it):
         OrchestrationEntry(
-            command=["python3", "stdio_bridge.py", "--listen", "${STDIO_SOCKET_PATH}", "--",
+            command=["stdio-bridge", "--listen", "${STDIO_SOCKET_PATH}", "--",
                      "node", "index.js"],
             track_socket=True,
         )

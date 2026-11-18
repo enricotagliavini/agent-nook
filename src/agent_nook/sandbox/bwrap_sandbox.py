@@ -30,6 +30,18 @@ from agent_nook.utils.logger import main_logger
 _logger = main_logger(__name__)
 
 
+def _stdio_stub_host_path() -> str:
+    """Absolute host path to the bundled sandbox-side stdio stub.
+
+    The stub ships alongside this module in the installed package. It is
+    bind-mounted into the sandbox at ``/run/stdio_stub.py``, so the
+    sandboxed command can run it without knowing where agent-nook was
+    installed — and without importing anything from agent-nook (which the
+    sandbox environment never has).
+    """
+    return str(Path(__file__).resolve().parent.parent / "stdio_stub.py")
+
+
 def _ensure_mount_sources(mounts: list[Mount]) -> None:
     """Create missing mount source paths before the sandbox starts.
 
@@ -221,7 +233,12 @@ class BwrapSandbox:
         """Return the sandbox configuration."""
         return self._config
 
-    def build(self, command: list[str] | None = None, socket_mounts: object = None) -> list[str]:
+    def build(
+        self,
+        command: list[str] | None = None,
+        socket_mounts: object = None,
+        stdio_stub_path: str | None = None,
+    ) -> list[str]:
         """Build the bwrap command line.
 
         Args:
@@ -233,11 +250,14 @@ class BwrapSandbox:
                 :meth:`Orchestrator.socket_mounts`). When provided, each
                 mount is bind-mounted into ``/run`` and its ``STDIO_SOCKET_PATH``
                 env var set.
+            stdio_stub_path: Absolute host path to the bundled stdio stub.
+                When provided, it is bind-mounted into ``/run/stdio_stub.py``
+                so the sandboxed command can run it.
 
         Returns:
             The complete bwrap command line.
         """
-        return self._builder.build(command or [], socket_mounts=socket_mounts)
+        return self._builder.build(command or [], socket_mounts=socket_mounts, stdio_stub_path=stdio_stub_path)
 
     def run(self, command: list[str]) -> SandboxResult:
         """Run a command inside the sandbox.
@@ -283,8 +303,13 @@ class BwrapSandbox:
 
         try:
             # Build the bwrap command with the runtime socket mounts (bind into
-            # /run, set STDIO_SOCKET_PATH).
-            bwrap_cmd = self.build(command, socket_mounts=orchestrator.socket_mounts())
+            # /run, set STDIO_SOCKET_PATH) and the stdio stub (bind into
+            # /run/stdio_stub.py so the sandboxed command can run it).
+            bwrap_cmd = self.build(
+                command,
+                socket_mounts=orchestrator.socket_mounts(),
+                stdio_stub_path=_stdio_stub_host_path(),
+            )
 
             _logger.debug("Full bwrap command: %s", " ".join(bwrap_cmd), extra={"command_only": True})
 

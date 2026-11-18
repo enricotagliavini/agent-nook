@@ -727,7 +727,7 @@ class ConfigLoader:
 
           ```yaml
           orchestration:
-            - command: "python3 stdio_bridge.py --listen ${STDIO_SOCKET_PATH} -- node index.js"
+            - command: "stdio-bridge --listen ${STDIO_SOCKET_PATH} -- node index.js"
               track-socket: true
               wait-timeout: 30
               keep: false
@@ -820,7 +820,7 @@ class ConfigLoader:
         if not isinstance(command, str) or not command:
             raise ConfigValidationError(
                 f"orchestration[{index}].command must be a non-empty string (no shell). "
-                f'Use: command: "python3 stdio_bridge.py --listen ${{STDIO_SOCKET_PATH}} -- node index.js"'
+                f'Use: command: "stdio-bridge --listen ${{STDIO_SOCKET_PATH}} -- node index.js"'
             )
         try:
             argv = shlex.split(command)
@@ -829,7 +829,7 @@ class ConfigLoader:
         if not argv:
             raise ConfigValidationError(
                 f"orchestration[{index}].command must be a non-empty string (no shell). "
-                f'Use: command: "python3 stdio_bridge.py --listen ${{STDIO_SOCKET_PATH}} -- node index.js"'
+                f'Use: command: "stdio-bridge --listen ${{STDIO_SOCKET_PATH}} -- node index.js"'
             )
         return argv
 
