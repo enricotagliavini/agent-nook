@@ -361,6 +361,37 @@ def test_load_from_dict_create_as_invalid_value_errors():
         loader.load_from_dict(data)
 
 
+def test_load_from_dict_bind_try_parses():
+    """`type: bind-try` parses into a Mount whose build() emits --bind-try."""
+
+    loader = ConfigLoader()
+    data = {
+        "name": "test",
+        "mounts": [
+            {"source": "/a", "target": "/a", "type": "bind-try"},
+            {"source": "/b", "target": "/b", "type": "ro-bind-try"},
+            {"source": "/dev/sda", "target": "/dev/sda", "type": "dev-bind-try"},
+        ],
+    }
+    config = loader.load_from_dict(data)
+    assert config.mounts[0].type == "bind-try"
+    assert config.mounts[0].build() == ["--bind-try", "/a", "/a"]
+    assert config.mounts[1].build() == ["--ro-bind-try", "/b", "/b"]
+    assert config.mounts[2].type == "dev-bind-try"
+    assert config.mounts[2].device is False  # dev-bind-try still needs device=True
+
+
+def test_load_from_dict_create_source_on_try_rejected():
+    """create-source on a *-try type is rejected (mutual exclusivity for free)."""
+    loader = ConfigLoader()
+    data = {
+        "name": "test",
+        "mounts": [{"source": "/a", "target": "/a", "type": "bind-try", "create-source": True}],
+    }
+    with pytest.raises(ConfigValidationError, match="only valid for bind, ro-bind and dev-bind"):
+        loader.load_from_dict(data)
+
+
 def test_load_from_dict_overlay_mount():
     """An overlay mount with the hyphenated overlay-src key parses into Mount."""
     config = ConfigLoader().load_from_dict(

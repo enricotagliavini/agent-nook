@@ -156,6 +156,20 @@ def main() -> int:
         help="Read-only bind mount host SRC to sandbox DEST (repeat for multiple)",
     )
     run_parser.add_argument(
+        "--bind-try",
+        action="append",
+        default=[],
+        metavar="SRC:DEST",
+        help="Bind mount host SRC to sandbox DEST, skipping the mount if SRC does not exist (repeat for multiple)",
+    )
+    run_parser.add_argument(
+        "--ro-bind-try",
+        action="append",
+        default=[],
+        metavar="SRC:DEST",
+        help="Read-only bind mount host SRC to sandbox DEST, skipping the mount if SRC does not exist (repeat for multiple)",
+    )
+    run_parser.add_argument(
         "--overlay-src",
         action=_OverlayOpAction,
         op="overlay-src",

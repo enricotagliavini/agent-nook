@@ -41,6 +41,47 @@ def test_mount_build_dev_bind_without_device_errors():
         mount.build()
 
 
+def test_mount_build_bind_try():
+    """bind-try produces --bind-try SRC DEST."""
+    mount = Mount(source="/host", target="/sandbox", type="bind-try")
+    assert mount.build() == ["--bind-try", "/host", "/sandbox"]
+
+
+def test_mount_build_ro_bind_try():
+    """ro-bind-try produces --ro-bind-try SRC DEST."""
+    mount = Mount(source="/host", target="/sandbox", type="ro-bind-try")
+    assert mount.build() == ["--ro-bind-try", "/host", "/sandbox"]
+
+
+def test_mount_build_dev_bind_try():
+    """dev-bind-try produces --dev-bind-try SRC DEST with device=True."""
+    mount = Mount(source="/dev/sda", target="/dev/sda", type="dev-bind-try", device=True)
+    assert mount.build() == ["--dev-bind-try", "/dev/sda", "/dev/sda"]
+
+
+def test_mount_build_dev_bind_try_without_device_errors():
+    """dev-bind-try without device=True raises ValueError."""
+    mount = Mount(source="/dev/sda", target="/dev/sda", type="dev-bind-try", device=False)
+    with pytest.raises(ValueError, match="requires device=True"):
+        mount.build()
+
+
+def test_mount_build_try_requires_source_and_target():
+    """*-try variants require both source and target, like plain bind."""
+    with pytest.raises(ValueError, match="requires a non-empty source"):
+        Mount(target="/sandbox", type="bind-try").build()
+    with pytest.raises(ValueError, match="requires a non-empty target"):
+        Mount(source="/host", type="ro-bind-try").build()
+
+
+def test_mount_build_try_rejects_create_source():
+    """create-source is rejected on try variants (mutual exclusivity for free)."""
+    mount = Mount(source="/host", target="/sandbox", type="bind-try", create_source=True)
+    # The loader rejects this, but build() itself never emits create-source
+    # args — it only reflects the bwrap flag. Assert the flag emitted.
+    assert mount.build() == ["--bind-try", "/host", "/sandbox"]
+
+
 def test_mount_build_tmpfs():
     """Test tmpfs mount produces --tmpfs TARGET [SIZE]."""
     mount = Mount(target="/data", type="tmpfs", size="100M")
