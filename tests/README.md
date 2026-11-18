@@ -156,13 +156,36 @@ python -m pytest tests/integration/test_cli.py -v
 python -m pytest tests/integration/test_auto_init.py -v
 ```
 
+### The `run_tests.sh` entrypoint
+
+`./run_tests.sh` is the recommended way to run everything. It splits the suite
+into two phases:
+
+1. **Unit group** (`-m "not integration" -n auto`) — runs the ~260 isolated
+   unit tests in parallel with pytest-xdist. These tests use `tmp_path` /
+   `monkeypatch`, pid-based socket names, ephemeral ports and a per-process
+   logger, so they are safe under xdist.
+2. **Integration group** (`-m integration`) — runs serial. The bwrap-heavy
+   integration tests share one session-scoped wheel build and pipx env; running
+   them serially avoids a per-xdist-worker rebuild that would race on the shared
+   `dist/` directory.
+
+Every test and xdist worker gets a writable XDG state via the autouse
+`xdg_config_dir` session fixture (see below), because `log_file_handle()` has no
+`/tmp` fallback and would otherwise fail against a read-only state directory.
+
+A `pytest_collection_modifyitems` guard rejects any test that is **not** marked
+`integration` but still depends on a session-scoped integration fixture
+(`built_wheel`, `pipx_test_env`, `test_runner`); such a test must be marked
+`integration` so it runs in the serial phase.
+
 ## Test Isolation
 
 ### Session Scope
 
 Fixtures marked `scope="session"` are created once per test run and shared:
 
-- `xdg_config_dir`: Shared XDG config directory
+- `xdg_config_dir`: Shared XDG config directory (autouse — set once per process)
 - `xdg_state_dir`: Shared XDG state directory
 - `pipx_test_env`: Shared pipx environment
 - `built_wheel`: Wheel rebuilt from the current source
@@ -183,7 +206,7 @@ Fixtures marked `scope="function"` are fresh for each test:
 
 | Fixture | Scope | Description |
 |---------|-------|-------------|
-| `xdg_config_dir` | session | Returns temp config directory under /tmp |
+| `xdg_config_dir` | session | Autouse; temp config/state directories under /tmp |
 | `xdg_state_dir` | session | Returns temp state directory under /tmp |
 | `pipx_test_env` | session | Isolated pipx environment (Path, Path, dict) |
 | `built_wheel` | session | Wheel rebuilt from the current source (once per session) |
