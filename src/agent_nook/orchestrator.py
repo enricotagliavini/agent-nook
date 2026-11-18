@@ -36,6 +36,7 @@ try:
     from agent_nook.socket_factory import SocketMount
     from agent_nook.socket_factory import generate
     from agent_nook.stdio_bridge import terminate_process
+    from agent_nook.utils.commands import short_command
     from agent_nook.utils.logger import log_file_handle
     from agent_nook.utils.logger import main_logger
 except ImportError:
@@ -43,6 +44,7 @@ except ImportError:
     from .socket_factory import SocketMount
     from .socket_factory import generate
     from .stdio_bridge import terminate_process
+    from .utils.commands import short_command
     from .utils.logger import log_file_handle
     from .utils.logger import main_logger
 
@@ -210,19 +212,8 @@ class Orchestrator:
         """
         last = self._last_progress_logged.get(id(entry))
         if last is None or now - last >= _PROGRESS_LOG_INTERVAL:
-            _logger.info("orchestration: still waiting for socket from command %s", self._short_command(entry))
+            _logger.info("orchestration: still waiting for socket from command %s", short_command(entry.command))
             self._last_progress_logged[id(entry)] = now
-
-    @staticmethod
-    def _short_command(entry: OrchestrationEntry) -> str:
-        """Return a short, log-friendly form of the command (first 20 chars + '...').
-
-        Commands longer than 20 chars are truncated with an ellipsis; shorter
-        commands are shown in full. Wrapped in single quotes so the fragment
-        reads as a command in the log line.
-        """
-        cmd = " ".join(entry.command)
-        return f"'{cmd[:20]}...'" if len(cmd) > 20 else f"'{cmd}'"
 
     def stop(self) -> None:
         """Stop every started command that is not ``keep: true``, then unlink its socket.
