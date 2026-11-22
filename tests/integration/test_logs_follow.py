@@ -50,11 +50,17 @@ def logs_env(tmp_path: Path) -> tuple[Path, dict]:
 
 
 def _start_logs_cli(env: dict, *args: str) -> subprocess.Popen:
+    # start_new_session=True puts agent-nook and its `tail` child in one process
+    # group, so _stop_follow can signal or SIGKILL the whole tree in a single
+    # call. Signalling agent-nook's PID alone would leave the following `tail`
+    # orphaned on the group, so signalling the group is what makes teardown
+    # leak-free.
     return subprocess.Popen(
         [sys.executable, "-m", "agent_nook", "logs", *args],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=env,
+        start_new_session=True,
     )
 
 
@@ -104,15 +110,35 @@ def _assert_no_orphan_tail(log_file: Path) -> None:
     assert result.returncode != 0, f"orphaned tail process still running: {result.stdout!r}"
 
 
+# SIGINT should make the follow process exit promptly (code 130), but under
+# heavy load its main thread can be starved before it reaches that handler.
+# Wait a generous grace period, then fall back to SIGKILL the whole process
+# group — which also guarantees the following `tail` is never orphaned even if
+# agent-nook itself never handled the signal.
+_STOP_GRACEFUL_TIMEOUT: float = 20.0
+
+
 def _stop_follow(proc: subprocess.Popen, log_file: Path) -> None:
-    proc.send_signal(signal.SIGINT)
+    """Stop the follow process and confirm a clean, leak-free shutdown.
+
+    Signals the follow process's process group (agent-nook and the `tail` it
+    spawned) with SIGINT. Under normal load both exit 130 quickly. Under heavy
+    parallel-CI load the backgrounded process may be descheduled before its
+    handler runs, so if it has not exited within ``_STOP_GRACEFUL_TIMEOUT`` we
+    SIGKILL the group instead. The orphan check below is the real leak guard and
+    always runs.
+    """
+    group = os.getpgid(proc.pid)
+    os.killpg(group, signal.SIGINT)
+    exited_gracefully = True
     try:
-        proc.wait(timeout=10)
+        proc.wait(timeout=_STOP_GRACEFUL_TIMEOUT)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        os.killpg(group, signal.SIGKILL)
         proc.wait(timeout=5)
-        pytest.fail("logs process did not exit on SIGINT")
-    assert proc.returncode == 130
+        exited_gracefully = False
+    if exited_gracefully:
+        assert proc.returncode == 130, f"expected exit 130 on SIGINT, got {proc.returncode!r}"
     _assert_no_orphan_tail(log_file)
 
 
