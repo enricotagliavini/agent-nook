@@ -40,6 +40,13 @@ The validation is layered across modules:
       number), keep (bool). Unknown per-entry keys are rejected.
     → Transforms into OrchestrationEntry dataclass instances.
 
+  **Layer 5b (loader.py, ConfigLoader._parse_secrets()):
+    → Validates secret entries: name (non-empty, filename-safe), exactly one of
+      file/command (file = non-empty host path; command = single string
+      tokenized with shlex, no shell), env (optional non-empty str). Rejects
+      entries with both or neither source, and unknown per-entry keys.
+    → Transforms into Secret dataclass instances.
+
   **Layer 6 (config.py, SandboxConfig.__post_init__()):**
     → Enforces the dataclass invariant: at least one mount point is required.
       A config with zero mounts would create a completely empty sandbox.
@@ -593,6 +600,44 @@ class OrchestrationEntry:
     keep: bool = False
 
 
+@dataclass(frozen=True)
+class Secret:
+    """A single secret passed into the sandbox as a file at ``/run/secrets/<name>``.
+
+    This is a **Layer 6** container in the validation pipeline. The
+    ConfigLoader (Layer 5, `_parse_secrets`) validates the raw YAML entry, then
+    stores the validated data here. This class does not re-validate; it is a
+    pure value object.
+
+    The secret's value is read on the host (from a file, or from the stdout of a
+    command run with no shell) and materialized to a private temp file, then
+    bind-mounted read-only at ``/run/secrets/<name>`` inside the sandbox. When
+    ``env_var`` is set, the wrapper (``secrets_env.py``) also exports that
+    variable inside the sandbox — reading the value from the file at start.
+
+    The ``command`` is configured as a **single string** in the YAML; the loader
+    normalizes it into the argv list shown here with ``shlex.split`` (no shell is
+    involved at execution time — the sandbox runs it via ``subprocess``).
+
+    Args:
+        name: The secret's filename-safe name; the secret is available at
+            ``/run/secrets/<name>`` inside the sandbox.
+        source_file: Host path to read the secret from (mutually exclusive with
+            ``source_command``).
+        source_command: Host command (single YAML string, tokenized with shlex,
+            no shell) whose stdout is the secret (mutually exclusive with
+            ``source_file``).
+        env_var: Optional environment variable name to export inside the
+            sandbox (read from ``/run/secrets/<name>`` by ``secrets_env.py``).
+            When ``None`` the secret is file-only.
+    """
+
+    name: str
+    source_file: str | None = None
+    source_command: list[str] | None = None
+    env_var: str | None = None
+
+
 @dataclass
 class SandboxConfig:
     """Complete sandbox configuration.
@@ -654,6 +699,7 @@ class SandboxConfig:
     capabilities: CapabilitySet = field(default_factory=CapabilitySet)
     unshare: NamespaceSet = field(default_factory=NamespaceSet)
     orchestration: list[OrchestrationEntry] = field(default_factory=list)
+    secrets: list[Secret] = field(default_factory=list)
     die_with_parent: bool = True
     new_session: bool = True
     hostname: str | None = None
@@ -706,4 +752,5 @@ __all__ = [
     "NamespaceSet",
     "OrchestrationEntry",
     "SandboxConfig",
+    "Secret",
 ]

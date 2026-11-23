@@ -48,8 +48,8 @@ secrets:
 - `--secret NAME=SOURCE` (repeatable): `SOURCE` is a host file path, or
   `cmd:<command>`. e.g. `--secret gh-token=cmd:gh auth token`,
   `--secret id=~/.ssh/id_rsa`.
-- `--secret-env NAME=VAR` (repeatable): set the env var name for a `--secret`
-  (overrides the default).
+- `--secret-env NAME=VAR` (repeatable): set the env var name to export a
+  `--secret` as inside the sandbox (opt-in; without it the secret is file-only).
 - (No `--secret-target` — dropped.)
 
 ## How it's wired (mirrors the orchestration / socket feature)
@@ -78,12 +78,12 @@ secrets:
 - `config.py`: `Secret` frozen dataclass + `SandboxConfig.secrets`.
 - `loader.py`: `_FIELDS["secrets"]="list[dict]"`; `_parse_secrets()` mirrors
   `_parse_orchestration` (known keys `name`/`file`/`command`/`env`; exactly one
-  of `file`/`command`; `Path(name).name` sanitization; `env_var` derived from
-  name when `env` absent: uppercased, non-`[A-Za-z0-9]`→`_`, `_` prefix if it
-  starts with a digit; unknown per-entry keys rejected).
+  of `file`/`command`; `Path(name).name` sanitization; `env_var` opt-in —
+  absent `env:` leaves it `None` (file-only, no name→env derivation); unknown
+  per-entry keys rejected).
 - `tests/config/test_secrets.py`: name required; exactly-one-of file/command
-  (both + neither → error); unknown-key rejection; sanitization; env derivation
-  vs explicit; bad types.
+  (both + neither → error); unknown-key rejection; sanitization; env opt-in vs.
+  file-only; bad types.
 - README + default `sandbox.yaml` comment update.
 
 ### Phase 2 — Secret preparation: `secret.py` [CHECKPOINT]
