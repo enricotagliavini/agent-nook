@@ -222,7 +222,7 @@ def test_load_from_dict_empty_mounts_errors():
         loader.load_from_dict(data)
 
 
-def _make_run_args(bind: list[str], timeout: float | None = None) -> argparse.Namespace:
+def _make_run_args(bind: list[str] | None = None, timeout: float | None = None, secrets: list[str] | None = None, secret_env: list[str] | None = None) -> argparse.Namespace:
     """Build a minimal argparse.Namespace mimicking `agent-nook run` flags."""
     return argparse.Namespace(
         config=None,
@@ -231,13 +231,15 @@ def _make_run_args(bind: list[str], timeout: float | None = None) -> argparse.Na
         new_session=True,
         hostname=None,
         timeout=timeout,
-        bind=bind,
+        bind=bind or [],
         ro_bind=[],
         cap_add=[],
         cap_drop=[],
         unshare=[],
         env=[],
         unset_env=[],
+        secret=secrets if secrets is not None else [],
+        secret_env=secret_env if secret_env is not None else [],
     )
 
 
@@ -643,3 +645,93 @@ def test_load_from_dict_empty_mounts_still_rejected_after_run_check():
     data = {"name": "test", "mounts": []}
     with pytest.raises(ConfigValidationError, match="at least one mount point"):
         loader.load_from_dict(data)
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# CLI secret overrides (--secret / --secret-env)
+# ───────────────────────────────────────────────────────────────────────────────
+
+
+def test_load_with_overrides_secret_from_file(tmp_path):
+    """--secret name=/path produces a file-source secret at /run/secrets/name."""
+    config_file = tmp_path / "sandbox.yaml"
+    config_file.write_text("name: test\nmounts:\n  - target: /tmp\n    type: tmpfs\n", encoding="utf-8")
+
+    config = ConfigLoader().load_with_overrides(_make_run_args(secrets=["gh-token=/home/u/.config/gh/hosts.yml"]), path=str(config_file))
+
+    assert len(config.secrets) == 1
+    secret = config.secrets[0]
+    assert secret.name == "gh-token"
+    assert secret.source_file == "/home/u/.config/gh/hosts.yml"
+    assert secret.source_command is None
+    assert secret.env_var is None
+
+
+def test_load_with_overrides_secret_from_command(tmp_path):
+    """--secret name=cmd:ARGS tokenizes the command; the value is file-less."""
+    config_file = tmp_path / "sandbox.yaml"
+    config_file.write_text("name: test\nmounts:\n  - target: /tmp\n    type: tmpfs\n", encoding="utf-8")
+
+    config = ConfigLoader().load_with_overrides(_make_run_args(secrets=["gh-token=cmd:gh auth token"]), path=str(config_file))
+
+    assert len(config.secrets) == 1
+    secret = config.secrets[0]
+    assert secret.name == "gh-token"
+    assert secret.source_file is None
+    assert secret.source_command == ["gh", "auth", "token"]
+    assert secret.env_var is None
+
+
+def test_load_with_overrides_secret_env_export(tmp_path):
+    """--secret-env NAME=VAR exports the secret inside the sandbox (opt-in)."""
+    config_file = tmp_path / "sandbox.yaml"
+    config_file.write_text("name: test\nmounts:\n  - target: /tmp\n    type: tmpfs\n", encoding="utf-8")
+
+    config = ConfigLoader().load_with_overrides(_make_run_args(secrets=["gh-token=cmd:gh auth token"], secret_env=["gh-token=GH_TOKEN"]), path=str(config_file))
+
+    assert len(config.secrets) == 1
+    assert config.secrets[0].env_var == "GH_TOKEN"
+
+
+def test_load_with_overrides_secret_env_applies_regardless_of_order(tmp_path):
+    """--secret-env before --secret still matches by name."""
+    config_file = tmp_path / "sandbox.yaml"
+    config_file.write_text("name: test\nmounts:\n  - target: /tmp\n    type: tmpfs\n", encoding="utf-8")
+
+    config = ConfigLoader().load_with_overrides(_make_run_args(secrets=["gh-token=cmd:gh auth token"], secret_env=["gh-token=GH_TOKEN"]), path=str(config_file))
+
+    assert config.secrets[0].env_var == "GH_TOKEN"
+
+
+def test_load_with_overrides_multiple_secrets(tmp_path):
+    """Multiple --secret flags produce one secret each, in command-line order."""
+    config_file = tmp_path / "sandbox.yaml"
+    config_file.write_text("name: test\nmounts:\n  - target: /tmp\n    type: tmpfs\n", encoding="utf-8")
+
+    args = _make_run_args(secrets=["a=cmd:echo one", "b=/path/two"], secret_env=["b=B"])
+    config = ConfigLoader().load_with_overrides(args, path=str(config_file))
+
+    assert [(s.name, s.source_command, s.source_file, s.env_var) for s in config.secrets] == [
+        ("a", ["echo", "one"], None, None),
+        ("b", None, "/path/two", "B"),
+    ]
+
+
+def test_load_with_overrides_secret_env_unknown_name_errors(tmp_path):
+    """--secret-env referencing a name never declared with --secret is rejected."""
+    config_file = tmp_path / "sandbox.yaml"
+    config_file.write_text("name: test\nmounts:\n  - target: /tmp\n    type: tmpfs\n", encoding="utf-8")
+
+    args = _make_run_args(secrets=["gh-token=cmd:gh auth token"], secret_env=["missing=GH_TOKEN"])
+    with pytest.raises(ConfigValidationError, match="unknown secret 'missing'"):
+        ConfigLoader().load_with_overrides(args, path=str(config_file))
+
+
+def test_load_with_overrides_secret_without_separator_errors(tmp_path):
+    """--secret without a NAME=SOURCE separator is rejected."""
+    config_file = tmp_path / "sandbox.yaml"
+    config_file.write_text("name: test\nmounts:\n  - target: /tmp\n    type: tmpfs\n", encoding="utf-8")
+
+    args = _make_run_args(secrets=["no-separator"])
+    with pytest.raises(ConfigValidationError, match="NAME=SOURCE"):
+        ConfigLoader().load_with_overrides(args, path=str(config_file))

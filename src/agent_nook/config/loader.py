@@ -350,6 +350,45 @@ class ConfigLoader:
             result.setdefault("unset_vars", "")
             result["unset_vars"] += f", {var}"
 
+        # Secrets from --secret NAME=SOURCE. SOURCE is a host file path, or the
+        # literal "cmd:<command>" whose stdout is the secret. Each entry is
+        # emitted as a raw dict so _parse_secrets validates it through the same
+        # pipeline as a config-file entry. The command is kept as an untokenized
+        # string here: _parse_secrets tokenizes it with shlex, exactly as it does
+        # for a config-file command. The name is filename-safe-ized up front so a
+        # later --secret-env matches the same name _parse_secrets will use.
+        for spec in getattr(args, "secret", []):
+            if "=" not in spec:
+                raise ConfigValidationError(f"--secret expects NAME=SOURCE, got '{spec}'")
+            name, source = spec.split("=", 1)
+            name = Path(name).name
+            if not name:
+                raise ConfigValidationError(f"--secret expects a non-empty NAME in '{spec}'")
+            entry: dict[str, Any] = {"name": name}
+            if source.startswith("cmd:"):
+                entry["command"] = source[len("cmd:") :]
+            else:
+                entry["file"] = source
+            result.setdefault("secrets", []).append(entry)
+
+        # --secret-env NAME=VAR exports a previously declared --secret as an env
+        # var inside the sandbox (opt-in; absent -> file-only secret). Applied by
+        # name so the order of --secret/--secret-env on the command line does not
+        # matter. A name with no matching --secret is a user error, not a silent
+        # no-op.
+        secret_env: dict[str, str] = {}
+        for spec in getattr(args, "secret_env", []):
+            if "=" not in spec:
+                raise ConfigValidationError(f"--secret-env expects NAME=VAR, got '{spec}'")
+            name, var = spec.split("=", 1)
+            name = Path(name).name
+            secret_env[name] = var
+        for name, var in secret_env.items():
+            target = next((s for s in result.get("secrets", []) if s.get("name") == name), None)
+            if target is None:
+                raise ConfigValidationError(f"--secret-env references unknown secret '{name}'; declare it with --secret first")
+            target["env"] = var
+
         return result
 
     def load_with_overrides(self, args: argparse.Namespace, path: str | None = None) -> SandboxConfig:
