@@ -24,8 +24,8 @@
 ## Testing & Verification (MANDATORY)
 Run after EVERY change:
 - `./run_tests.sh`
-- `ruff check src/ --fix`
-- `ruff format src/`
+- `./run_lint.sh` — the canonical lint entry point (mirrors CI). It lints and formats **`src/` only**; use `./run_lint.sh --check` to verify without fixing.
+  - Do **NOT** run bare `ruff check`/`ruff format` on the whole repo. `tests/` intentionally follows different conventions (e.g. `subprocess.run` without `check`) and is out of scope — linting it yields ~40 errors and would break CI.
 - Update tests for all behavior changes. Tests are the contract.
 
 ## Testing Conventions
