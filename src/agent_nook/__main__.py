@@ -212,7 +212,7 @@ def main() -> int:
         action="append",
         default=[],
         metavar="NAME=SOURCE",
-        help="Add a secret from a host file (NAME=/path) or a host command (NAME=cmd:ARGS); the command's stdout is the secret (repeat for multiple)",
+        help="Add a secret from a host file (NAME=/path) or a host command (NAME=cmd:ARGS); the command's stdout becomes the secret, minus one trailing newline (repeat for multiple)",
     )
     run_parser.add_argument(
         "--secret-env",

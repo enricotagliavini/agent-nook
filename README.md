@@ -294,7 +294,7 @@ agent-nook logs -F -n 100
 | `--overlay-src SRC` | Lower layer for the next `--overlay`/`--ro-overlay`/`--tmp-overlay` (repeat for multiple) |
 | `--env KEY=VALUE` | Set environment variable (repeat for multiple) |
 | `--unset-env KEY` | Unset environment variable (repeat for multiple) |
-| `--secret NAME=SOURCE` | Add a secret from a host file (`NAME=/path`) or a host command (`NAME=cmd:ARGS`); the command's stdout becomes the secret value. Read-only bind-mounted at `/run/secrets/<name>` (repeat for multiple) |
+| `--secret NAME=SOURCE` | Add a secret from a host file (`NAME=/path`) or a host command (`NAME=cmd:ARGS`); the command's stdout becomes the secret value (a single trailing newline is stripped). Read-only bind-mounted at `/run/secrets/<name>` (repeat for multiple) |
 | `--secret-env NAME=VAR` | Export a `--secret` inside the sandbox as the env var `VAR` (opt-in; without it the secret is file-only) (repeat for multiple) |
 | `--hostname HOSTNAME` | Set sandbox hostname |
 | `--timeout SECONDS` | Maximum execution time in seconds (overrides config) |
@@ -599,7 +599,7 @@ secrets:
 |---|---|---|
 | `name` | yes | Filename-safe secret name; any path components are stripped, so `name` is used as the final `/run/secrets/<name>` path |
 | `file` | one of `file`/`command` | Read a host file's contents (preserving newlines and binary content) |
-| `command` | one of `file`/`command` | Run a host command; its stdout becomes the secret value (tokenized with `shlex`, no shell). Prefix with `cmd:` on the CLI, e.g. `--secret "gh-token=cmd:gh auth token"` (quote the whole value so the words stay one `--secret` arg) |
+| `command` | one of `file`/`command` | Run a host command; its stdout becomes the secret value (tokenized with `shlex`, no shell, and a single trailing newline is stripped). Prefix with `cmd:` on the CLI, e.g. `--secret "gh-token=cmd:gh auth token"` (quote the whole value so the words stay one `--secret` arg) |
 | `env` | no | When set, the secret is also exported inside the sandbox under that variable name. Omit for a file-only secret |
 
 On the CLI, `--secret NAME=SOURCE` and `--secret-env NAME=VAR` repeat for multiple secrets. A `--secret-env` name must match a `--secret` already declared, or agent-nook exits with an error.

@@ -75,14 +75,20 @@ def _read_content(secret: Secret) -> bytes:
     ``file`` is read verbatim (preserving trailing newlines and binary
     content). ``command`` was already tokenized into an argv list by the
     loader (``shlex``, no shell); it runs directly via ``subprocess``, whose
-    stdout is captured as bytes — preserving trailing newlines the way
-    ``$(cat file)`` would not.
+    stdout is captured as bytes. Because almost every interactive command
+    (``pwd``, ``whoami``, ``echo``, ...) appends its own trailing newline, a
+    single trailing ``\\n`` is stripped from command sources so the secret does
+    not carry that extra byte — but only one is removed, and internal newlines
+    are left untouched.
     """
     if secret.source_file is not None:
         return Path(secret.source_file).read_bytes()
     if secret.source_command is None:
         raise ValueError(f"secret {secret.name!r} has neither a file nor a command source")
-    return subprocess.run(secret.source_command, check=True, capture_output=True).stdout
+    output = subprocess.run(secret.source_command, check=True, capture_output=True).stdout
+    # Drop exactly one trailing newline that commands append on their own; a
+    # file source never reaches this branch and keeps its bytes verbatim.
+    return output[:-1] if output.endswith(b"\n") else output
 
 
 def _write_file(path: str, content: bytes, mode: int) -> None:

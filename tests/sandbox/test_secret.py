@@ -41,10 +41,14 @@ def test_file_source_materialized(tmp_path):
 
 
 def test_command_source_captures_stdout(tmp_path):
-    """A command-source secret's stdout (no shell) becomes the secret value."""
+    """A command-source secret's stdout (no shell) becomes the value.
+
+    ``echo`` appends its own trailing newline; it is stripped here so the secret
+    does not carry an unexpected byte (see ``_read_content``).
+    """
     bundle = prepare_secrets([Secret(name="gh-token", source_command=["echo", "tok"])])
     try:
-        assert _read_secret(bundle, "gh-token") == b"tok\n"
+        assert _read_secret(bundle, "gh-token") == b"tok"
     finally:
         bundle.cleanup()
 
@@ -59,17 +63,21 @@ def test_file_trailing_newline_fidelity(tmp_path):
         bundle.cleanup()
 
 
-def test_command_trailing_newline_fidelity(tmp_path):
-    """Command stdout keeps its trailing newline (unlike $(cat file))."""
-    bundle = prepare_secrets([Secret(name="s", source_command=["printf", "tok\n"])])
+def test_command_strips_exactly_one_trailing_newline(tmp_path):
+    """Only one trailing newline is removed from a command source.
+
+    Internal newlines survive and only a single trailing one is dropped, so a
+    multi-line secret keeps every line but loses the final terminator.
+    """
+    bundle = prepare_secrets([Secret(name="s", source_command=["printf", "%s", "x\ny\n"])])
     try:
-        assert _read_secret(bundle, "s") == b"tok\n"
+        assert _read_secret(bundle, "s") == b"x\ny"
     finally:
         bundle.cleanup()
 
 
-def test_command_without_trailing_newline_fidelity(tmp_path):
-    """A command with no trailing newline yields a value with no trailing newline."""
+def test_command_without_trailing_newline_is_untouched(tmp_path):
+    """A command emitting no trailing newline leaves the value unchanged."""
     bundle = prepare_secrets([Secret(name="s", source_command=["printf", "tok"])])
     try:
         assert _read_secret(bundle, "s") == b"tok"
@@ -280,6 +288,6 @@ def test_multiple_secrets_are_independent(tmp_path):
         names = sorted(m.name for m in bundle.mounts)
         assert names == ["a", "b"]
         assert _read_secret(bundle, "a") == b"1"
-        assert _read_secret(bundle, "b") == b"2\n"
+        assert _read_secret(bundle, "b") == b"2"  # echo's trailing newline is stripped
     finally:
         bundle.cleanup()
