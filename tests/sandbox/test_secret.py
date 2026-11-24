@@ -101,6 +101,26 @@ def test_secret_files_are_mode_0600(tmp_path):
         bundle.cleanup()
 
 
+def test_secret_file_is_mode_0600_under_permissive_umask(tmp_path):
+    """Even under umask 0o000 the secret is 0600 — no group/other bits leaked.
+
+    This is the security-critical case: a ``write_bytes`` + ``chmod`` ordering
+    leaves the file ``0644`` (world-readable) for the instant before the chmod,
+    since ``write_bytes`` creates it at ``0666 & ~umask``. The file is now
+    created already restricted (``os.open(..., 0o600)``), so the umask can only
+    ever strip bits — never add them — and the result stays ``0600``.
+    """
+    old_umask = os.umask(0o000)
+    try:
+        host = _host_file(tmp_path, "creds", b"v")
+        bundle = prepare_secrets([Secret(name="s", source_file=host)])
+        mode = stat.S_IMODE(Path(bundle.temp_dir, "s").stat().st_mode)
+        assert mode == 0o600
+    finally:
+        os.umask(old_umask)
+        bundle.cleanup()
+
+
 def test_temp_dir_is_mode_0700(tmp_path, monkeypatch):
     """The per-run temp dir is mode 0700."""
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))

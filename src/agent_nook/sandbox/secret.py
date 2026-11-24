@@ -58,14 +58,13 @@ def _base_dir() -> str:
     """Return the per-run temp directory base, created mode ``0700`` on demand.
 
     Mirrors ``socket_factory.generate``: ``$XDG_RUNTIME_DIR/agent-nook`` when
-    set, else ``/tmp``. The directory is force-chmod'd to ``0700`` because
-    ``os.makedirs`` honours ``umask`` (e.g. ``umask 022`` → ``0755``).
+    set, else ``/tmp``. ``os.makedirs(mode=0o700)`` yields ``0700`` on creation
+    because ``0o700`` has no group/other bits for the umask to strip, so the
+    directory is born ``0700`` regardless of umask — no ``chmod`` is needed.
     """
     xdg_runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
     base = os.path.join(xdg_runtime_dir, "agent-nook") if xdg_runtime_dir else "/tmp"
     os.makedirs(base, mode=0o700, exist_ok=True)
-    with contextlib.suppress(OSError):
-        os.chmod(base, 0o700)
     return base
 
 
@@ -92,9 +91,22 @@ def _read_content(secret: Secret) -> bytes:
 
 
 def _write_file(path: str, content: bytes, mode: int) -> None:
-    """Write ``content`` to ``path`` and force ``mode`` (umask-independent)."""
-    Path(path).write_bytes(content)
-    os.chmod(path, mode)
+    """Create ``path`` already restricted to ``mode`` and write ``content``.
+
+    The file is created with ``os.open`` (``O_CREAT``) so it is born with the
+    restrictive ``mode`` rather than the default ``0666 & ~umask`` followed by
+    a later ``chmod``. That old ordering left the file world-readable (``0644``
+    under a ``022`` umask) for the instant between creation and the ``chmod`` —
+    during which the secret bytes were briefly exposed to any process that could
+    reach the path. ``mode`` is ``0o600`` and carries no group/other bits for
+    the umask to strip, so the file is born exactly ``0600``; no trailing
+    ``chmod`` is needed (one would only reintroduce a chmod-after window, and
+    the ``0700`` temp dir is the real boundary anyway). ``O_TRUNC`` preserves
+    the previous overwrite semantics (e.g. two secrets sharing a name).
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "wb") as f:
+        f.write(content)
 
 
 def _chmod_remove(dirpath: str) -> None:
