@@ -35,6 +35,15 @@ def not_root() -> None:
         pytest.skip("cannot simulate an unreadable secret as root")
 
 
+@pytest.fixture
+def bwrap_available() -> str | None:
+    """Return the ``bwrap`` path, or skip the calling test if it is absent."""
+    path = shutil.which("bwrap")
+    if not path:
+        pytest.skip("bwrap not available on PATH")
+    return path
+
+
 def _write_manifest(tmp_path: Path, mapping: dict[str, str]) -> Path:
     """Write a secrets manifest mapping ``VAR`` -> ``<path>`` and return its path."""
     manifest = tmp_path / "secrets.env"
@@ -160,17 +169,33 @@ def test_unknown_command_returns_127(tmp_path, monkeypatch):
     assert "cannot exec" in result.stderr
 
 
-def test_manifest_default_path_used_when_no_env(tmp_path, monkeypatch):
+def test_manifest_default_path_used_when_no_env(tmp_path, monkeypatch, bwrap_available):
     """With no AGENT_NOOK_SECRETS_MANIFEST the wrapper uses the fixed default.
 
-    The default path does not exist in the test environment, so the wrapper
-    fails to read it and exits 1 — confirming the default was used.
+    The wrapper runs inside a bwrap sandbox whose ``/run`` is a fresh tmpfs, so
+    the fixed default ``/run/agent_nook_secrets.env`` is absent there even when
+    the host's real ``/run`` already has it. The wrapper therefore fails to read
+    the default and exits 1 — confirming the default was used, without touching
+    the host's ``/run`` (or any real system path) at all.
     """
     monkeypatch.delenv("AGENT_NOOK_SECRETS_MANIFEST", raising=False)
-    result = subprocess.run(
-        [sys.executable, str(WRAPPER), "somecommand"],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 1
+    cmd = [
+        bwrap_available,
+        "--ro-bind",
+        "/",
+        "/",
+        "--tmpfs",
+        "/run",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--",
+        sys.executable,
+        str(WRAPPER),
+        "somecommand",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    assert result.returncode == 1, result.stderr
     assert "cannot read manifest" in result.stderr
+    assert "/run/agent_nook_secrets.env" in result.stderr
