@@ -257,6 +257,29 @@ hostname: "agent-sandbox"
 #     wait-timeout: 30
 #     keep: false
 #
+# === Secrets ===
+# secrets: secrets to make available inside the sandbox. Each secret is
+#   materialized on the host to a private 0600 temp file (in a per-run 0700
+#   dir under $XDG_RUNTIME_DIR/agent-nook, /tmp fallback), read-only bind
+#   mounted to /run/secrets/<name>, and cleaned up on teardown. Secrets are
+#   NEVER passed on the command line (--setenv) or as host env vars, so they
+#   do not show up in `ps` or the logs.
+#
+#   Exactly one source is required:
+#     - file:   read a host file's contents (e.g. a key, a PEM, a config).
+#     - command: run a host command; its stdout becomes the secret value.
+#   `name` is required and any path components are stripped (filename-safe).
+#   `env` is optional: when set, the secret is also exported inside the
+#   sandbox under that variable name (opt-in — omit it for a file-only secret).
+#
+# Example:
+# secrets:
+#   - name: gh-token          # -> /run/secrets/gh-token
+#     command: "gh auth token"   # host command; stdout = secret value
+#     env: GH_TOKEN              # optional: also export as GH_TOKEN
+#   - name: ssh-key             # -> /run/secrets/ssh-key (file-only)
+#     file: ~/.ssh/id_ed25519
+#
 
 # === Environment ===
 # env_vars: environment variables to set (key-value pairs, as a dict)

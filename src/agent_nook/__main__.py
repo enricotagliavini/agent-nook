@@ -207,6 +207,20 @@ def main() -> int:
     run_parser.add_argument(
         "--unset-env", action="append", default=[], metavar="KEY", help="Unset environment variable (repeat for multiple)"
     )
+    run_parser.add_argument(
+        "--secret",
+        action="append",
+        default=[],
+        metavar="NAME=SOURCE",
+        help="Add a secret from a host file (NAME=/path) or a host command (NAME=cmd:ARGS); the command's stdout becomes the secret, minus one trailing newline (repeat for multiple)",
+    )
+    run_parser.add_argument(
+        "--secret-env",
+        action="append",
+        default=[],
+        metavar="NAME=VAR",
+        help="Export a --secret inside the sandbox as the env var VAR (opt-in; without it the secret is file-only) (repeat for multiple)",
+    )
     run_parser.add_argument("--hostname", metavar="HOSTNAME", help="Set sandbox hostname")
     run_parser.add_argument(
         "--new-session", action="store_true", default=True, help="Create new session (prevents TIOCSTI attacks, default: on)"

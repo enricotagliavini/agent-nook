@@ -229,6 +229,17 @@ agent-nook run --env PATH=/usr/bin --env HOME=/root python3 script.py
 # Unset environment variables
 agent-nook run --unset-env PATH --unset-env HOME python3 script.py
 
+# Secrets: pass a host file's contents as a secret, mounted read-only at
+# /run/secrets/<name> (never on the command line or in the logs)
+agent-nook run --secret gh-token=/home/enrico/.config/gh/token python3 deploy.py
+
+# Secrets: derive the value from a host command's stdout (no shell involved).
+# Quote the whole NAME=cmd:ARGS so the words stay one --secret value:
+agent-nook run --secret "gh-token=cmd:gh auth token" python3 deploy.py
+
+# Secrets: also export the secret inside the sandbox as an env var (opt-in)
+agent-nook run --secret "gh-token=cmd:gh auth token" --secret-env gh-token=GH_TOKEN python3 deploy.py
+
 # Custom hostname
 agent-nook run --hostname my-agent python3 script.py
 
@@ -283,6 +294,8 @@ agent-nook logs -F -n 100
 | `--overlay-src SRC` | Lower layer for the next `--overlay`/`--ro-overlay`/`--tmp-overlay` (repeat for multiple) |
 | `--env KEY=VALUE` | Set environment variable (repeat for multiple) |
 | `--unset-env KEY` | Unset environment variable (repeat for multiple) |
+| `--secret NAME=SOURCE` | Add a secret from a host file (`NAME=/path`) or a host command (`NAME=cmd:ARGS`); the command's stdout becomes the secret value (a single trailing newline is stripped). Read-only bind-mounted at `/run/secrets/<name>` (repeat for multiple) |
+| `--secret-env NAME=VAR` | Export a `--secret` inside the sandbox as the env var `VAR` (opt-in; without it the secret is file-only) (repeat for multiple) |
 | `--hostname HOSTNAME` | Set sandbox hostname |
 | `--timeout SECONDS` | Maximum execution time in seconds (overrides config) |
 | `--new-session` | Create new session (prevents TIOCSTI attacks, **default: on**) |
@@ -541,6 +554,56 @@ agent-nook run \
   python3 safe_agent.py
 ```
 
+## Secrets
+
+Secrets let you make sensitive values (API tokens, SSH keys, PEM files) available **inside** the sandbox without ever putting them on the command line or in the logs.
+
+Each secret is:
+
+1. Read on the **host** — from a file, or from the stdout of a host command (run with no shell).
+2. Written to a private temp file (mode `0600`) inside a per-run private directory (mode `0700`) under `$XDG_RUNTIME_DIR/agent-nook` (falling back to `/tmp`).
+3. **Read-only** bind-mounted into the sandbox at `/run/secrets/<name>`.
+4. Removed on teardown.
+
+Because the value is only ever bind-mounted (never passed via `--setenv` or exported as a host env var), it never appears in `ps`, in agent-nook's output, or in the logs — even with `-v`/`--verbose` (which logs the full `bwrap` command, including the temp-file *paths*, but not the secret *bytes*).
+
+```bash
+# From a host file — mounted read-only at /run/secrets/gh-token
+agent-nook run --secret gh-token=/home/enrico/.config/gh/token python3 -c "print(open('/run/secrets/gh-token').read())"
+
+# From a host command — its stdout becomes the secret value (no shell involved).
+# Quote the whole NAME=cmd:ARGS so the words stay one --secret value:
+agent-nook run --secret "gh-token=cmd:gh auth token" python3 -c "print(open('/run/secrets/gh-token').read())"
+
+# Also export it inside the sandbox as an env var (opt-in)
+agent-nook run --secret "gh-token=cmd:gh auth token" --secret-env gh-token=GH_TOKEN \
+    python3 -c "import os; print(os.environ['GH_TOKEN'])"
+```
+
+### Config file
+
+The same secrets can be declared in the config file under `secrets:`:
+
+```yaml
+secrets:
+  - name: gh-token          # -> /run/secrets/gh-token
+    command: "gh auth token"   # host command; stdout = secret value
+    env: GH_TOKEN              # optional: also export as GH_TOKEN
+  - name: ssh-key             # -> /run/secrets/ssh-key (file-only)
+    file: ~/.ssh/id_ed25519
+```
+
+### Field reference
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | yes | Filename-safe secret name; any path components are stripped, so `name` is used as the final `/run/secrets/<name>` path |
+| `file` | one of `file`/`command` | Read a host file's contents (preserving newlines and binary content) |
+| `command` | one of `file`/`command` | Run a host command; its stdout becomes the secret value (tokenized with `shlex`, no shell, and a single trailing newline is stripped). Prefix with `cmd:` on the CLI, e.g. `--secret "gh-token=cmd:gh auth token"` (quote the whole value so the words stay one `--secret` arg) |
+| `env` | no | When set, the secret is also exported inside the sandbox under that variable name. Omit for a file-only secret |
+
+On the CLI, `--secret NAME=SOURCE` and `--secret-env NAME=VAR` repeat for multiple secrets. A `--secret-env` name must match a `--secret` already declared, or agent-nook exits with an error.
+
 ## Orchestration
 
 Some agents need helper processes that must be alive while the sandbox runs — typically a bridge that exposes a stdio MCP server over a socket. The `orchestration:` key declares host-side commands that agent-nook starts **before** the sandbox and stops again after the sandbox exits.
@@ -603,6 +666,57 @@ agent-nook run python3 /run/stdio_stub.py
 4. When the sandbox command exits, agent-nook stops every non-`keep` entry: SIGTERM, then SIGKILL after 5 seconds if still running. A bridge that stopped cleanly also unlinks its unix socket file; agent-nook cleans up any socket that leaked (e.g. after a SIGKILL/crash).
 
 If a socket never becomes ready (or a placeholder is unresolved), agent-nook exits non-zero **without starting the sandbox** and stops every orchestration command.
+
+## Secrets
+
+Pass secrets (API tokens, keys, credentials) into the sandbox **without** exposing them. Two naive approaches are unsafe: putting a secret on the command line (`--setenv` / `--env`) shows it in `ps` and in the logs; bind-mounting a host file directly exposes the host path, permissions, and can't target a not-yet-existing path.
+
+The `secrets:` key solves both. agent-nook materializes each secret on the host to a private `0600` temp file inside a per-run `0700` directory (`$XDG_RUNTIME_DIR/agent-nook`, falling back to `/tmp`), reads-only bind-mounts it into the sandbox at `/run/secrets/<name>`, and removes the temp dir on teardown. The secret value never appears on a command line or in an environment variable on the host, so it does not show up in `ps` or the logs.
+
+```yaml
+secrets:
+  - name: gh-token          # -> /run/secrets/gh-token
+    command: "gh auth token"   # host command; its stdout is the secret value
+    env: GH_TOKEN              # optional; also export inside the sandbox as GH_TOKEN
+  - name: ssh-key             # -> /run/secrets/ssh-key (file-only)
+    file: ~/.ssh/id_ed25519
+```
+
+### Fields
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | yes | Destination filename under `/run/secrets/`. Any path components are stripped (filename-safe). |
+| `command` | one of | Host command whose **stdout** becomes the secret value. Given as a single string, tokenized into arguments with `shlex` (no shell runs on the host for it). Mutually exclusive with `file`. |
+| `file` | one of | Host file whose contents become the secret value. Mutually exclusive with `command`. |
+| `env` | no | Variable name to export inside the sandbox (opt-in). When omitted, the secret is file-only — no env var is set. |
+
+Exactly one of `command` / `file` is required. Unknown keys are rejected.
+
+### CLI
+
+The same secrets can be supplied from the command line (repeatable):
+
+```bash
+# command source (cmd: prefix), exported as GH_TOKEN
+agent-nook run --secret gh-token=cmd:gh auth token --secret-env gh-token=GH_TOKEN \
+  python3 agent.py
+
+# file source, file-only
+agent-nook run --secret ssh-key=~/.ssh/id_ed25519 python3 agent.py
+```
+
+`--secret NAME=SOURCE`: `SOURCE` is a host file path, or `cmd:<command>`.
+`--secret-env NAME=VAR`: export that secret inside the sandbox as `VAR`.
+
+### How it works
+
+1. For each secret, agent-nook reads the value: from the host file (`file:`) or by running the host command (`command:`) and capturing its stdout.
+2. The value is written to a private temp file (`0600`) in a per-run temp directory (`0700`).
+3. The temp file is read-only bind-mounted into the sandbox at `/run/secrets/<name>`. If any secret sets `env`, a thin Python wrapper (bind-mounted into the sandbox) exports the secret files under their `env` names before exec'ing the command — no shell, so no escaping issues.
+4. On teardown, the temp directory (and everything in it) is removed.
+
+The DEBUG bwrap log shows the temp-file and target **paths** (inside the `0700` temp dir), never the secret bytes.
 
 ## Technical Details
 

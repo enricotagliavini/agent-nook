@@ -38,8 +38,18 @@ from __future__ import annotations
 from collections import defaultdict
 from collections import deque
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from agent_nook.config.config import SandboxConfig
+
+
+if TYPE_CHECKING:
+    from agent_nook.sandbox.secret import SecretsBundle
+
+
+# In-sandbox root into which secrets are read-only bind-mounted. Mirrors
+# ``agent_nook.sandbox.secret._SECRETS_DIR`` (the per-secret target prefix).
+_SECRETS_DIR = "/run/secrets"
 
 
 def build_mounts_order(config: SandboxConfig) -> list[list[str]]:
@@ -185,6 +195,7 @@ class BwrapBuilder:
         command: list[str],
         socket_mounts: object = None,
         stdio_stub_path: str | None = None,
+        secrets: SecretsBundle | None = None,
     ) -> list[str]:
         """Build the complete bwrap command line.
 
@@ -207,6 +218,15 @@ class BwrapBuilder:
                 sandboxed command can run it without knowing where agent-nook
                 is installed (the sandbox imports nothing from agent-nook, so
                 there is no entry point to resolve).
+            secrets: A :class:`agent_nook.sandbox.secret.SecretsBundle`
+                returned by :func:`agent_nook.sandbox.secret.prepare_secrets`,
+                or ``None`` (no secrets). When provided, each secret is
+                read-only bind-mounted at ``/run/secrets/<name>`` inside
+                ``/run/secrets`` (created with ``--dir`` unless the config
+                already mounts that path). When any secret opts in to env
+                exposure, the manifest and the ``secrets_env.py`` wrapper are
+                bind-mounted and the wrapper is prepended to the command so
+                the secrets are exported before the real command runs.
 
         Returns:
             A list that can be passed directly to subprocess.run().
@@ -269,6 +289,23 @@ class BwrapBuilder:
         # stdlib file simply travels with the mount.
         if stdio_stub_path:
             args.extend(["--bind", stdio_stub_path, "/run/stdio_stub.py"])
+
+        # Secrets: read-only bind each materialized secret into /run/secrets.
+        # /run/secrets must exist before the per-secret targets are applied,
+        # so create it with --dir unless the config already mounts that path.
+        if secrets is not None:
+            if not any(m.target == _SECRETS_DIR for m in self._config.mounts):
+                args.extend(["--dir", _SECRETS_DIR])
+            for mount in secrets.mounts:
+                args.extend(["--ro-bind", mount.host_path, mount.target])
+
+            # Env exposure is opt-in: when any secret exports a variable, the
+            # wrapper reads the manifest and exports each var before exec. The
+            # wrapper ships without the exec bit, so it is run via python3.
+            if secrets.needs_env:
+                args.extend(["--ro-bind", secrets.manifest_host_path, "/run/agent_nook_secrets.env"])
+                args.extend(["--bind", secrets.wrapper_host_path, "/run/secrets_env.py"])
+                command = ["python3", "/run/secrets_env.py", *command]
 
         # Chdir
         if self._config.chdir:

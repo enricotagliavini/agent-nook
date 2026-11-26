@@ -23,6 +23,8 @@ from agent_nook.config.config import Mount
 from agent_nook.config.config import SandboxConfig
 from agent_nook.orchestrator import Orchestrator
 from agent_nook.sandbox.builder import BwrapBuilder
+from agent_nook.sandbox.secret import SecretsBundle
+from agent_nook.sandbox.secret import prepare_secrets
 from agent_nook.utils.logger import main_logger
 
 
@@ -238,6 +240,7 @@ class BwrapSandbox:
         command: list[str] | None = None,
         socket_mounts: object = None,
         stdio_stub_path: str | None = None,
+        secrets: SecretsBundle | None = None,
     ) -> list[str]:
         """Build the bwrap command line.
 
@@ -253,11 +256,21 @@ class BwrapSandbox:
             stdio_stub_path: Absolute host path to the bundled stdio stub.
                 When provided, it is bind-mounted into ``/run/stdio_stub.py``
                 so the sandboxed command can run it.
+            secrets: A :class:`agent_nook.sandbox.secret.SecretsBundle`
+                returned by :func:`agent_nook.sandbox.secret.prepare_secrets`,
+                or ``None`` (no secrets). When provided, secrets are read-only
+                bind-mounted into ``/run/secrets``; env-exposed secrets are
+                exported by the ``secrets_env.py`` wrapper before the command.
 
         Returns:
             The complete bwrap command line.
         """
-        return self._builder.build(command or [], socket_mounts=socket_mounts, stdio_stub_path=stdio_stub_path)
+        return self._builder.build(
+            command or [],
+            socket_mounts=socket_mounts,
+            stdio_stub_path=stdio_stub_path,
+            secrets=secrets,
+        )
 
     def run(self, command: list[str]) -> SandboxResult:
         """Run a command inside the sandbox.
@@ -301,14 +314,22 @@ class BwrapSandbox:
         orchestrator.start()
         orchestrator.wait_ready()
 
+        # Materialize secrets (private temp files) before building the bwrap
+        # command. prepare_secrets removes its own partial temp dir on failure,
+        # so a materialize error leaves nothing behind.
+        secrets_bundle = prepare_secrets(self._config.secrets)
+
         try:
             # Build the bwrap command with the runtime socket mounts (bind into
-            # /run, set STDIO_SOCKET_PATH) and the stdio stub (bind into
-            # /run/stdio_stub.py so the sandboxed command can run it).
+            # /run, set STDIO_SOCKET_PATH), the stdio stub (bind into
+            # /run/stdio_stub.py so the sandboxed command can run it), and the
+            # secrets (read-only bind into /run/secrets; env-exposed secrets are
+            # exported by the wrapper before the real command runs).
             bwrap_cmd = self.build(
                 command,
                 socket_mounts=orchestrator.socket_mounts(),
                 stdio_stub_path=_stdio_stub_host_path(),
+                secrets=secrets_bundle,
             )
 
             _logger.debug("Full bwrap command: %s", " ".join(bwrap_cmd), extra={"command_only": True})
@@ -320,6 +341,7 @@ class BwrapSandbox:
                 check=False,
             )
         finally:
+            secrets_bundle.cleanup()
             orchestrator.stop()
 
         return SandboxResult(

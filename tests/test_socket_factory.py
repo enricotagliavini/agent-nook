@@ -33,9 +33,13 @@ def test_strips_directory_components_from_name(tmp_path):
 
 
 def test_creates_base_dir_with_mode_0700(tmp_path):
-    """The base directory is created 0700 even when it already exists with looser perms."""
+    """The base directory is created 0700 on first creation (umask-independent).
+
+    ``os.makedirs(mode=0o700)`` yields ``0700`` regardless of umask (no
+    group/other bits to strip), so the dir is born ``0700`` — no ``chmod`` is
+    applied, and a pre-existing loose base dir is left untouched.
+    """
     base = tmp_path / "agent-nook"
-    base.mkdir(mode=0o777, exist_ok=True)
     generate("mybox", 0, pid=9, base_dir=str(base))
     mode = stat.S_IMODE(Path(base).stat().st_mode)
     assert mode == 0o700

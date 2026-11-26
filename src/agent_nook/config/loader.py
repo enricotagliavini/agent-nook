@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import shlex
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -23,6 +24,7 @@ try:
     from agent_nook.config.config import NamespaceSet
     from agent_nook.config.config import OrchestrationEntry
     from agent_nook.config.config import SandboxConfig
+    from agent_nook.config.config import Secret
 except ImportError:
     from ..config.config import CapabilitySet
     from ..config.config import ConfigValidationError
@@ -30,8 +32,15 @@ except ImportError:
     from ..config.config import NamespaceSet
     from ..config.config import OrchestrationEntry
     from ..config.config import SandboxConfig
+    from ..config.config import Secret
 
 logger = logging.getLogger(__name__)
+
+# Usage hint appended to "command must be a non-empty string" errors for the
+# orchestration section, so a misconfigured command points at the stdio-bridge
+# invocation pattern. Kept as a constant so the single source of truth for the
+# tokenization + error text (_parse_command) can reuse it verbatim.
+_STDIO_BRIDGE_HINT = 'command: "stdio-bridge --listen ${{STDIO_SOCKET_PATH}} -- node index.js"'
 
 
 def get_config_path() -> str:
@@ -87,6 +96,12 @@ def get_config_path() -> str:
 #              socket (non-empty str, udp: rejected), wait-timeout (positive
 #              number), keep (bool); rejects unknown per-entry keys
 #
+#   Layer 5b: _parse_secrets()          — Dict list → Secret list
+#            → Validates per-entry name (non-empty, filename-safe), exactly one
+#              of file/command (file = non-empty host path; command = single
+#              string tokenized with shlex, no shell); env (optional non-empty
+#              str); rejects entries with both or neither source, unknown keys
+#
 #   Layer 6: SandboxConfig.__post_init__() — Dataclass construction
 #            → Enforces the invariant: at least one mount point is required
 #            → The LAST line of defense before the config is used
@@ -117,6 +132,7 @@ class ConfigLoader:
         "capabilities": "dict",
         "unshare": "dict",
         "orchestration": "list[dict]",
+        "secrets": "list[dict]",
         "die_with_parent": "bool",
         "new_session": "bool",
         "hostname": "str | None",
@@ -334,6 +350,45 @@ class ConfigLoader:
             result.setdefault("unset_vars", "")
             result["unset_vars"] += f", {var}"
 
+        # Secrets from --secret NAME=SOURCE. SOURCE is a host file path, or the
+        # literal "cmd:<command>" whose stdout is the secret. Each entry is
+        # emitted as a raw dict so _parse_secrets validates it through the same
+        # pipeline as a config-file entry. The command is kept as an untokenized
+        # string here: _parse_secrets tokenizes it with shlex, exactly as it does
+        # for a config-file command. The name is filename-safe-ized up front so a
+        # later --secret-env matches the same name _parse_secrets will use.
+        for spec in getattr(args, "secret", []):
+            if "=" not in spec:
+                raise ConfigValidationError(f"--secret expects NAME=SOURCE, got '{spec}'")
+            name, source = spec.split("=", 1)
+            name = Path(name).name
+            if not name:
+                raise ConfigValidationError(f"--secret expects a non-empty NAME in '{spec}'")
+            entry: dict[str, Any] = {"name": name}
+            if source.startswith("cmd:"):
+                entry["command"] = source[len("cmd:") :]
+            else:
+                entry["file"] = source
+            result.setdefault("secrets", []).append(entry)
+
+        # --secret-env NAME=VAR exports a previously declared --secret as an env
+        # var inside the sandbox (opt-in; absent -> file-only secret). Applied by
+        # name so the order of --secret/--secret-env on the command line does not
+        # matter. A name with no matching --secret is a user error, not a silent
+        # no-op.
+        secret_env: dict[str, str] = {}
+        for spec in getattr(args, "secret_env", []):
+            if "=" not in spec:
+                raise ConfigValidationError(f"--secret-env expects NAME=VAR, got '{spec}'")
+            name, var = spec.split("=", 1)
+            name = Path(name).name
+            secret_env[name] = var
+        for name, var in secret_env.items():
+            target = next((s for s in result.get("secrets", []) if s.get("name") == name), None)
+            if target is None:
+                raise ConfigValidationError(f"--secret-env references unknown secret '{name}'; declare it with --secret first")
+            target["env"] = var
+
         return result
 
     def load_with_overrides(self, args: argparse.Namespace, path: str | None = None) -> SandboxConfig:
@@ -414,6 +469,7 @@ class ConfigLoader:
         capabilities = self._parse_capabilities(data.get("capabilities", {}))
         unshare = self._parse_unshare(data.get("unshare", {}))
         orchestration = self._parse_orchestration(data.get("orchestration", []))
+        secrets = self._parse_secrets(data.get("secrets", []))
         env_vars = data.get("env_vars", {})
         unset_vars = self._parse_unset_vars(data.get("unset_vars"))
         hostname = data.get("hostname")
@@ -426,6 +482,7 @@ class ConfigLoader:
             capabilities=capabilities,
             unshare=unshare,
             orchestration=orchestration,
+            secrets=secrets,
             die_with_parent=data.get("die_with_parent", True),
             new_session=data.get("new_session", True),
             hostname=hostname,
@@ -482,7 +539,7 @@ class ConfigLoader:
             elif field_name == "unset_vars":
                 # unset_vars is an optional string (can be empty or None)
                 value = data.get(field_name)
-            elif field_name in ("mounts", "orchestration"):
+            elif field_name in ("mounts", "orchestration", "secrets"):
                 # These default to an empty list when not present
                 value = data.get(field_name, [])
             elif field_name == "hostname":
@@ -893,7 +950,7 @@ class ConfigLoader:
                     raise ConfigValidationError(f"orchestration[{i}] has unknown key '{key}'. Known keys: {', '.join(known_keys)}")
 
             command = entry.get("command")
-            argv = self._parse_command(command, i)
+            argv = self._parse_command(command, i, hint=_STDIO_BRIDGE_HINT)
 
             track_socket = entry.get("track-socket", False)
             if not isinstance(track_socket, bool):
@@ -916,20 +973,31 @@ class ConfigLoader:
         return parsed
 
     @staticmethod
-    def _parse_command(command: Any, index: int) -> list[str]:
-        """Tokenize the orchestration `command` string into an argv list.
+    def _parse_command(
+        command: Any,
+        index: int,
+        *,
+        label: str = "orchestration",
+        hint: str | None = None,
+    ) -> list[str]:
+        """Tokenize a single-command string into an argv list (no shell involved).
 
-        This is the single source of truth for turning the config's single
-        command string into the argument list the orchestrator passes to
-        ``subprocess.Popen`` (which does not invoke a shell). It validates
-        that the command is a non-empty string and that it tokenizes into
-        at least one non-empty argument; a malformed shell tokenization
-        (e.g. an unterminated quote) surfaces as a ``ConfigValidationError``.
+        This is the single source of truth for turning a config's single
+        command string into the argument list the caller passes to
+        ``subprocess`` (which does not invoke a shell). It validates that the
+        command is a non-empty string and that it tokenizes into at least one
+        non-empty argument; a malformed shell tokenization (e.g. an
+        unterminated quote) surfaces as a ``ConfigValidationError``.
 
         Args:
-            command: The raw `command` value of ``orchestration[index]``
-                (already env-expanded by _expand_env_vars).
+            command: The raw command value of the calling section's
+                ``[index]`` entry (already env-expanded by _expand_env_vars).
             index: The entry index, for the error message.
+            label: The section name in error messages (``orchestration`` or
+                ``secrets``).
+            hint: Optional usage hint appended to the "non-empty string"
+                errors; only the orchestration section carries the stdio-bridge
+                example.
 
         Returns:
             A non-empty list of argument strings.
@@ -939,20 +1007,100 @@ class ConfigLoader:
                 tokenizes into no arguments, or raises a shell error.
         """
         if not isinstance(command, str) or not command:
-            raise ConfigValidationError(
-                f"orchestration[{index}].command must be a non-empty string (no shell). "
-                f'Use: command: "stdio-bridge --listen ${{STDIO_SOCKET_PATH}} -- node index.js"'
-            )
+            msg = f"{label}[{index}].command must be a non-empty string (no shell)"
+            if hint:
+                msg += f" Use: {hint}"
+            raise ConfigValidationError(msg)
         try:
             argv = shlex.split(command)
         except ValueError as e:
-            raise ConfigValidationError(f"orchestration[{index}].command could not be parsed as a shell command: {e}") from e
+            raise ConfigValidationError(f"{label}[{index}].command could not be parsed as a shell command: {e}") from e
         if not argv:
-            raise ConfigValidationError(
-                f"orchestration[{index}].command must be a non-empty string (no shell). "
-                f'Use: command: "stdio-bridge --listen ${{STDIO_SOCKET_PATH}} -- node index.js"'
-            )
+            msg = f"{label}[{index}].command must be a non-empty string (no shell)"
+            if hint:
+                msg += f" Use: {hint}"
+            raise ConfigValidationError(msg)
         return argv
+
+    def _parse_secrets(self, entries: list[dict]) -> list[Secret]:
+        """Parse secret entries into Secret dataclasses.
+
+        This is **Layer 5b** of the validation pipeline. It validates and
+        transforms the `secrets` field:
+
+          ```yaml
+          secrets:
+            - name: gh-token          # required; -> /run/secrets/gh-token
+              command: "gh auth token"  # host command; stdout = secret
+              #file: ~/.config/gh/hosts.yml
+              env: GH_TOKEN             # optional; export inside sandbox as GH_TOKEN
+          ```
+
+        Why this is needed:
+
+          - _validate_structure() ensures the field is a *list of dicts*, but
+            not the content of each entry.
+          - This layer ensures per entry:
+              * `name` is a non-empty string; any path components are stripped
+                (``Path(name).name``) so a hostile name cannot escape
+                ``/run/secrets/<name>``.
+              * exactly one of `file` / `command` is present (both or neither →
+                error); `file` is a non-empty host path, `command` is a non-empty
+                string tokenized with `shlex.split` (no shell is involved at
+                execution time — the sandbox runs the resulting argv via
+                ``subprocess``).
+              * `env` (optional) is a non-empty string; when absent the secret is
+                file-only (no env export).
+              * unknown keys are rejected (strict schema, consistent with the
+                rest of the loader).
+
+        Args:
+            entries: A list of raw secret entry dicts (already env-expanded).
+
+        Returns:
+            A list of Secret dataclass instances.
+
+        Raises:
+            ConfigValidationError: If any entry is malformed.
+        """
+        parsed: list[Secret] = []
+        known_keys = ("name", "file", "command", "env")
+
+        for i, entry in enumerate(entries):
+            for key in entry:
+                if key not in known_keys:
+                    raise ConfigValidationError(f"secrets[{i}] has unknown key '{key}'. Known keys: {', '.join(known_keys)}")
+
+            name = entry.get("name")
+            if not isinstance(name, str) or not name.strip():
+                raise ConfigValidationError(f"secrets[{i}].name must be a non-empty string")
+            # Strip any path components -> filename-safe; mirrors socket_factory.
+            name = Path(name).name
+
+            has_file = entry.get("file") is not None
+            has_command = entry.get("command") is not None
+            if has_file and has_command:
+                raise ConfigValidationError(f"secrets[{i}] specifies both 'file' and 'command'; only one is allowed")
+            if not has_file and not has_command:
+                raise ConfigValidationError(f"secrets[{i}] must specify exactly one of 'file' or 'command'")
+
+            source_file: str | None = None
+            source_command: list[str] | None = None
+            if has_command:
+                source_command = self._parse_command(entry["command"], i, label="secrets")
+            else:
+                source_file = entry["file"]
+                if not isinstance(source_file, str) or not source_file:
+                    raise ConfigValidationError(f"secrets[{i}].file must be a non-empty string")
+
+            env_var = entry.get("env")
+            if env_var is not None:
+                if not isinstance(env_var, str) or not env_var:
+                    raise ConfigValidationError(f"secrets[{i}].env must be a non-empty string")
+
+            parsed.append(Secret(name=name, source_file=source_file, source_command=source_command, env_var=env_var))
+
+        return parsed
 
     def _expand_env_vars(self, data: dict[str, Any]) -> dict[str, Any]:
         """Expand environment variables in string values.

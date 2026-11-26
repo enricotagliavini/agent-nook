@@ -12,7 +12,6 @@ is set, else ``/tmp``. The directory is created (mode 0700) on demand.
 
 from __future__ import annotations
 
-import contextlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,9 +55,6 @@ def generate(name: str, counter: int, *, pid: int = os.getpid(), base_dir: str |
     socket_path = os.path.join(base_dir, f"{safe_name}-{pid}-{counter}{_SUFFIX}")
 
     os.makedirs(base_dir, mode=0o700, exist_ok=True)
-    # makedirs honors umask, so force 0700 explicitly (e.g. umask 022 -> 0755).
-    with contextlib.suppress(OSError):
-        os.chmod(base_dir, 0o700)
     return socket_path
 
 

@@ -24,8 +24,8 @@
 ## Testing & Verification (MANDATORY)
 Run after EVERY change:
 - `./run_tests.sh`
-- `ruff check src/ --fix`
-- `ruff format src/`
+- `./run_lint.sh` — the canonical lint entry point (mirrors CI). It lints and formats **`src/` only**; use `./run_lint.sh --check` to verify without fixing.
+  - Do **NOT** run bare `ruff check`/`ruff format` on the whole repo. `tests/` intentionally follows different conventions (e.g. `subprocess.run` without `check`) and is out of scope — linting it yields ~40 errors and would break CI.
 - Update tests for all behavior changes. Tests are the contract.
 
 ## Testing Conventions
@@ -34,6 +34,7 @@ Apply when writing or reviewing tests:
 - **Test our code, not external tools.** Assert on the project's own logic and behavior. Do not assert on, or document, third-party tool/library behavior (e.g. bwrap's exit codes). One deliberate exception: a single smoke test that validates the bwrap command *we* build is accepted by a real bwrap — guard it with `shutil.which("bwrap")` and document in the docstring that it guards against regressions in our command construction, not against bwrap itself. No benchmark/timing tests unless deliberately intended.
 - **Keep the suite lean.** As code evolves, remove stale/redundant tests (and replace them). Prefer one high-value test over several thin ones. The suite should stay an essential, convenient tool, not a burden.
 - **Be fast; keep synthetic timeouts tiny.** Tests assert behavior, not wall-clock time, and the suite should feel instant (there is no hard cutoff — speed depends on hardware). When a test only needs to *trigger* a timeout reaction, set the timeout as short as the logic allows (~0.01 s) rather than the real value. A test that must observe genuine timing (e.g. a socket that deliberately appears late) cannot always be fast; if so, don't fake it — keep the delay minimal, get a reviewer-approved exception, and document the reason in the test itself.
+- **Isolate from the host environment.** Never read from or write to real system paths (e.g. `/run`, the host's `/run/secrets`) or depend on the host filesystem's current state — tests fail spuriously when the host mounts those locations differently (e.g. a shared `/run` that already contains `agent_nook_secrets.env`). Prefer `tmp_path`/`monkeypatch` and dedicated temp paths. When a test legitimately exercises a fixed production path under a system dir (e.g. the wrapper's `/run/agent_nook_secrets.env` default), run the child process under bubblewrap with a fresh tmpfs so that system dir is clean and isolated — never touch the host's real path. See `test_manifest_default_path_used_when_no_env` in `tests/sandbox/test_secrets_env.py` for the pattern (`bwrap --ro-bind / / --tmpfs /run ...`); skip the test when `bwrap` is absent. Do not change production code to accommodate a test — the test must adapt to the code.
 
 ## Linting (Ruff)
 - **Tool**: Ruff only. Line length: 135.
