@@ -33,9 +33,14 @@ def logs_env(tmp_path: Path) -> tuple[Path, dict]:
     os.environ["XDG_CONFIG_HOME"] = str(config_dir)
     os.environ["XDG_STATE_HOME"] = str(state_dir)
 
-    from agent_nook.utils.logger import get_log_directory
+    # Seed the log at exactly the path the subprocess CLI resolves from this
+    # same XDG_STATE_HOME. get_state_dir() reads the env at call time, so it
+    # agrees with the subprocess; get_log_directory()/get_log_file_path()
+    # instead return the test process's cached setup-time path and would seed
+    # the wrong file.
+    from agent_nook.utils.logger import get_state_dir
 
-    log_dir = Path(get_log_directory())
+    log_dir = Path(get_state_dir())
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "agent-nook.log"
     log_file.write_text("2026-01-01 00:00:00 - agent_nook - INFO - line one\n2026-01-01 00:00:01 - agent_nook - INFO - line two\n")

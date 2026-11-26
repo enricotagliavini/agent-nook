@@ -315,6 +315,32 @@ def test_sandbox_run(
     return test_runner
 
 
+@pytest.fixture(autouse=True)
+def _reset_logger_to_session_xdg():
+    """Point the ``agent_nook`` logger at the session XDG state dir before each
+    test, so its resolved log path (cached by main_logger) matches where the
+    subprocess CLI writes and stays isolated under the test's /tmp state dir.
+
+    The orchestrator imports ``main_logger`` at collection time — before this
+    fixture runs and before the session XDG env vars are set — so its handler
+    then points at the unset-XDG default (~/.local/state). Reconfiguring here
+    (before every test) keeps child output isolated and makes
+    get_log_file_path()/get_log_directory() agree with the subprocess. Tests
+    that need a different path (their own tmp_path) reconfigure the logger
+    during the test body.
+    """
+    import logging
+
+    from agent_nook.utils.logger import main_logger
+
+    agent_logger = logging.getLogger("agent_nook")
+    for handler in list(agent_logger.handlers):
+        agent_logger.removeHandler(handler)
+        handler.close()
+    main_logger("agent_nook")
+    yield
+
+
 # Fixtures that trigger heavy, session-wide setup (a wheel build and a pipx
 # install, both shared across xdist workers). run_tests.sh runs the
 # non-integration group in parallel with pytest-xdist, where each worker

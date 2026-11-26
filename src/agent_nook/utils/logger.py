@@ -43,6 +43,14 @@ __all__ = [
     "set_sandbox_name",
 ]
 
+# The resolved log-file path, recorded once by _setup_logger() from the file
+# handler it creates (or its /tmp fallback). It is the single source of truth
+# for get_log_directory()/get_log_file_path(), so those always agree with where
+# the logger actually writes — no matter when or how often they are called.
+# It is None until main_logger() finishes setup, at which point the getters
+# raise instead of re-running the (order-dependent) path resolution logic.
+_log_file_path: str | None = None
+
 
 def get_state_dir() -> str:
     """Resolve the agent-nook state directory using XDG_STATE_HOME.
@@ -64,23 +72,48 @@ def get_state_dir() -> str:
 def get_log_directory() -> str:
     """Get the log directory path.
 
-    Log files live directly in the application state directory.
+    Returns the directory of the log file the configured logger actually
+    writes to (the XDG state dir, or ``/tmp/agent-nook-logs`` on fallback).
 
     Returns:
         The absolute path to the log directory
         (e.g., ~/.local/state/agent-nook).
+
+    Raises:
+        RuntimeError: If called before main_logger() has finished setting up
+            the logger, so the resolved path is not yet known.
     """
-    return get_state_dir()
+    if _log_file_path is None:
+        raise RuntimeError(
+            "Log path not resolved yet: main_logger() has not finished "
+            "setting up the logger. Call main_logger() before "
+            "get_log_directory()/get_log_file_path()."
+        )
+    return os.path.dirname(_log_file_path)
 
 
 def get_log_file_path() -> str:
     """Get the path to the main log file.
 
+    Returns the exact path the configured file handler writes to (the XDG
+    state dir, or ``/tmp/agent-nook-logs`` on fallback) — the single source of
+    truth recorded at setup, not a freshly recomputed path.
+
     Returns:
         The absolute path to the log file
         (e.g., ~/.local/state/agent-nook/agent-nook.log).
+
+    Raises:
+        RuntimeError: If called before main_logger() has finished setting up
+            the logger, so the resolved path is not yet known.
     """
-    return os.path.join(get_log_directory(), "agent-nook.log")
+    if _log_file_path is None:
+        raise RuntimeError(
+            "Log path not resolved yet: main_logger() has not finished "
+            "setting up the logger. Call main_logger() before "
+            "get_log_file_path()."
+        )
+    return _log_file_path
 
 
 def log_file_handle() -> io.TextIOWrapper:
@@ -157,6 +190,8 @@ def _setup_logger(
     - RotatingFileHandler: writes to disk, rotates at 10MB, keeps 10 backups.
     - StreamHandler: outputs INFO+ to stdout/stderr.
     """
+    global _log_file_path
+
     log_level = getattr(logging, level.upper(), logging.INFO)
 
     logger = logging.getLogger(name)
@@ -178,21 +213,22 @@ def _setup_logger(
 
     # File handler (only if we can write to the state directory)
     if use_file:
+        file_handler: logging.handlers.RotatingFileHandler | None = None
         try:
-            log_dir = get_log_directory()
+            log_dir = get_state_dir()
             os.makedirs(log_dir, exist_ok=True)
-            log_file = log_file or get_log_file_path()
+            log_file = log_file or os.path.join(log_dir, "agent-nook.log")
 
-            handler = logging.handlers.RotatingFileHandler(
+            file_handler = logging.handlers.RotatingFileHandler(
                 log_file,
                 maxBytes=10 * 1024 * 1024,  # 10 MB
                 backupCount=10,
                 encoding="utf-8",
             )
-            handler.setLevel(logging.DEBUG)  # File gets everything
-            handler.setFormatter(formatter)
-            handler.addFilter(lambda record: record.levelno >= logging.DEBUG)
-            logger.addHandler(handler)
+            file_handler.setLevel(logging.DEBUG)  # File gets everything
+            file_handler.setFormatter(formatter)
+            file_handler.addFilter(lambda record: record.levelno >= logging.DEBUG)
+            logger.addHandler(file_handler)
         except (PermissionError, OSError) as e:
             # If we can't write to XDG state, fallback to /tmp
             log_dir = os.path.join("/tmp", "agent-nook-logs")
@@ -200,27 +236,34 @@ def _setup_logger(
             log_file = os.path.join(log_dir, "agent-nook.log")
             logger.warning(
                 "Cannot write to XDG state dir (%s), falling back to /tmp: %s",
-                get_log_directory(),
+                get_state_dir(),
                 e,
             )
 
             try:
-                handler = logging.handlers.RotatingFileHandler(
+                file_handler = logging.handlers.RotatingFileHandler(
                     log_file,
                     maxBytes=10 * 1024 * 1024,
                     backupCount=10,
                     encoding="utf-8",
                 )
-                handler.setLevel(logging.DEBUG)
-                handler.setFormatter(formatter)
-                handler.addFilter(lambda record: record.levelno >= logging.DEBUG)
-                logger.addHandler(handler)
+                file_handler.setLevel(logging.DEBUG)
+                file_handler.setFormatter(formatter)
+                file_handler.addFilter(lambda record: record.levelno >= logging.DEBUG)
+                logger.addHandler(file_handler)
             except (PermissionError, OSError) as e2:
                 logger.warning(
                     "Cannot write logs to %s or /tmp: %s",
                     log_file,
                     e2,
                 )
+
+        # Record the resolved path (XDG state dir, or the /tmp fallback) from
+        # the handler itself. This is the single source of truth for
+        # get_log_directory()/get_log_file_path(), so they always agree with
+        # where the logger writes — no matter when they are called.
+        if file_handler is not None:
+            _log_file_path = file_handler.baseFilename
 
     # Console handler
     if use_console:

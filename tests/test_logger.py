@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -11,6 +12,8 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from agent_nook.utils.logger import SandboxFormatter
+from agent_nook.utils.logger import get_log_directory
+from agent_nook.utils.logger import get_log_file_path
 from agent_nook.utils.logger import main_logger
 from agent_nook.utils.logger import set_sandbox_name
 
@@ -95,3 +98,32 @@ def test_set_sandbox_name_tags_lines_and_keeps_log_file(isolated_agent_nook_logg
     lines = log_file.read_text(encoding="utf-8").splitlines()
     assert any(re.search(rf"^{LINE_RE} - agent_nook - INFO - before sandbox$", line) for line in lines)
     assert any(re.search(rf"^{LINE_RE} - agent_nook\[mybox\] - INFO - after sandbox$", line) for line in lines)
+
+
+def test_logger_falls_back_to_tmp_and_getters_agree(isolated_agent_nook_logger, tmp_path, monkeypatch):
+    """When the XDG state dir is not writable, the logger falls back to /tmp,
+    and get_log_file_path()/get_log_directory() report that /tmp path — the
+    single source of truth — so they agree with where the handler writes.
+
+    Guards against the log_file_handle()/logger and the getters diverging when
+    the /tmp fallback is taken.
+    """
+    if os.geteuid() == 0:
+        pytest.skip("cannot make a dir unwritable while running as root")
+
+    # A 0o555 dir refuses writes for non-root, simulating an unwritable XDG
+    # state dir and forcing the /tmp fallback.
+    unreadable = tmp_path / "unreadable"
+    unreadable.mkdir()
+    unreadable.chmod(0o555)
+    monkeypatch.setenv("XDG_STATE_HOME", str(unreadable))
+
+    logger = main_logger("agent_nook")
+    logger.info("fallback-marker")
+
+    log_path = get_log_file_path()
+    assert log_path.startswith("/tmp/agent-nook-logs/"), log_path
+    assert get_log_directory() == "/tmp/agent-nook-logs", get_log_directory()
+    # The handler actually wrote there: the marker is in the /tmp log, not a
+    # file under the (unwritable) XDG state dir.
+    assert Path(log_path).read_text(encoding="utf-8").find("fallback-marker") != -1

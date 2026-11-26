@@ -34,6 +34,7 @@ from agent_nook.orchestrator import Orchestrator
 from agent_nook.orchestrator import substitute_placeholders
 from agent_nook.sandbox import BwrapSandbox
 from agent_nook.utils.logger import get_log_file_path
+from agent_nook.utils.logger import main_logger
 
 
 # Fake "bridge" that writes its own pid, binds a unix socket immediately, and
@@ -112,6 +113,31 @@ def gen_dir(tmp_path, monkeypatch):
 
     monkeypatch.setattr("agent_nook.orchestrator.generate", fake_generate)
     return tmp_path
+
+
+@pytest.fixture
+def isolated_logger_path(tmp_path, xdg_state_dir, monkeypatch):
+    """Point the logger's resolved log path at tmp_path for the test, then
+    restore it to the session state dir afterwards.
+
+    main_logger caches the resolved path (read from the file handler), so a
+    bare XDG override is not enough: log_file_handle() and get_log_file_path()
+    would keep returning the import-time path. Reset the logger against
+    tmp_path before the test, and against the session state dir afterwards, so
+    the test is fully isolated and later tests inherit a clean path.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    logger = logging.getLogger("agent_nook")
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
+    main_logger("agent_nook")  # _log_file_path -> tmp_path
+    yield
+    monkeypatch.setenv("XDG_STATE_HOME", str(xdg_state_dir))
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
+    main_logger("agent_nook")  # _log_file_path -> session state dir
 
 
 def _entry(command: list[str], *, wait_timeout: float = 5.0, keep: bool = False, track_socket: bool = True) -> OrchestrationEntry:
@@ -244,11 +270,9 @@ def test_start_substitutes_socket_dir_placeholder(gen_dir):
     _wait_gone(str(sock))  # orch.stop() terminated the spawned command
 
 
-def test_orchestration_output_goes_to_log_not_terminal(tmp_path, capsys):
+def test_orchestration_output_goes_to_log_not_terminal(capsys, isolated_logger_path):
     """A command's stdout/stderr land in the log file, never the terminal, and
     its stdin is detached from the terminal too."""
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     orch = Orchestrator([_entry([sys.executable, "-c", _IO_BRIDGE], track_socket=False)])
     orch.start()
     _wait_for_log("OUTPUT-GOES-TO-LOG")
